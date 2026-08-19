@@ -756,6 +756,7 @@ def main():
                         sh.run(["openshell", "inference", "set",
                                 "--provider", prov.name,
                                 "--model", prov.model,
+                                "--workspace", ws.name,
                                 "--no-verify"], check=False)
                         inference_set = True
 
