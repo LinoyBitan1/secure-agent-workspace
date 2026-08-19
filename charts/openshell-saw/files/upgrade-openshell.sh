@@ -74,12 +74,23 @@ if [[ -n "${OIDC_ISSUER:-}" ]]; then
   echo "OIDC config patched"
 fi
 
+# --- Strip governance config if disabled (avoids VM rebuild) ---
+if [[ "${GOVERNANCE_ENABLED}" != "true" ]]; then
+  guest_ssh "
+    TOML=\$HOME/.config/openshell/gateway.toml
+    if [[ -f \${TOML} ]] && grep -q 'interceptors' \${TOML}; then
+      sed -i '/\[openshell.gateway\]/,\$d' \${TOML}
+      echo 'Stripped governance interceptor config from gateway.toml'
+    fi
+  " || true
+fi
+
 # --- Restart gateway with new binaries ---
 echo "Restarting gateway service..."
 guest_ssh "systemctl --user restart openshell-gateway.service" || true
 GW_READY=0
 for i in $(seq 1 10); do
-  if guest_ssh "systemctl --user is-active openshell-gateway.service" 2>/dev/null; then
+  if [[ "$(guest_ssh "systemctl --user is-active openshell-gateway.service" 2>/dev/null || true)" == "active" ]]; then
     GW_READY=1; break
   fi
   echo "  waiting for gateway... (attempt $i)"

@@ -6,7 +6,7 @@ spec:
     - name: notebook
       type: openclaw
       enabled: true
-      image: quay.io/rh-ai-quickstart/openclaw-openshell:latest
+      image: quay.io/redhat-et/openclaw:csb-aipcc-based-amd64-2026.08.19
       providers:
         - nvidia
     - name: cuda-sandbox

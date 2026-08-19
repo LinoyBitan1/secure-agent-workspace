@@ -1,0 +1,5 @@
+apiVersion: saw.redhat.com/v1alpha1
+kind: Workspace
+metadata:
+  name: slack-send
+  description: "scheduleMessage as exec — supervisor injects write user token at egress"

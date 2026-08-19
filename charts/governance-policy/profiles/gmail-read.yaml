@@ -1,0 +1,28 @@
+display_name: Gmail Read Proxy
+description: Gmail read-only proxy on the integrations VM
+category: data
+inference_capable: false
+
+credentials:
+  - name: access_token
+    description: Gmail OAuth access token (managed by provider refresh)
+    env_vars: [GMAIL_ACCESS_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+
+discovery:
+  credentials: [access_token]
+
+endpoints:
+  - host: gmail.googleapis.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    access: read-only
+
+binaries:
+  - /usr/bin/curl
+  - /usr/local/bin/curl
+  - /usr/local/bin/node
+  - /sandbox/rust-email-proxy

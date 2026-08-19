@@ -1,0 +1,38 @@
+# Agent VM — runs OpenClaw sandbox, no real provider credentials.
+# Deploy: helm install saw-agent charts/openshell-saw -f deploy/two-vm/agent-values.yaml
+sandboxName: saw-agent
+role: agent
+
+containerRuntime: podman
+onboardCli: openclaw
+agent: openclaw
+
+openshell:
+  gatewayImage: ghcr.io/nvidia/openshell/gateway:0.0.103
+  supervisorImage: ghcr.io/nvidia/openshell/supervisor:0.0.103
+  version: "0.0.103"
+  pipIndexUrl: ""
+
+vm:
+  cores: 4
+  memory: 8Gi
+  diskSize: 40Gi
+
+route:
+  enabled: false
+  dashboard: false
+  webui: false
+
+dashboard:
+  enabled: false
+
+governance:
+  enabled: false
+
+networkPolicy:
+  peerLabel: saw-integ
+  allowedPorts:
+    - 18080
+    - 18081
+    - 18082
+    - 18083

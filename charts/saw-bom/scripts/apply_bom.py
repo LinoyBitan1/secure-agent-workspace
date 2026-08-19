@@ -417,9 +417,25 @@ class WorkspaceDeployer:
         is_full_ref = sandbox.image and ("/" in sandbox.image or ":" in sandbox.image)
         if is_full_ref:
             self.sh.run(["sudo", "docker", "pull", sandbox.image], check=False)
+        # Write a sandbox policy with the correct run_as_user for the image
+        policy_path = Path("/tmp/sandbox-policy.yaml")
+        policy_path.write_text(
+            "version: 1\n"
+            "filesystem_policy:\n"
+            "  include_workdir: true\n"
+            "  read_only: [/usr, /lib, /lib64, /etc, /proc, /dev/urandom, /app, /opt, /var/log]\n"
+            "  read_write: [/sandbox, /tmp, /dev/null, /dev/pts]\n"
+            "landlock:\n"
+            "  compatibility: best_effort\n"
+            "process:\n"
+            "  run_as_user: \"1001\"\n"
+            "  run_as_group: \"1001\"\n",
+            encoding="utf-8",
+        )
         args = ["openshell", "sandbox", "create", "--name", sandbox.name]
         if sandbox.image:
             args += ["--from", sandbox.image]
+        args += ["--policy", str(policy_path)]
         if workspace_name != "default":
             args += ["--workspace", workspace_name]
         for prov in sandbox.providers:
@@ -542,6 +558,14 @@ class WorkspaceDeployer:
                   "TMPDIR=/sandbox/.openclaw/state "
                   "OPENCLAW_NIX_MODE=0")
 
+        # Fix ownership from previous runs (different UIDs across images)
+        self.sh.run(
+            exec_cmd + ["sh", "-c",
+                        "chmod -R a+rw /sandbox/.openclaw/ 2>/dev/null; "
+                        "rm -f /sandbox/.openclaw/state/*/gateway.state.*.lock 2>/dev/null; "
+                        "true"],
+            check=False)
+
         log("Running openclaw onboard...")
         self.sh.run(
             exec_cmd + ["sh", "-c",
@@ -550,7 +574,7 @@ class WorkspaceDeployer:
                         f"--non-interactive --accept-risk "
                         f"--mode local "
                         f"--auth-choice custom-api-key "
-                        f'--custom-base-url "https://inference.local/v1" '
+                        f'--custom-base-url "{os.environ.get("INFERENCE_BASE_URL", "https://inference.local/v1")}" '
                         f"--custom-provider-id {provider_id} "
                         f'--custom-model-id "{model_id}" '
                         f"--custom-compatibility openai "
@@ -569,6 +593,14 @@ class WorkspaceDeployer:
                             "gateway.controlUi.allowedOrigins "
                             f"'[\"https://{dashboard_route}\"]'"],
                 check=False)
+
+        # Fix ownership and stale locks before starting the gateway
+        self.sh.run(
+            exec_cmd + ["sh", "-c",
+                        "chmod -R a+rw /sandbox/.openclaw/ 2>/dev/null; "
+                        "rm -f /sandbox/.openclaw/state/*/gateway.state.*.lock 2>/dev/null; "
+                        "true"],
+            check=False)
 
         log(f"Starting openclaw gateway (token={token[:8]}...)")
         self.sh.run(
