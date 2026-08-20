@@ -29,9 +29,9 @@ done
 cp "${SECRETS_DIR}/run-create.env" "${WORK_DIR}/run-create.env"
 source "${WORK_DIR}/run-create.env" 2>/dev/null || true
 
-# Transfer BOM app + profiles to VM
+# Transfer BOM app + profiles to VM (clean old data first)
 BOM_DIR="/home/${SSH_USER}/bom-profiles"
-guest_ssh "mkdir -p ${BOM_DIR}"
+guest_ssh "rm -rf ${BOM_DIR} && mkdir -p ${BOM_DIR}"
 for file in ${BOM_MOUNT}/*; do
   key="$(basename "$file")"
   if [[ "${key}" == "apply_bom.py" ]]; then

@@ -63,16 +63,8 @@ fi
 # --- Install lsof (needed by nemoclaw for gateway listener identification) ---
 guest_ssh "sudo dnf install -y lsof 2>&1 | tail -3" || echo "WARN: lsof install failed (non-fatal)"
 
-# --- Patch OIDC issuer ---
-source "${SECRETS_DIR}/run-create.env" 2>/dev/null || true
-if [[ -n "${OIDC_ISSUER:-}" ]]; then
-  echo "Patching OIDC issuer to ${OIDC_ISSUER}..."
-  guest_ssh "sudo sed -i 's|issuer = \".*\"|issuer = \"${OIDC_ISSUER}\"|' /etc/openshell/gateway.toml 2>/dev/null || true" || true
-  guest_ssh "sed -i 's|issuer = \".*\"|issuer = \"${OIDC_ISSUER}\"|' ~/.config/openshell/gateway.toml 2>/dev/null || true" || true
-  guest_ssh "grep -v '^OPENSHELL_OIDC_ISSUER' ~/.config/openshell/gateway.env > /tmp/genv.tmp 2>/dev/null && mv /tmp/genv.tmp ~/.config/openshell/gateway.env; echo 'OPENSHELL_OIDC_ISSUER=${OIDC_ISSUER}' >> ~/.config/openshell/gateway.env" || true
-  guest_ssh "MFILE=~/.config/openshell/gateways/openshell/metadata.json; [[ -f \"\${MFILE}\" ]] && sed -i 's|\"oidc_issuer\":\"[^\"]*\"|\"oidc_issuer\":\"${OIDC_ISSUER}\"|' \"\${MFILE}\" || true" || true
-  echo "OIDC config patched"
-fi
+# OIDC issuer is patched at the end of run-setup.sh (after all setup phases
+# complete over mTLS) so that provider/sandbox creation is not blocked.
 
 # --- Strip governance config if disabled (avoids VM rebuild) ---
 if [[ "${GOVERNANCE_ENABLED}" != "true" ]]; then
@@ -99,4 +91,14 @@ done
 if [[ "${GW_READY}" -ne 1 ]]; then
   echo "WARN: gateway did not restart after upgrade"
   guest_ssh "journalctl --user -u openshell-gateway.service --no-pager 2>/dev/null | tail -5" || true
+else
+  # Wait for gateway to accept connections (systemd active != port ready)
+  for i in $(seq 1 15); do
+    if guest_ssh "curl -sk --max-time 2 https://127.0.0.1:17670/healthz >/dev/null 2>&1" 2>/dev/null; then
+      echo "Gateway healthy"
+      break
+    fi
+    echo "  waiting for gateway port... (attempt $i)"
+    sleep 2
+  done
 fi

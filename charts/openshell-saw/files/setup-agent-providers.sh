@@ -51,6 +51,10 @@ echo "Creating inference-proxy provider on agent VM (-> ${INFERENCE_BASE_URL})..
 if ! guest_ssh "
   set -e
   export PATH=\"\$HOME/.local/bin:\$PATH\"
+
+  # Use mTLS gateway for admin operations
+  openshell gateway select openshell-local 2>/dev/null || true
+
   BEARER=\$(cat /home/${SSH_USER}/.config/secure-agent-workspace/inter-vm-bearer)
 
   # Import inference-proxy profile (whitelists integ VM endpoint for sandbox policy)

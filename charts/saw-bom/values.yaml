@@ -5,10 +5,5 @@ profiles:
 # Active profiles to deploy on the Integrations VM (two-VM split only).
 # Each profile maps to one OpenShell workspace with its own provider/credential.
 # Leave empty to skip integrations VM provisioning.
-integrationsProfiles: []
-  # - integrations/mail-proxy
-  # - integrations/slack-read
-  # - integrations/slack-bot
-  # - integrations/web-research
-  # - integrations/post-service
-  # - integrations/slack-send
+integrationsProfiles:
+  - integrations

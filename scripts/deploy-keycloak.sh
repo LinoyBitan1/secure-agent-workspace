@@ -18,6 +18,7 @@ if [[ -z "${RHBK_CSV}" ]]; then
     echo "    1. Run: make keycloak KEYCLOAK_NS=${RHBK_NS}"
     echo "    2. Or install the RHBK operator in '${NS}' from OperatorHub"
     echo "    3. Or use ./pattern.sh make install (installs operator in ${NS} automatically)"
+    exit 1
   elif [[ -n "${RHBK_NS}" ]]; then
     echo "RHBK operator found in '${NS}' (CSV may still be installing)..."
   else

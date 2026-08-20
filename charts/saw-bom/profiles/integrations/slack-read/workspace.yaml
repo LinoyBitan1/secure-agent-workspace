@@ -1,5 +1,0 @@
-apiVersion: saw.redhat.com/v1alpha1
-kind: Workspace
-metadata:
-  name: slack-read
-  description: "GET exact methods — supervisor injects read user token at egress"

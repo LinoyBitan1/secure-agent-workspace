@@ -10,6 +10,21 @@ credentials:
     required: true
     auth_style: bearer
     header_name: authorization
+    refresh:
+      strategy: oauth2_refresh_token
+      token_url: https://oauth2.googleapis.com/token
+      scopes: []
+      refresh_before_seconds: 300
+      max_lifetime_seconds: 3600
+      material:
+        - name: client_id
+          required: true
+        - name: client_secret
+          required: true
+          secret: true
+        - name: refresh_token
+          required: true
+          secret: true
 
 discovery:
   credentials: [access_token]

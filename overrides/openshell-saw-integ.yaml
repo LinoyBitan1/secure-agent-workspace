@@ -43,7 +43,7 @@ service:
       targetPort: 18083
 
 networkPolicy:
-  peerLabel: saw-agent
+  peerLabel: openshell-saw
   allowedPorts:
     - 18080
     - 18081

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Phase: deploy proxy sandboxes on the integrations VM and expose them.
-# Fetches a short-lived OIDC token from Keycloak for admin operations.
+# Reads BOM profiles from saw-bom-integ-profiles ConfigMap (same pattern as
+# setup-bom-profiles.sh on the agent side) and deploys them via apply_bom.py.
+# Also deploys the inference reverse proxy and generates the inter-VM bearer.
 # Only runs when ROLE=integrations.
 # Expects: VM_NAME, NS, SSH_USER, WORK_DIR, OIDC_ISSUER_URL, OWNER,
 #          KEYCLOAK_NS, KEYCLOAK_NAME, guest_ssh, guest_scp (functions)
@@ -12,8 +14,6 @@ fi
 echo "============================================================"
 echo "Phase: Deploy proxy sandboxes on integrations VM"
 echo "============================================================"
-
-GMAIL_READ_IMAGE="${GMAIL_READ_IMAGE:-quay.io/sallyom/forge-gmail-read-proxy@sha256:dfb6ba5c61745c564035ea49b4e95ed2b21132b49c279c046e8e15e5e9b00f20}"
 
 # --- Step 1: Fetch OIDC token from Keycloak ---
 echo "Fetching OIDC token from Keycloak..."
@@ -80,95 +80,79 @@ else
 fi
 echo "  Bearer SHA256: ${BEARER_SHA256:0:16}..."
 
-# --- Steps 4-6: Import profile, create provider+sandbox, expose (single SSH session) ---
-echo "Setting up gmail-read: profile, provider, sandbox, forward..."
-if ! guest_ssh "
-  set -e
-  export PATH=\"\$HOME/.local/bin:\$PATH\"
+# --- Step 4: Deploy BOM profiles (workspaces, providers, sandboxes) ---
+BOM_CM="saw-bom-integ-profiles"
+BOM_MOUNT="/tmp/bom-integ-profiles"
+if kubectl get configmap "${BOM_CM}" -n "${NS}" >/dev/null 2>&1; then
+  echo "BOM integ profiles detected (ConfigMap ${BOM_CM}) — applying profiles"
 
-  # Import provider profile (required — OpenShell rejects unknown types)
-  if ! openshell provider profile export gmail-read >/dev/null 2>&1; then
-    cat > /tmp/gmail-read-profile.yaml <<'PROFEOF'
-id: gmail-read
-display_name: Gmail read proxy
-description: Gmail read-only proxy on the integrations VM
-category: data
-inference_capable: false
-credentials:
-  - name: access_token
-    env_vars: [GMAIL_ACCESS_TOKEN]
-    required: true
-    auth_style: bearer
-    header_name: authorization
-discovery:
-  credentials: [access_token]
-endpoints:
-  - host: gmail.googleapis.com
-    port: 443
-    protocol: rest
-    enforcement: enforce
-    access: read-only
-PROFEOF
-    openshell provider profile lint -f /tmp/gmail-read-profile.yaml
-    openshell provider profile import -f /tmp/gmail-read-profile.yaml
-    echo '  Imported: gmail-read profile'
-  else
-    echo '  Already imported: gmail-read profile'
-  fi
+  mkdir -p "${BOM_MOUNT}"
 
-  # Create provider
-  if ! openshell provider get gmail-read >/dev/null 2>&1; then
-    openshell provider create --name gmail-read --type gmail-read \
-      --credential GMAIL_ACCESS_TOKEN=poc-bootstrap-token
-    echo '  Created: gmail-read provider'
-  else
-    echo '  Already exists: gmail-read provider'
-  fi
+  for key in $(kubectl get configmap "${BOM_CM}" -n "${NS}" -o json | jq -r '.data | keys[]'); do
+    kubectl get configmap "${BOM_CM}" -n "${NS}" -o json | jq -r --arg k "${key}" '.data[$k]' > "${BOM_MOUNT}/${key}"
+  done
 
-  # Write sandbox policy
-  cat > /tmp/gmail-read-policy.yaml <<'POLEOF'
-version: 1
-filesystem_policy:
-  include_workdir: true
-  read_only:
-    - /usr
-    - /lib
-    - /lib64
-    - /etc
-  read_write:
-    - /sandbox
-    - /tmp
-    - /dev/null
-landlock:
-  compatibility: best_effort
-process:
-  run_as_user: \"1001\"
-  run_as_group: \"1001\"
-POLEOF
+  # Transfer BOM app + profiles to VM (clean old data first)
+  BOM_DIR="/home/${SSH_USER}/bom-profiles"
+  guest_ssh "rm -rf ${BOM_DIR} && mkdir -p ${BOM_DIR}"
+  for file in ${BOM_MOUNT}/*; do
+    key="$(basename "$file")"
+    if [[ "${key}" == "apply_bom.py" ]]; then
+      guest_scp "$file" "/home/${SSH_USER}/apply_bom.py"
+      continue
+    fi
+    IFS_OLD="${IFS}"; IFS='|'
+    read -ra parts <<< "$(echo "${key}" | sed 's/__/|/g')"
+    IFS="${IFS_OLD}"
+    if [[ ${#parts[@]} -ge 4 ]]; then
+      profile="${parts[1]}"
+      ws="${parts[2]}"
+      ws_file="${parts[3]}"
+      guest_ssh "mkdir -p ${BOM_DIR}/${profile}/${ws}"
+      guest_scp "$file" "${BOM_DIR}/${profile}/${ws}/${ws_file}"
+    fi
+  done
 
-  # Create sandbox
-  if ! openshell sandbox get gmail-read >/dev/null 2>&1; then
-    openshell sandbox create --name gmail-read \
-      --from '${GMAIL_READ_IMAGE}' \
-      --provider gmail-read \
-      --policy /tmp/gmail-read-policy.yaml \
-      --env INTER_VM_BEARER_SHA256=${BEARER_SHA256} \
-      --no-tty -- /bin/sh -lc 'nohup /sandbox/rust-email-proxy >/tmp/gmail-read-proxy.log 2>&1 </dev/null &'
-    echo '  Created: gmail-read sandbox'
-  else
-    echo '  Already exists: gmail-read sandbox'
-  fi
+  # Resolve credentials — integ VM uses placeholder credentials
+  # (real keys are injected by the proxy services, not the BOM providers)
+  BOM_ENV="${WORK_DIR}/bom-integ.env"
+  echo "Role=integrations: injecting placeholder credentials for BOM providers"
+  for file in ${BOM_MOUNT}/*; do
+    key="$(basename "$file")"
+    IFS_OLD="${IFS}"; IFS='|'
+    read -ra p <<< "$(echo "${key}" | sed 's/__/|/g')"
+    IFS="${IFS_OLD}"
+    if [[ ${#p[@]} -ge 4 && "${p[3]}" == "providers.yaml" ]]; then
+      while IFS= read -r line; do
+        if echo "${line}" | grep -q '^\s*- name:'; then
+          pname="$(echo "${line}" | sed 's/.*name: *//' | tr -d '"' | tr -d "'")"
+          env_var="$(echo "PROV_${pname}_KEY" | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+          echo "${env_var}=placeholder-api-key" >> "${BOM_ENV}"
+          echo "  Placeholder: ${pname}"
+        fi
+      done < "$file"
+    fi
+  done
 
-  # Expose via service expose (declarative, survives gateway restarts)
-  openshell service expose gmail-read 18080 gmail-read-svc 2>&1 || \
-    echo 'WARN: service expose failed'
-  openshell service list 2>&1 || true
-"; then
-  echo "ERROR: gmail-read proxy setup failed"
-  exit 1
+  # Pass inter-VM bearer SHA256 so sandboxes can use it
+  echo "INTER_VM_BEARER_SHA256=${BEARER_SHA256}" >> "${BOM_ENV}"
+
+  guest_scp "${BOM_ENV}" "/home/${SSH_USER}/bom-integ.env"
+
+  echo "Running BOM setup on vm/${VM_NAME}..."
+  guest_ssh "
+    set -a; source /home/${SSH_USER}/bom-integ.env 2>/dev/null; set +a
+    python3 /home/${SSH_USER}/apply_bom.py \
+      --profiles-dir ${BOM_DIR} \
+      --mtls-gateway openshell-local
+  " 2>&1
+
+  echo "BOM integ profiles applied."
+else
+  echo "WARNING: No BOM integ profiles ConfigMap (${BOM_CM}) found — skipping proxy sandbox provisioning."
 fi
 
-# --- Step 7: Deploy inference reverse proxy ---
+# --- Step 5: Deploy inference reverse proxy ---
 INFERENCE_PROXY_PORT="{{ .Values.inference.proxyPort | default 18083 }}"
 echo "Setting up inference reverse proxy on port ${INFERENCE_PROXY_PORT}..."
 
@@ -285,5 +269,4 @@ if [[ $? -ne 0 ]]; then
 fi
 
 echo "Integrations VM proxy setup complete."
-echo "  gmail-read proxy: ${VM_NAME}-gateway.${NS}.svc.cluster.local:18080"
 echo "  inference proxy:  ${VM_NAME}-gateway.${NS}.svc.cluster.local:${INFERENCE_PROXY_PORT}"

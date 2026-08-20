@@ -90,15 +90,20 @@ source "${SCRIPTS_DIR}/check-governance.sh"
 # --- Phase 7: BOM profile setup ---
 if [[ "${ROLE}" == "integrations" ]]; then
   source "${SCRIPTS_DIR}/setup-integ-proxies.sh"
+  # Enable OIDC on the gateway now that setup is complete
+  source "${SCRIPTS_DIR}/patch-oidc.sh"
   echo "Integrations VM setup complete on vm/${VM_NAME}."
   exit 0
 fi
 
 source "${SCRIPTS_DIR}/setup-bom-profiles.sh"
 
-# --- Phase 7: Dashboard setup ---
+# --- Phase 8: Dashboard setup ---
 if [[ "${DASHBOARD_ENABLED}" == "true" ]]; then
   source "${SCRIPTS_DIR}/setup-keycloak-redirect.sh"
 fi
+
+# --- Phase 9: Enable OIDC (after all setup completes over mTLS) ---
+source "${SCRIPTS_DIR}/patch-oidc.sh"
 
 echo "Setup complete on vm/${VM_NAME}"

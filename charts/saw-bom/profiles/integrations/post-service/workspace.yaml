@@ -1,5 +1,0 @@
-apiVersion: saw.redhat.com/v1alpha1
-kind: Workspace
-metadata:
-  name: post-service
-  description: "No model, no agent — supervisor injects write token at egress"

@@ -1,5 +1,0 @@
-apiVersion: saw.redhat.com/v1alpha1
-kind: Workspace
-metadata:
-  name: web-research
-  description: "Gated fetch — supervisor injects Tavily key at egress"

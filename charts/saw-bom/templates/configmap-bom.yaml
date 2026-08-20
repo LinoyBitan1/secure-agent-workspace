@@ -23,7 +23,7 @@ data:
 {{- end }}
 {{- $integProfileFiles := dict }}
 {{- range $profile := .Values.integrationsProfiles }}
-{{- $files := $.Files.Glob (printf "profiles/%s/*.yaml" $profile) }}
+{{- $files := $.Files.Glob (printf "profiles/%s/**/*.yaml" $profile) }}
 {{- range $path, $_ := $files }}
 {{- $_ := set $integProfileFiles $path ($.Files.Get $path) }}
 {{- end }}
