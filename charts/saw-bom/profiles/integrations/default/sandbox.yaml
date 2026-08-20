@@ -1,0 +1,31 @@
+apiVersion: saw.redhat.com/v1alpha1
+kind: Sandboxes
+metadata: {}
+spec:
+  sandboxes:
+    - name: mail-proxy
+      type: generic
+      enabled: true
+      image: quay.io/sallyom/gmail-read-proxy:latest
+      command: "/sandbox/gmail-read-proxy"
+      exposePort: 18080
+    - name: slack-read
+      type: generic
+      enabled: false
+      image: base
+    - name: slack-bot
+      type: generic
+      enabled: false
+      image: base
+    - name: slack-send
+      type: generic
+      enabled: false
+      image: base
+    - name: web-research
+      type: generic
+      enabled: false
+      image: base
+    - name: post-service
+      type: generic
+      enabled: false
+      image: base

@@ -4,4 +4,4 @@ metadata:
   name: cuda-dev
   description: "CUDA development workspace with NVIDIA inference"
 spec:
-  enabled: true
+  enabled: false

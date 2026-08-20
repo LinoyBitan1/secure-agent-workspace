@@ -89,3 +89,10 @@ clusterGroup:
       path: charts/openshell-saw
       extraValueFiles:
         - /overrides/openshell-saw.yaml
+    # Two-VM split: comment out to disable the integrations VM.
+    openshell-saw-integ:
+      name: openshell-saw-integ
+      namespace: openshell-agents
+      path: charts/openshell-saw
+      extraValueFiles:
+        - /overrides/openshell-saw-integ.yaml

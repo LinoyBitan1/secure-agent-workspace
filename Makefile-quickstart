@@ -27,6 +27,7 @@ KEYCLOAK_CHART := charts/openshell-keycloak
 KEYCLOAK_NS    ?= $(NS)
 SCRIPTS_DIR    := scripts
 GUI_PORT       ?= 18789
+WORKSPACE      ?= default
 
 SSH_PUBKEY = $(shell cat "$(SSH_KEY_PATH).pub" 2>/dev/null)
 
@@ -42,7 +43,7 @@ SSH_PUBKEY = $(shell cat "$(SSH_KEY_PATH).pub" 2>/dev/null)
 	@test -f "$(SSH_KEY_PATH).pub" || { \
 		echo "Error: SSH key not found at $(SSH_KEY_PATH).pub"; \
 		echo "Generate one with: make generate-keys"; \
-		echo "Or set SSH_KEY_PATH to your own key: make openshell-saw-create SSH_KEY_PATH=~/.ssh/my_key"; \
+		echo "Or set SSH_KEY_PATH to your own key: make saw-create SSH_KEY_PATH=~/.ssh/my_key"; \
 		exit 1; \
 	}
 
@@ -80,15 +81,15 @@ SSH_PUBKEY = $(shell cat "$(SSH_KEY_PATH).pub" 2>/dev/null)
 	echo "  Image registry route: enabled"
 	@echo "Prerequisites OK."
 
-.PHONY: check-prereqs generate-keys \
-        build-nemoclaw build-nemoclaw-cli build-openclaw-openshell \
-        build-gateway-docker build-gateway-podman copy-images \
-        keycloak keycloak-issuer login whoami logout delete-keycloak \
-        openshell-saw-create openshell-saw-list openshell-saw-logs openshell-saw-ssh ssh-secret \
-        openshell-saw-configure-gateway openshell-saw-tui openshell-saw-gui test \
-        openshell-saw-delete sandbox-pre-delete delete-all status \
+.PHONY: check-prereqs generate-keys inference-secret ssh-secret keycloak keycloak-issuer login whoami logout delete-keycloak \
+        build-nemoclaw build-nemoclaw-cli build-openclaw-openshell build-gateway-docker build-gateway-podman copy-images \
+        deploy-config deploy-agent-vm deploy-integ-vm deploy-bom saw-create \
+        saw-ssh saw-logs saw-list saw-tui saw-gui saw-configure-gateway \
+        tui gui nemoclaw-tui nemoclaw-gui openclaw-tui openclaw-gui \
+        test e2e-test configure-gmail-refresh \
+        saw-delete sandbox-pre-delete delete-vms delete-all \
         governance-list-profiles governance-add-profile governance-remove-profile governance-create-profile governance-demo \
-        .check-saw-name .check-ssh-key .check-prereqs
+        status .check-saw-name .check-ssh-key .check-prereqs
 
 check-prereqs: .check-prereqs ## Verify required operators and CLI tools
 
@@ -207,9 +208,43 @@ copy-images: ## Mirror pre-built images from quay to the internal registry
 		echo "All images mirrored (tag: $(OPENSHELL_VERSION), also tagged as :latest)."; \
 	fi
 
-# Generate SSH keys before pattern-install. Golden image is managed by ArgoCD
-# (openshell-gateway-image app). For manual flow, run: make copy-images
+# Clean stale operator CRDs from a previous install that block reinstallation.
+# CNV leaves CRDs with broken conversion webhooks; RHBK CSV races the OperatorGroup.
+# Safe to run on a clean cluster (no-ops if nothing stale exists).
+clean-stale-operators:
+	@echo "Cleaning stale operator CRDs (if any)..."
+	@for crd in $$(oc get crd 2>/dev/null | grep -E 'kubevirt|hco|cdi|aaq|hpp|ssp|cnao' | awk '{print $$1}'); do \
+		oc patch crd "$$crd" --type json -p '[{"op":"replace","path":"/spec/conversion","value":{"strategy":"None"}}]' 2>/dev/null || true; \
+		oc delete crd "$$crd" 2>/dev/null || true; \
+	done
+	@for app in $$(oc get application -n vp-gitops -o name 2>/dev/null); do \
+		oc patch $$app -n vp-gitops --type json -p '[{"op":"remove","path":"/metadata/finalizers"}]' 2>/dev/null || true; \
+	done
+	@echo "Stale operator cleanup done."
+
+# Delete VMs, HyperConverged CR, and operator CRDs before uninstall so
+# ArgoCD doesn't get stuck on webhook finalizers. Then clean stale state.
+pre-uninstall:
+	@echo "Pre-uninstall: deleting VMs and CNV resources..."
+	-@oc delete vm --all -n $(NS) --wait=false 2>/dev/null
+	-@oc delete dv --all -n $(NS) --wait=false 2>/dev/null
+	-@oc delete job --all -n $(NS) --wait=false 2>/dev/null
+	-@oc delete hyperconverged --all -n openshift-cnv --wait=false 2>/dev/null
+	@echo "Waiting for VMs to terminate..."
+	-@sleep 15
+	$(MAKE) clean-stale-operators
+
+# Generate SSH keys before install. No deletions — safe to run repeatedly.
 pattern-install: generate-keys
+
+# Override Makefile-common's uninstall to handle missing pattern CR gracefully.
+uninstall: pre-uninstall ## Uninstall the pattern (with pre-cleanup)
+	@if oc get patterns secure-agent-workspace -n patterns-operator >/dev/null 2>&1; then \
+		$(ANSIBLE_RUN) rhvp.cluster_utils.uninstall; \
+	else \
+		echo "Pattern CR not found — already uninstalled. Cleaning up namespace..."; \
+		oc delete ns $(NS) --wait=false 2>/dev/null || true; \
+	fi
 
 # Clean up a single sandbox's heavy resources before uninstall to prevent
 # finalizer hangs. VMs and DataVolumes take time to terminate and block
@@ -265,7 +300,20 @@ delete-keycloak: ## Uninstall Keycloak + PostgreSQL
 	-oc delete secret keycloak-db-secret -n $(KEYCLOAK_NS) 2>/dev/null
 	@echo "Keycloak cleaned up."
 
-# --- SSH secret ---
+# --- Secrets ---
+
+inference-secret: ## Create inference provider Secret (API_KEY=, PROVIDER=nvidia, MODEL=)
+	@if [ -z "$(API_KEY)" ]; then \
+		echo "Error: API_KEY is required."; \
+		echo "  Usage: make inference-secret API_KEY=nvapi-... PROVIDER=nvidia MODEL=deepseek-ai/deepseek-v4-flash-0731"; \
+		exit 1; \
+	fi
+	kubectl create secret generic inference -n $(NS) \
+		--from-literal=api_key="$(API_KEY)" \
+		--from-literal=provider="$(if $(PROVIDER),$(PROVIDER),nvidia)" \
+		--from-literal=model="$(if $(MODEL),$(MODEL),deepseek-ai/deepseek-v4-flash-0731)" \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "Secret 'inference' created in namespace $(NS)"
 
 ssh-secret: ## Create SSH key secrets for sandbox Jobs
 	oc -n $(NS) create secret generic openshell-aap-ssh \
@@ -277,7 +325,7 @@ ssh-secret: ## Create SSH key secrets for sandbox Jobs
 
 # --- Sandbox ---
 
-openshell-saw-create: .check-saw-name .check-ssh-key ssh-secret ## Provision a sandbox (PROVIDER=, MODEL=, API_KEY=, CONTAINER_RUNTIME=docker|podman)
+saw-create: .check-saw-name .check-ssh-key ssh-secret ## Provision a sandbox (PROVIDER=, MODEL=, API_KEY=, CONTAINER_RUNTIME=docker|podman)
 	@NS=$(NS) OPENSHELL_SAW_NAME=$(OPENSHELL_SAW_NAME) SAW_CHART=$(SAW_CHART) \
 	SANDBOX_IMAGE=$(SANDBOX_IMAGE) SSH_PUBKEY="$(SSH_PUBKEY)" AGENT=$(AGENT) \
 	PROVIDER=$(PROVIDER) MODEL=$(MODEL) API_KEY=$(API_KEY) \
@@ -287,9 +335,9 @@ openshell-saw-create: .check-saw-name .check-ssh-key ssh-secret ## Provision a s
 	NAMESPACE_MODE=$(NAMESPACE_MODE) SCRIPTS_DIR=$(SCRIPTS_DIR) \
 	CONTAINER_RUNTIME=$(CONTAINER_RUNTIME) \
 	GOVERNANCE_ENABLED=$(GOVERNANCE_ENABLED) \
-	$(SCRIPTS_DIR)/openshell-saw-create.sh
+	$(SCRIPTS_DIR)/saw-create.sh
 
-openshell-saw-configure-gateway: .check-saw-name ## Configure openshell CLI for a sandbox gateway
+saw-configure-gateway: .check-saw-name ## Configure openshell CLI for a sandbox gateway
 	@command -v openshell >/dev/null 2>&1 || { echo "Error: openshell CLI not found."; exit 1; }
 	@GW_URL=$$(oc get route $(OPENSHELL_SAW_NAME)-gateway -n $(NS) -o jsonpath='https://{.spec.host}' 2>/dev/null); \
 	if [ -z "$$GW_URL" ]; then echo "Error: Gateway route not found for '$(OPENSHELL_SAW_NAME)'."; exit 1; fi; \
@@ -325,7 +373,7 @@ json.dump(gt, open('$$GW_TOKEN_DIR/oidc_token.json','w'))" 2>/dev/null && \
 		echo "Token copy skipped (already authenticated via gateway login)."; \
 	fi
 
-openshell-saw-list: ## List all sandboxes
+saw-list: ## List all sandboxes
 	@printf "%-20s %-12s %-10s %s\n" "NAME" "STATUS" "VM" "CREATED"
 	@helm list -n $(NS) --filter '.*' -o json 2>/dev/null \
 		| jq -r '.[] | select(.chart | startswith("openshell-saw")) | .name' 2>/dev/null \
@@ -336,10 +384,10 @@ openshell-saw-list: ## List all sandboxes
 			printf "%-20s %-12s %-10s %s\n" "$$name" "$$status" "$$vm" "$$created"; \
 		done
 
-openshell-saw-logs: .check-saw-name ## Follow sandbox setup Job logs
+saw-logs: .check-saw-name ## Follow sandbox setup Job logs
 	oc -n $(NS) logs -f job/$(OPENSHELL_SAW_NAME)-setup
 
-openshell-saw-ssh: .check-saw-name ## SSH into a sandbox
+saw-ssh: .check-saw-name ## SSH into a sandbox
 	@ssh -o "ProxyCommand=openshell --gateway-insecure ssh-proxy --gateway-name $(OPENSHELL_SAW_NAME) --name $(OPENSHELL_SAW_NAME) " \
 		-o StrictHostKeyChecking=no \
 		-o UserKnownHostsFile=/dev/null \
@@ -348,54 +396,68 @@ openshell-saw-ssh: .check-saw-name ## SSH into a sandbox
 
 # --- User access ---
 
-nemoclaw-tui: .check-saw-name ## Launch NemoClaw TUI (SANDBOX_NAME=<name>)
+tui: ## Launch OpenClaw TUI (auto-configures gateway, defaults to agent VM)
+	@$(MAKE) saw-configure-gateway OPENSHELL_SAW_NAME=$(AGENT_VM_NAME) KEYCLOAK_NS=$(KEYCLOAK_NS) 2>/dev/null || true
+	@$(MAKE) openclaw-tui OPENSHELL_SAW_NAME=$(AGENT_VM_NAME) SANDBOX_NAME=$(SANDBOX_NAME) WORKSPACE=$(WORKSPACE)
+
+gui: ## Open OpenClaw web UI (auto-configures gateway, defaults to agent VM)
+	@$(MAKE) saw-configure-gateway OPENSHELL_SAW_NAME=$(AGENT_VM_NAME) KEYCLOAK_NS=$(KEYCLOAK_NS) 2>/dev/null || true
+	@$(MAKE) openclaw-gui OPENSHELL_SAW_NAME=$(AGENT_VM_NAME) SANDBOX_NAME=$(SANDBOX_NAME) WORKSPACE=$(WORKSPACE) GUI_PORT=$(GUI_PORT)
+
+nemoclaw-tui: .check-saw-name ## Launch NemoClaw TUI (e.g. make nemoclaw-tui SANDBOX_NAME=cuda-sandbox WORKSPACE=cuda-dev)
 	@if [ -n "$(SANDBOX_NAME)" ]; then \
 		SANDBOX="$(SANDBOX_NAME)"; \
 	else \
-		SANDBOX=$$(openshell --gateway $(OPENSHELL_SAW_NAME) --gateway-insecure sandbox list --names 2>/dev/null | grep -E '^[a-zA-Z0-9_-]+$$' | head -1); \
+		SANDBOX=$$(openshell --gateway $(OPENSHELL_SAW_NAME) --gateway-insecure sandbox list --workspace $(WORKSPACE) --names 2>/dev/null | grep -E '^[a-zA-Z0-9_-]+$$' | head -1); \
 	fi; \
-	if [ -z "$$SANDBOX" ]; then echo "Error: No sandboxes found on gateway '$(OPENSHELL_SAW_NAME)'."; exit 1; fi; \
-	echo "Connecting to sandbox '$$SANDBOX' (nemoclaw)..."; \
+	if [ -z "$$SANDBOX" ]; then echo "Error: No sandboxes found on gateway '$(OPENSHELL_SAW_NAME)' workspace '$(WORKSPACE)'."; exit 1; fi; \
+	echo "Connecting to sandbox '$$SANDBOX' workspace '$(WORKSPACE)' (nemoclaw)..."; \
 	ssh -o "ProxyCommand=openshell --gateway-insecure ssh-proxy --gateway-name $(OPENSHELL_SAW_NAME) --name $$SANDBOX " \
 		-o StrictHostKeyChecking=no \
 		-o UserKnownHostsFile=/dev/null \
 		-o LogLevel=ERROR \
-		-tt sandbox@openshell-$$SANDBOX.default openclaw
+		-tt sandbox@openshell-$$SANDBOX.$(WORKSPACE) openclaw
 
-openclaw-tui: .check-saw-name ## Launch OpenClaw TUI (SANDBOX_NAME=<name>)
+openclaw-tui: .check-saw-name ## Launch OpenClaw TUI (e.g. make openclaw-tui SANDBOX_NAME=notebook)
 	@if [ -n "$(SANDBOX_NAME)" ]; then \
 		SANDBOX="$(SANDBOX_NAME)"; \
 	else \
-		SANDBOX=$$(openshell --gateway $(OPENSHELL_SAW_NAME) --gateway-insecure sandbox list --names 2>/dev/null | grep -E '^[a-zA-Z0-9_-]+$$' | head -1); \
+		SANDBOX=$$(openshell --gateway $(OPENSHELL_SAW_NAME) --gateway-insecure sandbox list --workspace $(WORKSPACE) --names 2>/dev/null | grep -E '^[a-zA-Z0-9_-]+$$' | head -1); \
 	fi; \
-	if [ -z "$$SANDBOX" ]; then echo "Error: No sandboxes found on gateway '$(OPENSHELL_SAW_NAME)'."; exit 1; fi; \
-	echo "Connecting to sandbox '$$SANDBOX' (openclaw)..."; \
-	openshell --gateway-insecure sandbox exec -n $$SANDBOX --tty -- \
-		/bin/bash -ic 'export HOME=/sandbox OPENCLAW_HOME=/sandbox SQLITE_TMPDIR=/sandbox/.openclaw/state TMPDIR=/sandbox/.openclaw/state OPENCLAW_NIX_MODE=0 TERM=xterm-256color; exec openclaw tui'
+	if [ -z "$$SANDBOX" ]; then echo "Error: No sandboxes found on gateway '$(OPENSHELL_SAW_NAME)' workspace '$(WORKSPACE)'."; exit 1; fi; \
+	echo "Connecting to sandbox '$$SANDBOX' workspace '$(WORKSPACE)' (openclaw)..."; \
+	ssh -o "ProxyCommand=openshell --gateway-insecure ssh-proxy --gateway-name $(OPENSHELL_SAW_NAME) --name $$SANDBOX" \
+		-o StrictHostKeyChecking=no \
+		-o UserKnownHostsFile=/dev/null \
+		-o LogLevel=ERROR \
+		-tt sandbox@openshell-$$SANDBOX.$(WORKSPACE) \
+		'export HOME=/sandbox OPENCLAW_HOME=/sandbox SQLITE_TMPDIR=/sandbox/.openclaw/state TMPDIR=/sandbox/.openclaw/state OPENCLAW_NIX_MODE=0 TERM=xterm-256color; exec openclaw tui'
 
-openshell-saw-tui: .check-saw-name ## Launch TUI (alias for nemoclaw-tui)
-	@$(MAKE) nemoclaw-tui OPENSHELL_SAW_NAME=$(OPENSHELL_SAW_NAME) SANDBOX_NAME=$(SANDBOX_NAME)
+saw-tui: .check-saw-name ## Launch TUI (alias for nemoclaw-tui)
+	@$(MAKE) nemoclaw-tui OPENSHELL_SAW_NAME=$(OPENSHELL_SAW_NAME) SANDBOX_NAME=$(SANDBOX_NAME) WORKSPACE=$(WORKSPACE)
 
-nemoclaw-gui: .check-saw-name ## Open NemoClaw web UI (SANDBOX_NAME=<name>, GUI_PORT=18789)
+nemoclaw-gui: .check-saw-name ## Open NemoClaw web UI (e.g. make nemoclaw-gui SANDBOX_NAME=cuda-sandbox WORKSPACE=cuda-dev)
 	@if [ -n "$(SANDBOX_NAME)" ]; then \
 		SANDBOX="$(SANDBOX_NAME)"; \
 	else \
-		SANDBOX=$$(openshell --gateway $(OPENSHELL_SAW_NAME) --gateway-insecure sandbox list --names 2>/dev/null | grep -E '^[a-zA-Z0-9_-]+$$' | head -1); \
+		SANDBOX=$$(openshell --gateway $(OPENSHELL_SAW_NAME) --gateway-insecure sandbox list --workspace $(WORKSPACE) --names 2>/dev/null | grep -E '^[a-zA-Z0-9_-]+$$' | head -1); \
 	fi; \
 	if [ -z "$$SANDBOX" ]; then echo "Error: No sandboxes found."; exit 1; fi; \
 	SANDBOX_NAME=$$SANDBOX GATEWAY_NAME=$(OPENSHELL_SAW_NAME) \
-	GUI_PORT=$(GUI_PORT) $(SCRIPTS_DIR)/openshell-saw-gui.sh
+	GUI_PORT=$(GUI_PORT) $(SCRIPTS_DIR)/saw-gui.sh
 
-openclaw-gui: .check-saw-name ## Open OpenClaw web UI (SANDBOX_NAME=<name>, GUI_PORT=18789)
+openclaw-gui: .check-saw-name ## Open OpenClaw web UI (e.g. make openclaw-gui SANDBOX_NAME=notebook GUI_PORT=28789)
 	@if [ -n "$(SANDBOX_NAME)" ]; then \
 		SANDBOX="$(SANDBOX_NAME)"; \
 	else \
-		SANDBOX=$$(openshell --gateway $(OPENSHELL_SAW_NAME) --gateway-insecure sandbox list --names 2>/dev/null | grep -E '^[a-zA-Z0-9_-]+$$' | head -1); \
+		SANDBOX=$$(openshell --gateway $(OPENSHELL_SAW_NAME) --gateway-insecure sandbox list --workspace $(WORKSPACE) --names 2>/dev/null | grep -E '^[a-zA-Z0-9_-]+$$' | head -1); \
 	fi; \
 	if [ -z "$$SANDBOX" ]; then echo "Error: No sandboxes found."; exit 1; fi; \
 	echo "Fetching openclaw gateway token..."; \
-	TOKEN=$$(openshell --gateway-insecure sandbox exec -n $$SANDBOX --no-tty -- \
-		sh -c 'OPENCLAW_HOME=/sandbox cat /sandbox/.openclaw/openclaw.json' 2>/dev/null \
+	TOKEN=$$(ssh -o "ProxyCommand=openshell --gateway-insecure ssh-proxy --gateway-name $(OPENSHELL_SAW_NAME) --name $$SANDBOX" \
+		-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 \
+		sandbox@openshell-$$SANDBOX.$(WORKSPACE) \
+		"OPENCLAW_HOME=/sandbox cat /sandbox/.openclaw/openclaw.json" 2>/dev/null \
 		| grep -v 'TLS certificate' \
 		| python3 -c "import sys,json; c=json.load(sys.stdin); print(c.get('gateway',{}).get('auth',{}).get('token',''))" 2>/dev/null || true); \
 	if [ -z "$$TOKEN" ]; then echo "Error: Could not extract token."; exit 1; fi; \
@@ -406,15 +468,10 @@ openclaw-gui: .check-saw-name ## Open OpenClaw web UI (SANDBOX_NAME=<name>, GUI_
 	echo "OpenClaw UI: http://localhost:$$GUI_PORT/#token=$$TOKEN"; \
 	echo "Press Ctrl-C to stop."; \
 	echo ""; \
-	ssh -o "ProxyCommand=openshell --gateway-insecure ssh-proxy --gateway-name $(OPENSHELL_SAW_NAME) --name $$SANDBOX" \
-		-o StrictHostKeyChecking=no \
-		-o UserKnownHostsFile=/dev/null \
-		-o LogLevel=ERROR \
-		-L "$$GUI_PORT:127.0.0.1:18789" \
-		-N sandbox@openshell-$$SANDBOX.default
+	kubectl port-forward svc/$(OPENSHELL_SAW_NAME)-gateway -n $(NS) $$GUI_PORT:18789
 
-openshell-saw-gui: .check-saw-name ## Open web UI (alias for nemoclaw-gui)
-	@$(MAKE) nemoclaw-gui OPENSHELL_SAW_NAME=$(OPENSHELL_SAW_NAME) SANDBOX_NAME=$(SANDBOX_NAME) GUI_PORT=$(GUI_PORT)
+saw-gui: .check-saw-name ## Open web UI (alias for nemoclaw-gui)
+	@$(MAKE) nemoclaw-gui OPENSHELL_SAW_NAME=$(OPENSHELL_SAW_NAME) SANDBOX_NAME=$(SANDBOX_NAME) WORKSPACE=$(WORKSPACE) GUI_PORT=$(GUI_PORT)
 
 # --- Governance profiles ---
 
@@ -443,7 +500,7 @@ test: ## Run headless E2E test (auto-detects provider from ~/values-secret.yaml)
 
 # --- Teardown ---
 
-openshell-saw-delete: sandbox-pre-delete ## Uninstall a sandbox
+saw-delete: sandbox-pre-delete ## Uninstall a sandbox
 	helm uninstall $(OPENSHELL_SAW_NAME) --namespace $(NS)
 
 delete-all: ## Uninstall everything (keycloak + imagestreams + gateway image)
@@ -452,6 +509,95 @@ delete-all: ## Uninstall everything (keycloak + imagestreams + gateway image)
 	-helm uninstall nemoclaw-imagestream --namespace $(NS) 2>/dev/null
 	-helm uninstall nemoclaw-cli-imagestream --namespace $(NS) 2>/dev/null
 	@echo "Note: sandbox releases must be uninstalled individually."
+
+# --- Two-VM Split Architecture ---
+#
+# Workflow (new VMs via OpenShift Virtualization):
+#   1. make generate-keys              # or use existing: SSH_KEY_PATH=~/.ssh/my_key
+#   2. make deploy-config API_KEY=...  # creates SSH secrets + BOM configmap + inference secret
+#   3. make deploy-integ-vm            # creates integrations VM
+#   4. make deploy-agent-vm            # creates agent VM
+#
+# Workflow (pre-existing VMs):
+#   1. make deploy-config API_KEY=...  # SSH secrets + BOM configmap + inference secret still needed
+#   2. make deploy-integ-vm INTEG_HOST=10.0.1.6
+#   3. make deploy-agent-vm AGENT_HOST=10.0.1.5 INTEG_HOST=10.0.1.6
+
+AGENT_VM_NAME    ?= openshell-saw
+INTEG_VM_NAME    ?= openshell-saw-integ
+BOM_CHART        := charts/saw-bom
+AGENT_HOST       ?=
+INTEG_HOST       ?=
+INTEG_PORT       ?= 18083
+INFERENCE_MODEL  ?= deepseek-ai/deepseek-v4-flash-0731
+
+deploy-config: .check-ssh-key ssh-secret deploy-bom ## Create SSH secrets, BOM configmap, and inference secret (if API_KEY set)
+	@if [ -n "$(API_KEY)" ]; then \
+		$(MAKE) inference-secret; \
+	fi
+	@echo "Configuration deployed."
+
+deploy-bom: ## Deploy BOM profiles (configures workspaces, providers, sandboxes)
+	helm upgrade --install saw-bom $(BOM_CHART) \
+		--namespace $(NS)
+
+deploy-agent-vm: ## Deploy Agent VM (set AGENT_HOST= for a pre-existing VM)
+	@if [ -n "$(AGENT_HOST)" ]; then \
+		$(SCRIPTS_DIR)/configure-vm.sh --role agent \
+			--host $(AGENT_HOST) \
+			--ssh-key $(SSH_KEY_PATH) \
+			$(if $(INTEG_HOST),--integ-host $(INTEG_HOST)) \
+			--integ-port $(INTEG_PORT) \
+			--model $(if $(MODEL),$(MODEL),$(INFERENCE_MODEL)); \
+	else \
+		OIDC_URL="$(OIDC_ISSUER)"; \
+		if [ -z "$$OIDC_URL" ]; then \
+			KC_HOST=$$(oc get route -n $(KEYCLOAK_NS) -l app=keycloak -o jsonpath='{.items[0].spec.host}' 2>/dev/null); \
+			if [ -n "$$KC_HOST" ]; then OIDC_URL="https://$$KC_HOST/realms/openshell"; fi; \
+		fi; \
+		helm upgrade --install $(AGENT_VM_NAME) $(SAW_CHART) \
+			--namespace $(NS) --create-namespace \
+			-f overrides/openshell-saw.yaml \
+			--set sshPublicKey="$$(cat $(SSH_KEY_PATH).pub)" \
+			$(if $(KEYCLOAK_NS),--set dashboard.keycloakNamespace=$(KEYCLOAK_NS)) \
+			$$([ -n "$$OIDC_URL" ] && echo "--set oidc.issuerUrl=$$OIDC_URL"); \
+	fi
+
+deploy-integ-vm: ## Deploy Integrations VM (set INTEG_HOST= for a pre-existing VM)
+	@if [ -n "$(INTEG_HOST)" ]; then \
+		$(SCRIPTS_DIR)/configure-vm.sh --role integ \
+			--host $(INTEG_HOST) \
+			--ssh-key $(SSH_KEY_PATH) \
+			--integ-port $(INTEG_PORT) \
+			$(if $(API_KEY),--api-key $(API_KEY)); \
+	else \
+		helm upgrade --install $(INTEG_VM_NAME) $(SAW_CHART) \
+			--namespace $(NS) --create-namespace \
+			-f overrides/openshell-saw-integ.yaml \
+			--set sshPublicKey="$$(cat $(SSH_KEY_PATH).pub)"; \
+	fi
+
+delete-vms: ## Delete both VMs and BOM
+	-helm uninstall $(AGENT_VM_NAME) -n $(NS) 2>/dev/null
+	-helm uninstall $(INTEG_VM_NAME) -n $(NS) 2>/dev/null
+	-helm uninstall saw-bom -n $(NS) 2>/dev/null
+	-kubectl delete secret inter-vm-bearer -n $(NS) 2>/dev/null
+	@echo "Waiting for VMs to terminate..."
+	-@kubectl wait --for=delete vm/$(AGENT_VM_NAME) vm/$(INTEG_VM_NAME) -n $(NS) --timeout=120s 2>/dev/null || true
+	@echo "Resources deleted."
+
+e2e-test: ## Run two-VM E2E test
+	SSH_KEY_PATH=$(SSH_KEY_PATH) NS=$(NS) \
+		AGENT_VM=$(AGENT_VM_NAME) INTEG_VM=$(INTEG_VM_NAME) \
+		$(SCRIPTS_DIR)/test-two-vm-e2e.sh
+
+configure-gmail-refresh: ## Configure Gmail OAuth refresh on integrations VM (CLIENT_JSON=, TOKEN_EXPORT=)
+	$(SCRIPTS_DIR)/configure-gmail-refresh.sh \
+		--client-json $(CLIENT_JSON) \
+		--token-export $(TOKEN_EXPORT) \
+		--namespace $(NS) \
+		--vm $(INTEG_VM_NAME) \
+		--ssh-key $(SSH_KEY_PATH)
 
 # --- Status ---
 

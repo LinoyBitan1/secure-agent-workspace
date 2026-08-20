@@ -34,6 +34,7 @@ KEYCLOAK_NS="{{ .Values.dashboard.keycloakNamespace | default .Release.Namespace
 KEYCLOAK_NAME="{{ .Values.dashboard.keycloakName | default "openshell-keycloak" }}"
 OWNER="{{ .Values.accessControl.owner | default "alice" }}"
 NEMOCLAW_CLI_IMAGE="{{ .Values.nemoclawCliImage }}"
+ROLE="{{ .Values.role }}"
 
 if [[ "${RUNTIME}" == "podman" && "${ONBOARD_CLI}" == "nemoclaw" ]]; then
   echo "ERROR: NemoClaw onboarding requires Docker. Set containerRuntime=docker or use onboardCli=openclaw." >&2
@@ -80,15 +81,29 @@ source "${SCRIPTS_DIR}/wait-for-vm.sh"
 # --- Phase 4: Upgrade OpenShell binaries ---
 source "${SCRIPTS_DIR}/upgrade-openshell.sh"
 
-# --- Phase 5: Governance check + SSH key fallback ---
+# --- Phase 5: Agent provider routing + NetworkPolicy (agent role only) ---
+source "${SCRIPTS_DIR}/setup-agent-providers.sh"
+
+# --- Phase 6: Governance check + SSH key fallback ---
 source "${SCRIPTS_DIR}/check-governance.sh"
 
-# --- Phase 6: BOM profile setup ---
+# --- Phase 7: BOM profile setup ---
+if [[ "${ROLE}" == "integrations" ]]; then
+  source "${SCRIPTS_DIR}/setup-integ-proxies.sh"
+  # Enable OIDC on the gateway now that setup is complete
+  source "${SCRIPTS_DIR}/patch-oidc.sh"
+  echo "Integrations VM setup complete on vm/${VM_NAME}."
+  exit 0
+fi
+
 source "${SCRIPTS_DIR}/setup-bom-profiles.sh"
 
-# --- Phase 7: Dashboard setup ---
+# --- Phase 8: Dashboard setup ---
 if [[ "${DASHBOARD_ENABLED}" == "true" ]]; then
   source "${SCRIPTS_DIR}/setup-keycloak-redirect.sh"
 fi
+
+# --- Phase 9: Enable OIDC (after all setup completes over mTLS) ---
+source "${SCRIPTS_DIR}/patch-oidc.sh"
 
 echo "Setup complete on vm/${VM_NAME}"

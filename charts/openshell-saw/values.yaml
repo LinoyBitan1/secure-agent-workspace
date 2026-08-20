@@ -1,5 +1,11 @@
 # Required — must be set at install time. Maximum 19 characters (OpenShell limit).
 sandboxName: ""
+
+# VM role in the deployment architecture:
+#   standalone  — single-VM mode: full setup (sandbox, dashboard, routes, BOM profiles)
+#   agent       — two-VM split: agent sandbox, no real credentials, NetworkPolicy egress
+#   integrations — two-VM split: gateway-only, proxy ports, NetworkPolicy ingress
+role: standalone
 # SSH public key for VM access. Set explicitly, or leave empty to read
 # from the 'public_key' field in the sshSecret (created by ESO/pattern-secrets).
 sshPublicKey: ""
@@ -82,6 +88,7 @@ inference:
   apiKey: ""
   endpointUrl: ""
   webSearch: ""
+  proxyPort: 18083
   # Name of a k8s Secret containing provider, model, and api_key fields.
   # Defaults to "inference" (created by ESO from Vault via values-secret.yaml).
   # The Job reads provider/model/api_key from this secret automatically.
@@ -131,6 +138,24 @@ route:
   # OpenShell Dashboard web UI (see `dashboard` below). Distinct from `dashboard`
   # above, which is the OpenClaw in-sandbox web UI on port 18789.
   webui: true
+
+# Additional ports exposed by the VM Service and VirtualMachine. Used by
+# sandboxed services managed separately (e.g. proxy ports in two-VM split).
+service:
+  extraPorts: []
+  # - name: gmail-read
+  #   port: 18080
+  #   targetPort: 18080
+
+# Two-VM split: name of the peer VM's app label and allowed proxy ports.
+# Only used when role is "agent" or "integrations".
+# Two-VM split: peer VM label and proxy ports for provider profile routing.
+# NetworkPolicy is applied post-setup via deploy/two-vm/networkpolicy.yaml.
+networkPolicy:
+  peerLabel: ""
+  allowedPorts: []
+  # - 18080
+  # - 18081
 
 # OpenShell Dashboard — standalone Go BFF + React admin UI for OpenShell
 # (gateways, workspaces, sandboxes, providers). Runs via docker inside the

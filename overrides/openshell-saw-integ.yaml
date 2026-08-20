@@ -1,0 +1,51 @@
+# Integrations VM — gateway-only, proxy sandboxes deployed post-setup.
+sandboxName: saw-integ
+role: integrations
+
+containerRuntime: podman
+onboardCli: openclaw
+
+openshell:
+  gatewayImage: "ghcr.io/nvidia/openshell/gateway:0.0.103"
+  supervisorImage: "ghcr.io/nvidia/openshell/supervisor:0.0.103"
+  version: "0.0.103"
+  pipIndexUrl: ""
+
+vm:
+  cores: 2
+  memory: 4Gi
+  diskSize: 40Gi
+
+route:
+  enabled: false
+  dashboard: false
+  webui: false
+
+dashboard:
+  enabled: false
+
+governance:
+  enabled: false
+
+service:
+  extraPorts:
+    - name: mail-read
+      port: 18080
+      targetPort: 19080
+    - name: slack-read
+      port: 18081
+      targetPort: 18081
+    - name: slack-bot
+      port: 18082
+      targetPort: 18082
+    - name: inference-proxy
+      port: 18083
+      targetPort: 18083
+
+networkPolicy:
+  peerLabel: openshell-saw
+  allowedPorts:
+    - 18080
+    - 18081
+    - 18082
+    - 18083

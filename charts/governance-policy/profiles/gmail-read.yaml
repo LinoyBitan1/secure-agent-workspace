@@ -1,0 +1,43 @@
+display_name: Gmail Read Proxy
+description: Gmail read-only proxy on the integrations VM
+category: data
+inference_capable: false
+
+credentials:
+  - name: access_token
+    description: Gmail OAuth access token (managed by provider refresh)
+    env_vars: [GMAIL_ACCESS_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    refresh:
+      strategy: oauth2_refresh_token
+      token_url: https://oauth2.googleapis.com/token
+      scopes: []
+      refresh_before_seconds: 300
+      max_lifetime_seconds: 3600
+      material:
+        - name: client_id
+          required: true
+        - name: client_secret
+          required: true
+          secret: true
+        - name: refresh_token
+          required: true
+          secret: true
+
+discovery:
+  credentials: [access_token]
+
+endpoints:
+  - host: gmail.googleapis.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    access: read-only
+
+binaries:
+  - /usr/bin/curl
+  - /usr/local/bin/curl
+  - /usr/local/bin/node
+  - /sandbox/gmail-read-proxy

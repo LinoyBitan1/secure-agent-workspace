@@ -41,7 +41,8 @@ Priority: explicit oidc.issuerUrl > computed from global.clusterDomain.
   {{- .Values.oidc.issuerUrl -}}
 {{- else if .Values.global -}}
   {{- if .Values.global.clusterDomain -}}
-    {{- printf "https://%s-ingress-%s.apps.%s/realms/%s" .Values.oidc.keycloakName .Release.Namespace .Values.global.clusterDomain .Values.oidc.realm -}}
+    {{- $kcNs := .Values.dashboard.keycloakNamespace | default .Release.Namespace -}}
+    {{- printf "https://%s-ingress-%s.apps.%s/realms/%s" .Values.oidc.keycloakName $kcNs .Values.global.clusterDomain .Values.oidc.realm -}}
   {{- end -}}
 {{- end -}}
 {{- end }}

@@ -1,0 +1,76 @@
+# Apply AFTER both VMs are set up:
+#   oc apply -n openshell-agents -f deploy/two-vm/networkpolicy.yaml
+#
+# Agent VM egress: only integ VM proxy ports + governance interceptor + DNS.
+# Integrations VM ingress: only agent VM on proxy ports + SSH.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openshell-saw-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openshell-saw
+      kubevirt.io: virt-launcher
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openshell-saw-integ
+      ports:
+        - port: 18080
+          protocol: TCP
+        - port: 18081
+          protocol: TCP
+        - port: 18082
+          protocol: TCP
+        - port: 18083
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: governance-interceptor
+      ports:
+        - port: 18081
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: saw-integ-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openshell-saw-integ
+      kubevirt.io: virt-launcher
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openshell-saw
+      ports:
+        - port: 18080
+          protocol: TCP
+        - port: 18081
+          protocol: TCP
+        - port: 18082
+          protocol: TCP
+        - port: 18083
+          protocol: TCP
+    - ports:
+        - port: 22
+          protocol: TCP

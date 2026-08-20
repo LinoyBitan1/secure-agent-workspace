@@ -1,3 +1,9 @@
-# Active profiles to deploy on this SAW instance.
+# Active profiles to deploy on the Agent VM.
 profiles:
   - data-science
+
+# Active profiles to deploy on the Integrations VM (two-VM split only).
+# Each profile maps to one OpenShell workspace with its own provider/credential.
+# Leave empty to skip integrations VM provisioning.
+integrationsProfiles:
+  - integrations

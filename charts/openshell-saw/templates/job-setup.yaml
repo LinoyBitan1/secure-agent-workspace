@@ -20,7 +20,7 @@ spec:
     spec:
       serviceAccountName: {{ include "openshell-sandbox.fullname" . }}-setup
       restartPolicy: OnFailure
-      {{- if .Values.job.waitForSecrets }}
+      {{- if and .Values.job.waitForSecrets (eq .Values.role "standalone") }}
       initContainers:
         - name: wait-for-secrets
           image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest

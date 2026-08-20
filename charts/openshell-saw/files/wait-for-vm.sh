@@ -70,7 +70,7 @@ fi
 echo "Waiting for cloud-init to finish..."
 deadline=$((SECONDS + 600))
 while true; do
-  if guest_ssh "cloud-init status 2>/dev/null | grep -q done" 2>/dev/null; then
+  if guest_ssh "sudo cloud-init status 2>/dev/null | grep -q done" 2>/dev/null; then
     echo "Cloud-init finished."
     break
   fi
@@ -80,6 +80,13 @@ while true; do
   fi
   sleep 10
 done
+
+# --- Ensure container runtime is available ---
+if [[ "${RUNTIME}" == "podman" ]]; then
+  echo "Ensuring Podman is installed in the guest..."
+  guest_ssh "command -v podman >/dev/null 2>&1 || sudo dnf install -y --setopt=install_weak_deps=False podman"
+  guest_ssh "systemctl --user enable --now podman.socket"
+fi
 
 # --- Post-clone hygiene ---
 echo "Post-clone hygiene (hostname)..."

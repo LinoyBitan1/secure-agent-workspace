@@ -1,6 +1,16 @@
+{{- if eq .Values.role "integrations" -}}
+Integrations VM "{{ include "openshell-sandbox.fullname" . }}" deployed.
+
+A setup Job is configuring credential proxies (inference, mail, slack).
+{{- else if eq .Values.role "agent" -}}
+Agent VM "{{ include "openshell-sandbox.fullname" . }}" deployed.
+
+A setup Job is configuring the agent sandbox and BOM profiles.
+{{- else -}}
 openshell-sandbox "{{ .Values.sandboxName }}" deployed.
 
-A setup Job is configuring your sandbox (clone VM, Vertex AI, NemoClaw agent).
+A setup Job is configuring your sandbox.
+{{- end }}
 
 Monitor progress:
 
@@ -10,16 +20,12 @@ Check Job status:
 
   oc -n {{ .Release.Namespace }} get job/{{ include "openshell-sandbox.fullname" . }}-setup
 
-Once the Job completes, connect:
+Once the Job completes:
 {{- if .Values.route.enabled }}
 
-  Gateway URL (get after Route is assigned):
+  Gateway URL:
 
     oc get route {{ include "openshell-sandbox.fullname" . }}-gateway -n {{ .Release.Namespace }} -o jsonpath='https://{.spec.host}'
-
-  Use the OpenShell CLI:
-
-    openshell --gateway $(oc get route {{ include "openshell-sandbox.fullname" . }}-gateway -n {{ .Release.Namespace }} -o jsonpath='https://{.spec.host}') sandbox list
 {{- end }}
 {{- if .Values.route.dashboard }}
 
@@ -32,11 +38,13 @@ Once the Job completes, connect:
 
     virtctl -n {{ .Release.Namespace }} ssh cloud-user@vm/{{ include "openshell-sandbox.fullname" . }} \
       --local-ssh-opts "-o StrictHostKeyChecking=no"
+{{- if ne .Values.role "integrations" }}
 
   TUI / GUI:
 
-    make tui SANDBOX_NAME={{ .Values.sandboxName }}
-    make gui SANDBOX_NAME={{ .Values.sandboxName }}
+    make tui OPENSHELL_SAW_NAME={{ include "openshell-sandbox.fullname" . }}
+    make gui OPENSHELL_SAW_NAME={{ include "openshell-sandbox.fullname" . }}
+{{- end }}
 
 To tear down:
 
