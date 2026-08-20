@@ -53,29 +53,35 @@ make copy-images
 # 4. Generate SSH keys (or use existing: SSH_KEY_PATH=~/.ssh/my_key)
 make generate-keys
 
-# 5. Create all K8s config: SSH secrets + BOM configmap + inference secret
+# 5. Deploy BOM profiles (workspaces, providers, sandbox definitions)
+make deploy-bom
+
+# 6. Create SSH secrets + inference secret
 make deploy-config API_KEY=nvapi-YOUR-KEY
 
-# 6. Deploy Integrations VM (creates bearer secret, inference proxy, BOM proxies)
+# 7. Deploy Integrations VM (creates bearer secret, inference proxy, BOM proxies)
 make deploy-integ-vm
 
-# 7. Deploy Agent VM (waits for bearer, creates inference-proxy provider, BOM sandboxes)
+# 8. Deploy Agent VM (waits for bearer, creates inference-proxy provider, BOM sandboxes)
 make deploy-agent-vm
 
-# 8. Verify
+# 9. Verify
 make e2e-test
 ```
 
 ### Option B: Pre-existing VMs
 
 ```bash
-# 1. Create K8s config (still needed for secrets and BOM)
+# 1. Deploy BOM profiles first
+make deploy-bom
+
+# 2. Create K8s config (secrets)
 make deploy-config API_KEY=nvapi-YOUR-KEY
 
-# 2. Configure integrations VM
+# 3. Configure integrations VM
 make deploy-integ-vm INTEG_HOST=10.0.1.6
 
-# 3. Configure agent VM (needs integ VM address)
+# 4. Configure agent VM (needs integ VM address)
 make deploy-agent-vm AGENT_HOST=10.0.1.5 INTEG_HOST=10.0.1.6
 ```
 
@@ -178,7 +184,11 @@ spec:
 
 ## How It Works
 
-### Setup Job Sequence
+### Setup Sequence
+
+**Step 0: BOM profiles deployed** (before any VM)
+- `deploy-bom` creates the `saw-bom-profiles` and `saw-bom-integ-profiles` ConfigMaps
+- These define workspaces, providers, and sandbox configurations the VM Jobs will consume
 
 **Integrations VM Job:**
 1. Boots VM, installs OpenShell, upgrades binaries
@@ -194,9 +204,10 @@ spec:
 3. Waits for `inter-vm-bearer` K8s Secret (up to 300s)
 4. Registers mTLS gateway, imports `inference-proxy` provider profile
 5. Creates `inference-proxy` provider with bearer credential
-6. Runs `apply_bom.py` → creates nvidia provider (placeholder), OpenClaw sandbox
-7. Attaches `inference-proxy` provider to all sandboxes
-8. Enables OIDC on gateway with `OPENSHELL_ENABLE_MTLS_AUTH=true` (`patch-oidc.sh`)
+6. Reads BOM profiles from `saw-bom-profiles` ConfigMap
+7. Runs `apply_bom.py` → creates nvidia provider (placeholder), OpenClaw sandbox
+8. Attaches `inference-proxy` provider to all sandboxes
+9. Enables OIDC on gateway with `OPENSHELL_ENABLE_MTLS_AUTH=true` (`patch-oidc.sh`)
 
 ### Authentication Model
 
