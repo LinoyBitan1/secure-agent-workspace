@@ -7,7 +7,7 @@ if [[ -z "${GOLDEN_IMAGE_URL}" ]]; then
   GOLDEN_IMAGE_URL="docker://image-registry.openshift-image-registry.svc:5000/${GOLDEN_NS}/${GOLDEN_DS}:latest"
 fi
 
-if [[ -n "${GOLDEN_DS}" ]]; then
+if [[ -n "${GOLDEN_DS}" && "${GOLDEN_NS}" == "${NS}" ]]; then
   DS_EXISTS="$(kubectl get datasource "${GOLDEN_DS}" -n "${GOLDEN_NS}" -o name 2>/dev/null || true)"
   DV_PHASE="$(kubectl get dv "${GOLDEN_DS}-golden" -n "${GOLDEN_NS}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
 
@@ -99,6 +99,8 @@ spec:
         storage: ${GOLDEN_DISK_SIZE}
 CLONEDV
   fi
+elif [[ -n "${GOLDEN_DS}" ]]; then
+  echo "Using external golden image DataSource ${GOLDEN_NS}/${GOLDEN_DS}."
 fi
 
 # Wait for VM DataVolume provisioning
