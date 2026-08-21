@@ -1,7 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "openshell-sandbox.fullname" . }}-setup-anyuid
+  name: {{ .Release.Namespace }}-{{ include "openshell-sandbox.fullname" . }}-setup-anyuid
   labels:
     {{- include "openshell-sandbox.labels" . | nindent 4 }}
 subjects:
