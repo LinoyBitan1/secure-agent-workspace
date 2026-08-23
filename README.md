@@ -264,15 +264,29 @@ openshell gateway add https://$(oc get route openshell-saw-gateway -n openshell-
 # Log in as alice / alice in the browser
 
 # 15. Verify sandboxes
+# sandbox list without --workspace only shows workspace "default"
 openshell --gateway-insecure sandbox list
+openshell --gateway-insecure sandbox list --workspace cuda-dev
 
 # 16. Launch TUI (pick one)
-OPENSHELL_SAW_NAME=openshell-saw SANDBOX_NAME=cuda-sandbox make nemoclaw-tui   # NemoClaw
-OPENSHELL_SAW_NAME=openshell-saw SANDBOX_NAME=notebook make openclaw-tui       # OpenClaw
+OPENSHELL_SAW_NAME=openshell-saw \
+SANDBOX_NAME=cuda-sandbox \
+WORKSPACE=cuda-dev \
+make nemoclaw-tui # NemoClaw
+OPENSHELL_SAW_NAME=openshell-saw \
+SANDBOX_NAME=notebook \
+make openclaw-tui # OpenClaw
 
 # 17. Launch GUI (pick one)
-OPENSHELL_SAW_NAME=openshell-saw SANDBOX_NAME=cuda-sandbox GUI_PORT=18789 make nemoclaw-gui
-OPENSHELL_SAW_NAME=openshell-saw SANDBOX_NAME=notebook GUI_PORT=18790 make openclaw-gui
+OPENSHELL_SAW_NAME=openshell-saw \
+SANDBOX_NAME=cuda-sandbox \
+WORKSPACE=cuda-dev \
+GUI_PORT=18789 \
+make nemoclaw-gui # NemoClaw
+OPENSHELL_SAW_NAME=openshell-saw \
+SANDBOX_NAME=notebook \
+GUI_PORT=18790 \
+make openclaw-gui # OpenClaw
 ```
 
 > **Note:** The gateway VM uses a self-signed TLS certificate. Pass `--gateway-insecure` to `openshell` commands, or set `export OPENSHELL_GATEWAY_INSECURE=true`.
@@ -298,16 +312,29 @@ You can set `OPENSHELL_SAW_NAME` once via `export` and all `openshell-saw-*` tar
 ### Validating the deployment
 
 ```bash
-# List sandboxes
+# List sandboxes (default workspace, then cuda-dev)
 openshell --gateway-insecure sandbox list
+openshell --gateway-insecure sandbox list --workspace cuda-dev
 
-# NemoClaw sandbox (TUI and GUI)
-OPENSHELL_SAW_NAME=openshell-saw SANDBOX_NAME=cuda-sandbox make nemoclaw-tui
-OPENSHELL_SAW_NAME=openshell-saw SANDBOX_NAME=cuda-sandbox GUI_PORT=18789 make nemoclaw-gui
+# NemoClaw sandbox (TUI and GUI) — workspace cuda-dev
+OPENSHELL_SAW_NAME=openshell-saw \
+SANDBOX_NAME=cuda-sandbox \
+WORKSPACE=cuda-dev \
+make nemoclaw-tui
+OPENSHELL_SAW_NAME=openshell-saw \
+SANDBOX_NAME=cuda-sandbox \
+WORKSPACE=cuda-dev \
+GUI_PORT=18789 \
+make nemoclaw-gui
 
-# OpenClaw sandbox (TUI and GUI)
-OPENSHELL_SAW_NAME=openshell-saw SANDBOX_NAME=notebook make openclaw-tui
-OPENSHELL_SAW_NAME=openshell-saw SANDBOX_NAME=notebook GUI_PORT=18790 make openclaw-gui
+# OpenClaw sandbox (TUI and GUI) — workspace default
+OPENSHELL_SAW_NAME=openshell-saw \
+SANDBOX_NAME=notebook \
+make openclaw-tui
+OPENSHELL_SAW_NAME=openshell-saw \
+SANDBOX_NAME=notebook \
+GUI_PORT=18790 \
+make openclaw-gui
 
 # Legacy aliases (default to nemoclaw)
 make openshell-saw-tui
