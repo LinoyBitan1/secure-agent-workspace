@@ -20,6 +20,7 @@ from apply_bom import (  # noqa: E402
     Workspace,
     check_provider_type_mismatch,
     find_provider,
+    inference_set_args,
     parse_profiles,
     resolve_configured_type,
     resolve_credential,
@@ -213,6 +214,31 @@ def test_resolve_configured_type_none_when_unset(monkeypatch):
     monkeypatch.delenv("PROV_NVIDIA_TYPE", raising=False)
     p = Provider(name="nvidia", type="nvidia")
     assert resolve_configured_type(p) is None
+
+
+# ---------------------------------------------------------------------------
+# inference_set_args() — user route is per-workspace; system route is not.
+# ---------------------------------------------------------------------------
+
+def test_inference_set_args_user_route_includes_workspace_not_system():
+    args = inference_set_args("nvidia", "meta/llama-3.1-70b-instruct",
+                              workspace="cuda-dev")
+    assert args[:3] == ["openshell", "inference", "set"]
+    assert "--workspace" in args
+    assert args[args.index("--workspace") + 1] == "cuda-dev"
+    assert "--system" not in args
+    assert "--no-verify" in args
+    assert args[args.index("--provider") + 1] == "nvidia"
+    assert args[args.index("--model") + 1] == "meta/llama-3.1-70b-instruct"
+
+
+def test_inference_set_args_system_route_omits_workspace():
+    args = inference_set_args("nvidia", "meta/llama-3.1-70b-instruct",
+                              workspace="cuda-dev", system=True)
+    assert "--system" in args
+    assert "--workspace" not in args
+    assert "--no-verify" in args
+    assert args[args.index("--provider") + 1] == "nvidia"
 
 
 if __name__ == "__main__":

@@ -280,6 +280,24 @@ def find_provider(ws, names):
     return ws.providers[0] if ws.providers else None
 
 
+def inference_set_args(provider_name, model, workspace=None, system=False):
+    """Build `openshell inference set` argv.
+
+    User-facing routes are per-workspace and must pass --workspace (the CLI
+    otherwise defaults to workspace 'default'). The system route used by the
+    agent harness is gateway-global: --system must not be combined with
+    --workspace.
+    """
+    args = ["openshell", "inference", "set"]
+    if system:
+        args.append("--system")
+    args += ["--provider", provider_name, "--model", model]
+    if not system and workspace:
+        args += ["--workspace", workspace]
+    args.append("--no-verify")
+    return args
+
+
 # ---------------------------------------------------------------------------
 # Gateway setup
 # ---------------------------------------------------------------------------
@@ -751,12 +769,20 @@ def main():
                     cred = resolve_credential(prov)
                     deployer.create_provider(prov, cred, ws.name)
                     if not inference_set and prov.model:
-                        log(f"  Setting inference route: "
-                            f"provider={prov.name} model={prov.model}")
-                        sh.run(["openshell", "inference", "set",
-                                "--provider", prov.name,
-                                "--model", prov.model,
-                                "--no-verify"], check=False)
+                        log(f"  Setting inference routes: "
+                            f"provider={prov.name} model={prov.model}"
+                            f" workspace={ws.name} (user + system)")
+                        sh.run(inference_set_args(
+                            prov.name, prov.model, workspace=ws.name),
+                            check=False)
+                        sys_rc, _, sys_err = sh.run(inference_set_args(
+                            prov.name, prov.model, system=True),
+                            check=False)
+                        if sys_rc != 0:
+                            log("  WARN: could not configure system "
+                                "inference route "
+                                f"(rc={sys_rc}"
+                                f"{': ' + sys_err if sys_err else ''})")
                         inference_set = True
 
             # Create sandboxes
