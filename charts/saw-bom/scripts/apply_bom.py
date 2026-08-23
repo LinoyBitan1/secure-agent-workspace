@@ -462,6 +462,26 @@ class WorkspaceDeployer:
                 "sudo docker logs $CNAME 2>&1 | tail -30"
             ], check=False)
 
+    def chown_sandbox_home(self, sandbox_name):
+        """Chown /sandbox to the supervisor's sandbox uid.
+
+        The image bakes UID 65532. The supervisor rewrites passwd to
+        whatever uid is free (1000, 998, …) and does not chown existing
+        files. openshell sandbox exec cannot chown (not root); docker
+        exec -u 0 can. After passwd rewrite, name 'sandbox' is the
+        runtime uid, so this works on any cluster.
+        """
+        log(f"Chowning /sandbox to sandbox user in '{sandbox_name}'")
+        self.sh.run([
+            "bash", "-c",
+            "CNAME=$(sudo docker ps -a "
+            f"--filter 'name=openshell.*{sandbox_name}' "
+            "--format '{{.Names}}' | head -1) && "
+            "[ -n \"$CNAME\" ] && "
+            "sudo docker exec -u 0 \"$CNAME\" "
+            "chown -R sandbox:sandbox /sandbox",
+        ], check=False)
+
     def install_nemoclaw_cli(self, cli_image):
         if not cli_image:
             return
@@ -549,6 +569,9 @@ class WorkspaceDeployer:
                     break
                 log(f"  waiting for sandbox ready... (attempt {i+1})")
                 time.sleep(5)
+
+        # Supervisor has rewritten passwd by Ready; match /sandbox to that uid.
+        self.chown_sandbox_home(sandbox_name)
 
         token = secrets_mod.token_hex(16)
         exec_cmd = ["openshell", "sandbox", "exec", "-n",
