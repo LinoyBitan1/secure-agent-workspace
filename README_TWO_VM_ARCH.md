@@ -5,11 +5,26 @@ Credential isolation for the Secure Agent Workspace: an **Agent VM** runs the AI
 ```
 Agent VM (no real keys)              Integrations VM (real keys)
 ┌──────────────────────┐             ┌──────────────────────┐
-│  OpenClaw sandbox    │   bearer    │  Inference proxy     │
-│  baseUrl → integ:    │────────────>│  :18083 → NVIDIA API │
-│           18083      │             │                      │
-│  Placeholder creds   │             │  gmail-read proxy    │
-│                      │             │  :18080              │
+│  OpenClaw sandbox    │   bearer    │  gmail-read proxy    │
+│                      │────────────>│  :18080 → Gmail API  │
+│  gog → forwarder     │             │                      │
+│  :18079 (loopback)   │             │  gmail-write proxy   │
+│                      │             │  :18081 (relay only)  │
+│  Placeholder creds   │             │                      │
+│  only                │             │  m365-read proxy     │
+│                      │             │  :18082 → Graph API  │
+│                      │   bearer    │                      │
+│  inference-proxy     │────────────>│  inference proxy     │
+│  provider            │             │  :18083 → NVIDIA API │
+│                      │             │                      │
+│                      │             │  slack-read proxy    │
+│                      │             │  :18084 → Slack API  │
+│                      │             │                      │
+│                      │             │  slack-write proxy   │
+│                      │             │  :18085 (relay only)  │
+│                      │             │                      │
+│                      │             │  m365-write proxy    │
+│                      │             │  :18086 (relay only)  │
 └──────────────────────┘             └──────────────────────┘
 ```
 
@@ -92,18 +107,63 @@ make verify-agent      # verify gateway, sandboxes, providers, dashboard, check 
 
 The Agent VM boots, installs OpenShell, waits for the inter-VM bearer Secret, creates the inference-proxy provider, and runs BOM profiles.
 
-### Step 5: Verify and test
+### Step 5: Configure Gmail proxy (optional)
+
+The Gmail read proxy requires OAuth credentials to access Gmail on behalf of a user. This is a one-time setup per Gmail account.
+
+**Prerequisites:**
+- A Google Cloud project with Gmail API enabled
+- A Desktop OAuth client JSON from that project
+- The `gog` CLI installed locally (for token authorization)
+
+```bash
+# Interactive mode (guides you through credential setup)
+make configure-gmail-refresh
+
+# Or non-interactive with pre-existing credentials
+make configure-gmail-refresh \
+  GCP_PROJECT_ID=your-project-id \
+  GMAIL_ACCOUNT=you@gmail.com \
+  CLIENT_JSON=$HOME/gog/client_secret.json \
+  TOKEN_EXPORT=$HOME/gog/gog-token-export.json
+
+# Or authorize locally with gog and upload
+make configure-gmail-refresh \
+  GCP_PROJECT_ID=your-project-id \
+  GMAIL_ACCOUNT=you@gmail.com \
+  CLIENT_JSON=$HOME/gog/client_secret.json \
+  AUTHORIZE_LOCAL=1
+```
+
+After configuring refresh, **redeploy the integ VM** so the proxy picks up a fresh credential session:
+
+```bash
+helm uninstall openshell-saw-integ -n openshell-agents
+kubectl wait --for=delete vm/openshell-saw-integ -n openshell-agents --timeout=120s
+GOVERNANCE_ENABLED=false make deploy-integ-vm
+```
+
+> **Why the redeploy?** OpenShell v-type credential placeholders (created at sandbox startup before refresh is configured) are not resolvable by the supervisor. Recreating the sandbox after refresh gives it a fresh s-type placeholder. See `docs/bugs/openshell-v-type-placeholder-not-resolved.md`.
+
+### Step 6: Verify and test
 
 ```bash
 # Follow setup logs (if still running)
 make saw-logs OPENSHELL_SAW_NAME=openshell-saw
 make saw-logs OPENSHELL_SAW_NAME=openshell-saw-integ
 
+# Verify both VMs
+make verify
+
 # Run E2E test
 make e2e-test
+
+# Test Gmail read from agent VM
+openshell --gateway openshell-saw --gateway-insecure sandbox exec -n notebook --no-tty -- \
+  gog --readonly gmail search "newer_than:1d" --max 3 --json --no-input
 ```
 
-### Step 6: Use the agent
+### Step 7: Use the agent
 
 ```bash
 # Login via OIDC (opens browser)
