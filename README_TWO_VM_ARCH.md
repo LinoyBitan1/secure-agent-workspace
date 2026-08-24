@@ -61,11 +61,19 @@ make generate-keys
 ### Step 2: Deploy BOM profiles + secrets
 
 ```bash
-# Creates SSH secrets, BOM ConfigMap, and inference secret
-make deploy-config API_KEY=nvapi-YOUR-REAL-KEY
-
-# To also deploy governance provider profiles (for sandbox policy enforcement):
+# Creates SSH secrets, BOM ConfigMap, inference secret, and governance provider profiles
 make deploy-config API_KEY=nvapi-YOUR-REAL-KEY DEPLOY_GOV_PROFILES=true
+```
+
+> **Warning:** `DEPLOY_GOV_PROFILES=true` is required when BOM profiles reference custom
+> provider types (e.g., `gmail-read`, `gmail-read-proxy`, `slack-read`). Without it, the
+> setup jobs cannot create providers because the types are unknown to the gateway, causing
+> cascading failures on both VMs.
+
+To skip governance profiles (inference-only, no mail/Slack proxies):
+
+```bash
+make deploy-config API_KEY=nvapi-YOUR-REAL-KEY
 ```
 
 Defaults to `PROVIDER=nvidia MODEL=deepseek-ai/deepseek-v4-flash-0731`. Override as needed:

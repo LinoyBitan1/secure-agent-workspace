@@ -17,6 +17,11 @@ spec:
         GOG_READONLY: "1"
       gatewayPreStart: |
         CRED_FILE=/tmp/gog-access-token
+        if [ -n "${GOG_ACCESS_TOKEN:-}" ] && [ -z "${GOG_ACCESS_TOKEN##openshell:resolve:*}" ]; then
+          : # placeholder — cannot write to file; forwarder will rely on supervisor resolution
+        elif [ -n "${GOG_ACCESS_TOKEN:-}" ]; then
+          printf '%s' "${GOG_ACCESS_TOKEN}" > "${CRED_FILE}"
+        fi
         if [ -s "${CRED_FILE}" ]; then
           export GOG_ACCESS_TOKEN="$(cat ${CRED_FILE})"
         fi
