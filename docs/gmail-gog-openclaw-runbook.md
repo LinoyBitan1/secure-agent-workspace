@@ -12,8 +12,8 @@ Use this when the interactive flow says "I need to grab/create new files first."
 Set these before you start:
 
 ```bash
-export GOG_PROJECT_ID="sa-001"
-export GOG_ACCOUNT="saurabh74@gmail.com"
+export GOG_PROJECT_ID="your-project-id"
+export GOG_ACCOUNT="your-gmail"
 export GOG_DIR="$HOME/gog"
 install -d -m 700 "$GOG_DIR"
 ```

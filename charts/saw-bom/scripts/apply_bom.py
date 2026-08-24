@@ -645,15 +645,24 @@ done
                 return
 
         if sandbox.command:
-            inner_cmds = []
+            # Pass non-secret sandbox.env via --env so argv0 stays the
+            # governed binary (needed for s-type credential injection).
+            # Only wrap in /bin/sh when runtime_env must copy placeholders.
+            env_flags = []
             for k, v in sandbox.env.items():
                 resolved = resolve_env_value(v)
-                inner_cmds.append(f"export {k}={shlex.quote(resolved)}")
+                env_flags.append(f"--env {k}={shlex.quote(resolved)}")
+            runtime_exports = []
             for k, v in sandbox.runtime_env.items():
                 var_name = v.strip().lstrip("$").strip("{}")
-                inner_cmds.append(f"export {k}=${var_name}")
-            inner_cmds.append(f"exec {sandbox.command}")
-            inner = "; ".join(inner_cmds)
+                runtime_exports.append(f"export {k}=${var_name}")
+            env_flag_str = (" ".join(env_flags) + " ") if env_flags else ""
+            if runtime_exports:
+                inner = "; ".join(
+                    runtime_exports + [f"exec {sandbox.command}"])
+                exec_argv = f"/bin/sh -c {shlex.quote(inner)}"
+            else:
+                exec_argv = sandbox.command
             svc = f"openshell-sandbox-{sandbox.name}.service"
             script_path = f"$HOME/.local/bin/{svc}.sh"
             ws_flag = (
@@ -667,7 +676,7 @@ done
                 "openshell gateway select openshell-local "
                 ">/dev/null 2>&1 || true\n"
                 f"exec openshell sandbox exec -n {sandbox.name} {ws_flag}"
-                f"--no-tty -- /bin/sh -c {shlex.quote(inner)}\n"
+                f"{env_flag_str}--no-tty -- {exec_argv}\n"
             )
             log(f"Installing systemd service for '{sandbox.name}'")
             self.sh.run(
@@ -683,6 +692,7 @@ done
                  "Type=simple\n"
                  "Restart=always\n"
                  "RestartSec=5\n"
+                 "TimeoutStopSec=20\n"
                  f"ExecStart=%h/.local/bin/{svc}.sh\n"
                  "[Install]\n"
                  "WantedBy=default.target\n"

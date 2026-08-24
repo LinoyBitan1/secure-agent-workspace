@@ -384,31 +384,61 @@ except Exception:
 PY
 }
 
+resolve_token_export_path() {
+  local found=""
+  local client_dir=""
+  local next_to_client=""
+
+  if [[ -n "${TOKEN_EXPORT}" ]]; then
+    TOKEN_EXPORT="$(normalize_path "${TOKEN_EXPORT}")"
+    return 0
+  fi
+  if [[ -n "${CLIENT_JSON}" ]]; then
+    next_to_client="$(dirname "${CLIENT_JSON}")/gog-token-export.json"
+  fi
+  found="$(
+    first_existing_file \
+      "${HOME}/gog/gog-token-export.json" \
+      "${next_to_client}" \
+      "${HOME}/Downloads/gog-token-export.json" \
+      "./gog-token-export.json" || true
+  )"
+  if [[ -n "${found}" ]]; then
+    TOKEN_EXPORT="${found}"
+    return 0
+  fi
+  TOKEN_EXPORT="${next_to_client:-${HOME}/gog/gog-token-export.json}"
+}
+
 maybe_prompt_token_refresh_interactive() {
   local status="unknown"
   local choice=""
 
-  [[ "${INTERACTIVE_MODE}" == "true" ]] || return 0
   [[ -f "${TOKEN_EXPORT}" ]] || return 0
+
+  if [[ "${INTERACTIVE_MODE}" != "true" ]]; then
+    echo "Using existing token export: ${TOKEN_EXPORT}"
+    return 0
+  fi
 
   status="$(token_export_expiry_status)"
   echo ""
-  echo "Token export found: ${TOKEN_EXPORT}"
+  echo "Token export already exists: ${TOKEN_EXPORT}"
   case "${status}" in
     expired) echo "Status: appears expired (based on expiry field in token export)." ;;
     valid)   echo "Status: appears valid (based on expiry field in token export)." ;;
     *)       echo "Status: unknown (no parseable expiry field found)." ;;
   esac
 
-  read -r -p "Generate a new token via local gog authorization? [y/N]: " choice
-  choice="${choice:-N}"
-  if [[ "${choice}" =~ ^[Yy]$ ]]; then
+  read -r -p "Skip Google authorization and reuse this file? [Y/n]: " choice
+  choice="${choice:-Y}"
+  if [[ "${choice}" =~ ^[Nn]$ ]]; then
     if [[ -z "${GMAIL_ACCOUNT}" ]]; then
       prompt_with_default GMAIL_ACCOUNT "Gmail account for gog auth" ""
     fi
     generate_token_export_locally
   else
-    echo "Using existing token export."
+    echo "Skipping authorization; using existing token export."
   fi
 }
 
@@ -635,6 +665,8 @@ if [[ ! -f "${CLIENT_JSON}" ]]; then
   exit 1
 fi
 
+resolve_token_export_path
+
 if [[ "${INTERACTIVE_MODE}" == "true" ]]; then
   if command -v chmod >/dev/null 2>&1; then
     chmod 600 "${CLIENT_JSON}" 2>/dev/null || true
@@ -700,6 +732,10 @@ ssh_cmd() {
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
     -o LogLevel=ERROR \
+    -o ConnectTimeout=10 \
+    -o ServerAliveInterval=5 \
+    -o ServerAliveCountMax=3 \
+    -o BatchMode=yes \
     -p "${LOCAL_SSH_PORT}" \
     "${SSH_USER}@127.0.0.1" "$@"
 }
@@ -838,46 +874,114 @@ ssh_cmd 'export PATH="$HOME/.local/bin:$PATH"
 openshell provider refresh status gmail-read'
 
 BEARER_SHA256="$(kubectl get secret inter-vm-bearer -n "${NS}" -o jsonpath='{.data.sha256}' 2>/dev/null | base64 -d || true)"
+BEARER="$(kubectl get secret inter-vm-bearer -n "${NS}" -o jsonpath='{.data.bearer}' 2>/dev/null | base64 -d || true)"
 echo "Restarting mail-proxy so it picks up a fresh credential session..."
-ssh_cmd "export PATH=\"\$HOME/.local/bin:\$PATH\"
+# Fail-safe: never use unbounded `sandbox exec` to kill leftovers (it can hang
+# forever). Free :18080 via timed podman/docker exec, start the governed
+# binary as argv0 so the supervisor injects an s-type token, and require HTTP 200.
+ssh_cmd 'bash -s' << EOF
+set +e
+export PATH="\$HOME/.local/bin:\$PATH"
 openshell gateway select openshell-local >/dev/null 2>&1 || true
-systemctl --user stop openshell-sandbox-mail-proxy.service 2>/dev/null || true
-openshell sandbox exec -n mail-proxy --no-tty -- /bin/sh -lc 'for p in /proc/[0-9]*; do c=\$(tr \"\\000\" \" \" < \"\$p/cmdline\" 2>/dev/null); case \"\$c\" in /sandbox/gmail-read-proxy*) kill \${p##*/} 2>/dev/null || true;; esac; done; true' >/dev/null 2>&1 || true
-sleep 1
-cat > \"\$HOME/.local/bin/openshell-sandbox-mail-proxy.service.sh\" << 'EOS'
+
+kill_leftover_proxy() {
+  local i pid rest pids
+  echo "  Stopping leftover /sandbox/gmail-read-proxy on the VM host..."
+  for i in \$(seq 1 10); do
+    pids=""
+    while read -r pid rest; do
+      case "\$rest" in
+        /sandbox/gmail-read-proxy*) pids="\$pids \$pid" ;;
+      esac
+    done < <(ps -eo pid=,args=)
+    if [[ -z "\${pids// }" ]]; then
+      return 0
+    fi
+    for pid in \$pids; do
+      kill -9 "\$pid" 2>/dev/null || sudo kill -9 "\$pid" 2>/dev/null || true
+    done
+    sleep 1
+  done
+}
+
+wait_proxy_http_200() {
+  local i code
+  echo "  Waiting for proxy HTTP 200..."
+  for i in \$(seq 1 30); do
+    code=\$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \\
+      -H 'x-forge-read-bearer: ${BEARER}' \\
+      'http://127.0.0.1:18080/gmail/v1/users/me/labels?maxResults=1' 2>/dev/null || true)
+    if [[ "\$code" == "200" ]]; then
+      echo "  proxy status: 200"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "  proxy status: \${code:-000}"
+  if [[ "\$code" =~ ^[45] ]]; then
+    curl -s -o /tmp/gmail-proxy-err.out --max-time 5 \\
+      -H 'x-forge-read-bearer: ${BEARER}' \\
+      'http://127.0.0.1:18080/gmail/v1/users/me/labels?maxResults=1' >/dev/null 2>&1 || true
+    python3 -c 'import json
+try:
+  d=json.load(open("/tmp/gmail-proxy-err.out"))
+  print("  proxy error: %s" % (d.get("error") or "unknown"))
+except Exception:
+  print("  proxy error: not-ready")
+' 2>/dev/null || true
+    rm -f /tmp/gmail-proxy-err.out
+  else
+    echo "  proxy error: empty reply (process not listening yet or still restarting)"
+  fi
+  return 1
+}
+
+restart_mail_proxy() {
+  timeout -k 2 20 systemctl --user stop openshell-sandbox-mail-proxy.service >/dev/null 2>&1 || true
+  timeout -k 2 10 systemctl --user reset-failed openshell-sandbox-mail-proxy.service >/dev/null 2>&1 || true
+  kill_leftover_proxy
+  sleep 1
+  timeout -k 2 25 systemctl --user start openshell-sandbox-mail-proxy.service || true
+  wait_proxy_http_200
+}
+
+cat > "\$HOME/.local/bin/openshell-sandbox-mail-proxy.service.sh" << 'EOS'
 #!/usr/bin/env bash
 set -euo pipefail
-export PATH=\"\$HOME/.local/bin:\$PATH\"
+export PATH="\$HOME/.local/bin:\$PATH"
 openshell gateway select openshell-local >/dev/null 2>&1 || true
-exec openshell sandbox exec -n mail-proxy --no-tty -- /bin/sh -c 'export INTER_VM_BEARER_SHA256=${BEARER_SHA256}; exec /sandbox/gmail-read-proxy'
+exec openshell sandbox exec -n mail-proxy --no-tty --env INTER_VM_BEARER_SHA256=${BEARER_SHA256} -- /sandbox/gmail-read-proxy
 EOS
-chmod +x \"\$HOME/.local/bin/openshell-sandbox-mail-proxy.service.sh\"
-systemctl --user daemon-reload
-systemctl --user reset-failed openshell-sandbox-mail-proxy.service 2>/dev/null || true
-systemctl --user start openshell-sandbox-mail-proxy.service
-for i in \$(seq 1 20); do
-  if systemctl --user is-active --quiet openshell-sandbox-mail-proxy.service; then
-    echo \"  mail-proxy service is active\"
-    break
-  fi
-  sleep 1
-done
-if ! systemctl --user is-active --quiet openshell-sandbox-mail-proxy.service; then
-  echo \"  WARN: mail-proxy service is not active\"
-  systemctl --user status openshell-sandbox-mail-proxy.service --no-pager || true
-  journalctl --user -u openshell-sandbox-mail-proxy.service -n 20 --no-pager || true
-fi"
-
-# --- Step 5: Sanity-check proxy path locally on integrations VM ---
-BEARER="$(kubectl get secret inter-vm-bearer -n "${NS}" -o jsonpath='{.data.bearer}' 2>/dev/null | base64 -d || true)"
-if [[ -n "${BEARER}" ]]; then
-  echo "Validating proxy endpoint with inter-VM bearer..."
-  ssh_cmd "code=\$(curl -sS -o /tmp/gmail-proxy-check.out -w '%{http_code}' -H 'x-forge-read-bearer: ${BEARER}' 'http://127.0.0.1:18080/gmail/v1/users/me/threads?maxResults=1' || true); echo \"  proxy status: \${code}\"; cat /tmp/gmail-proxy-check.out 2>/dev/null || true"
+chmod +x "\$HOME/.local/bin/openshell-sandbox-mail-proxy.service.sh"
+mkdir -p "\$HOME/.config/systemd/user"
+if ! grep -q '^TimeoutStopSec=' "\$HOME/.config/systemd/user/openshell-sandbox-mail-proxy.service" 2>/dev/null; then
+  sed -i '/^RestartSec=/a TimeoutStopSec=20' "\$HOME/.config/systemd/user/openshell-sandbox-mail-proxy.service" 2>/dev/null || true
 fi
+systemctl --user daemon-reload
+
+ok=0
+if ! restart_mail_proxy; then
+  echo "  Retrying leftover kill + start..."
+  if ! restart_mail_proxy; then
+    echo "  ERROR: mail-proxy did not become healthy (want HTTP 200)"
+    systemctl --user status openshell-sandbox-mail-proxy.service --no-pager || true
+    journalctl --user -u openshell-sandbox-mail-proxy.service -n 20 --no-pager || true
+    ok=1
+  fi
+fi
+exit \$ok
+EOF
+restart_rc=$?
 
 # --- Step 6: Clean up credential files on VM ---
 echo "Cleaning up credential files on VM..."
-ssh_cmd "rm -f /tmp/gog-client-secret.json /tmp/gog-token-export.json /tmp/gmail-read-profile-v2.yaml /tmp/gmail-proxy-check.out"
+ssh_cmd "rm -f /tmp/gog-client-secret.json /tmp/gog-token-export.json /tmp/gmail-read-profile-v2.yaml /tmp/gmail-proxy-check.out /tmp/gmail-proxy-err.out" || true
+
+if [[ "${restart_rc}" -ne 0 ]]; then
+  echo "ERROR: Gmail refresh configured, but mail-proxy did not return HTTP 200."
+  echo "The leftover proxy on :18080 was not replaced with a fresh credential session."
+  exit 1
+fi
 
 echo ""
 echo "============================================================"
