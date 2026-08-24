@@ -7,3 +7,14 @@ profiles:
 # Leave empty to skip integrations VM provisioning.
 integrationsProfiles:
   - integrations
+
+# Default process identity for BOM-created sandboxes.
+# Can be overridden per-sandbox via runAsUser/runAsGroup in sandbox.yaml.
+sandboxPolicy:
+  defaultRunAsUser: "1001"
+  defaultRunAsGroup: "1001"
+
+# OpenClaw notebook identity override (templated into data-science profile).
+openclawNotebook:
+  runAsUser: "1000"
+  runAsGroup: "1000"

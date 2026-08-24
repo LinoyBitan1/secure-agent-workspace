@@ -9,10 +9,10 @@ spec:
       agent: openclaw
       image: quay.io/rh-ai-quickstart/nemoclaw-sandbox:latest
       providers:
-        - nvidia
+        - brave
     - name: toolbox
       type: generic
       enabled: false
       image: base
       providers:
-        - nvidia
+        - brave

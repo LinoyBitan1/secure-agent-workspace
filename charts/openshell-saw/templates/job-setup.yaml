@@ -88,6 +88,9 @@ spec:
               mountPath: /ws-secrets/{{ $name }}
               readOnly: true
             {{- end }}
+            - name: governance-profiles
+              mountPath: /governance-profiles
+              readOnly: true
       volumes:
         - name: scripts
           configMap:
@@ -123,3 +126,7 @@ spec:
             secretName: {{ $name }}
             optional: true
         {{- end }}
+        - name: governance-profiles
+          configMap:
+            name: governance-interceptor-profiles
+            optional: true

@@ -3,9 +3,8 @@ kind: Providers
 metadata: {}
 spec:
   providers:
-    - name: nvidia
-      type: nvidia
-      nemoclawProvider: build
-      model: nvidia/nemotron-3-super-120b-a12b
-      credentialSecret: inference
+    - name: brave
+      type: brave
+      enabled: false
+      credentialSecret: web-search
       credentialSecretKey: api_key

@@ -1,3 +1,4 @@
+id: web-search
 display_name: Web Search
 description: Tavily and Brave Search API endpoints and plugin registry
 provider_type: custom

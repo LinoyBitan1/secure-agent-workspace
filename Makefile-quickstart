@@ -1,7 +1,15 @@
+# Load environment overrides from .env if present (avoids passing vars on every command).
+# Example .env:
+#   OIDC_ISSUER=https://keycloak.example.com/realms/openshell
+#   API_KEY=nvapi-...
+#   NS=openshell-agents
+-include .env
+export
+
 NS             ?= openshell-agents
 BUILD_NS       ?= openshell-agents
 QUAY_REPO      ?= quay.io/rh-ai-quickstart
-OPENSHELL_VERSION ?= 0.0.103
+OPENSHELL_VERSION ?= 0.0.110
 OPENSHELL_SAW_NAME ?=
 SANDBOX_IMAGE  ?=
 AGENT          ?= openclaw
@@ -14,6 +22,10 @@ API_KEY        ?=
 ENDPOINT_URL   ?=
 WEB_SEARCH     ?=
 GCP_SA_JSON    ?=
+GCP_PROJECT_ID ?=
+GMAIL_ACCOUNT  ?=
+AUTHORIZE_LOCAL ?=
+INSTALL_GOG_IF_MISSING ?=
 OIDC_ISSUER    ?=
 OIDC_CLIENT_ID ?= openshell-cli
 OIDC_FLOW      ?= browser
@@ -37,6 +49,18 @@ SSH_PUBKEY = $(shell cat "$(SSH_KEY_PATH).pub" 2>/dev/null)
 		echo "  Set it via: export OPENSHELL_SAW_NAME=my-saw"; \
 		echo "  Or pass it: make <target> OPENSHELL_SAW_NAME=my-saw"; \
 		exit 1; \
+	fi
+
+.check-governance:
+	@if [ "$(GOVERNANCE_ENABLED)" = "true" ]; then \
+		GOV_EP="http://governance-interceptor.$(NS).svc.cluster.local:18081"; \
+		if ! kubectl get deployment governance-interceptor -n $(NS) >/dev/null 2>&1; then \
+			echo "Error: GOVERNANCE_ENABLED=true but governance interceptor is not deployed in $(NS)."; \
+			echo "  Either deploy it:  make deploy-governance"; \
+			echo "  Or disable it:     export GOVERNANCE_ENABLED=false"; \
+			exit 1; \
+		fi; \
+		echo "Governance interceptor: deployed in $(NS)"; \
 	fi
 
 .check-ssh-key:
@@ -65,11 +89,9 @@ SSH_PUBKEY = $(shell cat "$(SSH_KEY_PATH).pub" 2>/dev/null)
 		echo "  RHBK (Keycloak): installed in $(NS)"; \
 	elif oc get csv --all-namespaces 2>/dev/null | grep -q rhbk; then \
 		RHBK_NS=$$(oc get csv --all-namespaces 2>/dev/null | grep rhbk | awk '{print $$1}' | head -1); \
-		echo "Error: RHBK operator found in namespace '$${RHBK_NS}' but not in '$(NS)'."; \
-		echo "  Install it in '$(NS)': oc apply -f - <<< '{\"apiVersion\":\"operators.coreos.com/v1alpha1\",\"kind\":\"Subscription\",\"metadata\":{\"name\":\"rhbk-operator\",\"namespace\":\"$(NS)\"},\"spec\":{\"channel\":\"stable-v26\",\"name\":\"rhbk-operator\",\"source\":\"redhat-operators\",\"sourceNamespace\":\"openshift-marketplace\"}}'"; \
-		exit 1; \
+		echo "  RHBK (Keycloak): installed in $${RHBK_NS}"; \
 	else \
-		echo "Error: RHBK operator not installed."; exit 1; \
+		echo "  Warning: RHBK operator not found. Pass OIDC_ISSUER= to use an external OIDC provider."; \
 	fi
 	@if [ -f "$(SSH_KEY_PATH).pub" ]; then echo "  SSH key: $(SSH_KEY_PATH)"; \
 	else echo "  SSH key: not found. Run 'make generate-keys'."; fi
@@ -83,20 +105,22 @@ SSH_PUBKEY = $(shell cat "$(SSH_KEY_PATH).pub" 2>/dev/null)
 
 .PHONY: check-prereqs generate-keys inference-secret ssh-secret keycloak keycloak-issuer login whoami logout delete-keycloak \
         build-nemoclaw build-nemoclaw-cli build-openclaw-openshell build-gateway-docker build-gateway-podman copy-images \
-        deploy-config deploy-agent-vm deploy-integ-vm deploy-bom saw-create \
-        saw-ssh saw-logs saw-list saw-tui saw-gui saw-configure-gateway \
+        deploy-config deploy-agent-vm deploy-integ-vm deploy-bom deploy-gov-profiles deploy-governance bearer-secret saw-create \
+        saw-ssh saw-logs saw-list saw-verify saw-tui saw-gui saw-configure-gateway \
         tui gui nemoclaw-tui nemoclaw-gui openclaw-tui openclaw-gui \
         test e2e-test configure-gmail-refresh \
-        saw-delete sandbox-pre-delete delete-vms delete-all \
+        saw-delete sandbox-pre-delete delete-vms delete-all verify verify-keycloak verify-agent verify-integ \
         governance-list-profiles governance-add-profile governance-remove-profile governance-create-profile governance-demo \
-        status .check-saw-name .check-ssh-key .check-prereqs
+        status .check-saw-name .check-ssh-key .check-governance .check-prereqs
+
+##@ Setup
 
 check-prereqs: .check-prereqs ## Verify required operators and CLI tools
 
 generate-keys: ## Generate SSH keypair for sandbox provisioning
 	@$(SCRIPTS_DIR)/generate-keys.sh
 
-# --- NemoClaw images ---
+##@ Image Build
 
 build-nemoclaw: ## Build NemoClaw sandbox image and push to quay (set OTEL=1 to include diagnostics-otel)
 	-@oc delete is nemoclaw-sandbox nemoclaw-sandbox-root -n $(BUILD_NS) 2>/dev/null
@@ -124,7 +148,6 @@ build-openclaw-openshell: ## Build the openclaw-openshell sandbox image and push
 	@echo "Pushing openclaw-openshell to $(QUAY_REPO)..."
 	@$(SCRIPTS_DIR)/push-image.sh $(BUILD_NS) openclaw-openshell $(QUAY_REPO) $(OPENSHELL_VERSION)
 
-# --- Governance interceptor image ---
 
 build-governance-interceptor: ## Build governance interceptor image on cluster and push to quay
 	-@oc delete is governance-interceptor -n $(BUILD_NS) 2>/dev/null
@@ -134,7 +157,6 @@ build-governance-interceptor: ## Build governance interceptor image on cluster a
 	@echo "Pushing governance-interceptor to $(QUAY_REPO)..."
 	@$(SCRIPTS_DIR)/push-image.sh $(BUILD_NS) governance-interceptor $(QUAY_REPO)
 
-# --- Gateway VM image ---
 
 build-gateway-docker: ## Build Docker gateway VM image and push to quay
 	@echo "Building Docker gateway image (openshell-gateway-docker)..."
@@ -263,7 +285,7 @@ sandbox-pre-delete: .check-saw-name
 	-@oc delete job $(OPENSHELL_SAW_NAME)-setup -n $(NS) --wait=false 2>/dev/null
 	@echo "Heavy resources for '$(OPENSHELL_SAW_NAME)' scheduled for deletion."
 
-# --- Keycloak / OIDC ---
+##@ Authentication
 
 keycloak: ## Deploy Keycloak instance + realm via RHBK operator
 	@KEYCLOAK_NS=$(KEYCLOAK_NS) KEYCLOAK_CHART=$(KEYCLOAK_CHART) \
@@ -282,8 +304,18 @@ keycloak-issuer: ## Print the Keycloak OIDC issuer URL
 	echo "https://$${host}/realms/openshell"
 
 login: ## Authenticate with the OIDC provider
-	@OIDC_ISSUER=$(OIDC_ISSUER) OIDC_CLIENT_ID=$(OIDC_CLIENT_ID) \
-	OIDC_FLOW=$(OIDC_FLOW) OIDC_TOKEN_DIR=$(OIDC_TOKEN_DIR) NS=$(NS) \
+	@OIDC_URL="$(OIDC_ISSUER)"; \
+	KC_NS=$(KEYCLOAK_NS); \
+	if [ -z "$$OIDC_URL" ]; then \
+		KC_HOST=$$(oc get route -n $$KC_NS -l app=keycloak -o jsonpath='{.items[0].spec.host}' 2>/dev/null); \
+		if [ -z "$$KC_HOST" ]; then \
+			KC_NS=$$(oc get keycloak --all-namespaces -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || true); \
+			if [ -n "$$KC_NS" ]; then KC_HOST=$$(oc get route -n $$KC_NS -l app=keycloak -o jsonpath='{.items[0].spec.host}' 2>/dev/null); fi; \
+		fi; \
+		if [ -n "$$KC_HOST" ]; then OIDC_URL="https://$$KC_HOST/realms/openshell"; fi; \
+	fi; \
+	OIDC_ISSUER=$$OIDC_URL OIDC_CLIENT_ID=$(OIDC_CLIENT_ID) \
+	OIDC_FLOW=$(OIDC_FLOW) OIDC_TOKEN_DIR=$(OIDC_TOKEN_DIR) NS=$$KC_NS \
 	$(SCRIPTS_DIR)/oidc-login.sh login
 
 whoami: ## Show current OIDC identity and token status
@@ -300,7 +332,7 @@ delete-keycloak: ## Uninstall Keycloak + PostgreSQL
 	-oc delete secret keycloak-db-secret -n $(KEYCLOAK_NS) 2>/dev/null
 	@echo "Keycloak cleaned up."
 
-# --- Secrets ---
+##@ Configuration
 
 inference-secret: ## Create inference provider Secret (API_KEY=, PROVIDER=nvidia, MODEL=)
 	@if [ -z "$(API_KEY)" ]; then \
@@ -323,7 +355,7 @@ ssh-secret: ## Create SSH key secrets for sandbox Jobs
 		--from-file=key=$(SSH_KEY_PATH).pub \
 		--dry-run=client -o yaml | oc apply -f -
 
-# --- Sandbox ---
+##@ Sandbox Management
 
 saw-create: .check-saw-name .check-ssh-key ssh-secret ## Provision a sandbox (PROVIDER=, MODEL=, API_KEY=, CONTAINER_RUNTIME=docker|podman)
 	@NS=$(NS) OPENSHELL_SAW_NAME=$(OPENSHELL_SAW_NAME) SAW_CHART=$(SAW_CHART) \
@@ -343,10 +375,11 @@ saw-configure-gateway: .check-saw-name ## Configure openshell CLI for a sandbox 
 	if [ -z "$$GW_URL" ]; then echo "Error: Gateway route not found for '$(OPENSHELL_SAW_NAME)'."; exit 1; fi; \
 	OIDC_ISSUER="$(OIDC_ISSUER)"; \
 	if [ -z "$$OIDC_ISSUER" ]; then \
-		KC_HOST=$$(oc get keycloak openshell-keycloak -n $(KEYCLOAK_NS) -o jsonpath='{.status.externalURL}' 2>/dev/null \
-			| sed 's|^https://||;s|/$$||'); \
+		KC_NS=$(KEYCLOAK_NS); \
+		KC_HOST=$$(oc get route -n $$KC_NS -l app=keycloak -o jsonpath='{.items[0].spec.host}' 2>/dev/null); \
 		if [ -z "$$KC_HOST" ]; then \
-			KC_HOST=$$(oc get route -n $(KEYCLOAK_NS) -l app=keycloak -o jsonpath='{.items[0].spec.host}' 2>/dev/null); \
+			KC_NS=$$(oc get keycloak --all-namespaces -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || true); \
+			if [ -n "$$KC_NS" ]; then KC_HOST=$$(oc get route -n $$KC_NS -l app=keycloak -o jsonpath='{.items[0].spec.host}' 2>/dev/null); fi; \
 		fi; \
 		if [ -n "$$KC_HOST" ]; then OIDC_ISSUER="https://$$KC_HOST/realms/openshell"; fi; \
 	fi; \
@@ -384,6 +417,9 @@ saw-list: ## List all sandboxes
 			printf "%-20s %-12s %-10s %s\n" "$$name" "$$status" "$$vm" "$$created"; \
 		done
 
+saw-verify: .check-saw-name ## Verify a sandbox VM setup (gateway, sandboxes, providers, dashboard, logs)
+	@$(SCRIPTS_DIR)/verify-vm.sh --vm $(OPENSHELL_SAW_NAME) --role agent --ssh-key $(SSH_KEY_PATH) --ns $(NS)
+
 saw-logs: .check-saw-name ## Follow sandbox setup Job logs
 	oc -n $(NS) logs -f job/$(OPENSHELL_SAW_NAME)-setup
 
@@ -394,7 +430,7 @@ saw-ssh: .check-saw-name ## SSH into a sandbox
 		-o LogLevel=ERROR \
 		sandbox@openshell-$(OPENSHELL_SAW_NAME).default
 
-# --- User access ---
+##@ User Access
 
 tui: ## Launch OpenClaw TUI (auto-configures gateway, defaults to agent VM)
 	@$(MAKE) saw-configure-gateway OPENSHELL_SAW_NAME=$(AGENT_VM_NAME) KEYCLOAK_NS=$(KEYCLOAK_NS) 2>/dev/null || true
@@ -444,7 +480,7 @@ nemoclaw-gui: .check-saw-name ## Open NemoClaw web UI (e.g. make nemoclaw-gui SA
 	fi; \
 	if [ -z "$$SANDBOX" ]; then echo "Error: No sandboxes found."; exit 1; fi; \
 	SANDBOX_NAME=$$SANDBOX GATEWAY_NAME=$(OPENSHELL_SAW_NAME) \
-	GUI_PORT=$(GUI_PORT) $(SCRIPTS_DIR)/saw-gui.sh
+	WORKSPACE=$(WORKSPACE) GUI_PORT=$(GUI_PORT) $(SCRIPTS_DIR)/openshell-saw-gui.sh
 
 openclaw-gui: .check-saw-name ## Open OpenClaw web UI (e.g. make openclaw-gui SANDBOX_NAME=notebook GUI_PORT=28789)
 	@if [ -n "$(SANDBOX_NAME)" ]; then \
@@ -453,27 +489,13 @@ openclaw-gui: .check-saw-name ## Open OpenClaw web UI (e.g. make openclaw-gui SA
 		SANDBOX=$$(openshell --gateway $(OPENSHELL_SAW_NAME) --gateway-insecure sandbox list --workspace $(WORKSPACE) --names 2>/dev/null | grep -E '^[a-zA-Z0-9_-]+$$' | head -1); \
 	fi; \
 	if [ -z "$$SANDBOX" ]; then echo "Error: No sandboxes found."; exit 1; fi; \
-	echo "Fetching openclaw gateway token..."; \
-	TOKEN=$$(ssh -o "ProxyCommand=openshell --gateway-insecure ssh-proxy --gateway-name $(OPENSHELL_SAW_NAME) --name $$SANDBOX" \
-		-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 \
-		sandbox@openshell-$$SANDBOX.$(WORKSPACE) \
-		"OPENCLAW_HOME=/sandbox cat /sandbox/.openclaw/openclaw.json" 2>/dev/null \
-		| grep -v 'TLS certificate' \
-		| python3 -c "import sys,json; c=json.load(sys.stdin); print(c.get('gateway',{}).get('auth',{}).get('token',''))" 2>/dev/null || true); \
-	if [ -z "$$TOKEN" ]; then echo "Error: Could not extract token."; exit 1; fi; \
-	GUI_PORT=$${GUI_PORT:-18789}; \
-	pids=$$(lsof -ti :$$GUI_PORT 2>/dev/null || true); \
-	[ -n "$$pids" ] && kill $$pids 2>/dev/null && sleep 1; \
-	echo ""; \
-	echo "OpenClaw UI: http://localhost:$$GUI_PORT/#token=$$TOKEN"; \
-	echo "Press Ctrl-C to stop."; \
-	echo ""; \
-	kubectl port-forward svc/$(OPENSHELL_SAW_NAME)-gateway -n $(NS) $$GUI_PORT:18789
+	SANDBOX_NAME=$$SANDBOX GATEWAY_NAME=$(OPENSHELL_SAW_NAME) \
+	WORKSPACE=$(WORKSPACE) GUI_PORT=$(GUI_PORT) $(SCRIPTS_DIR)/openshell-saw-gui.sh
 
 saw-gui: .check-saw-name ## Open web UI (alias for nemoclaw-gui)
 	@$(MAKE) nemoclaw-gui OPENSHELL_SAW_NAME=$(OPENSHELL_SAW_NAME) SANDBOX_NAME=$(SANDBOX_NAME) WORKSPACE=$(WORKSPACE) GUI_PORT=$(GUI_PORT)
 
-# --- Governance profiles ---
+##@ Governance
 
 PROFILE_NAME   ?=
 PROFILE_FILE   ?=
@@ -493,24 +515,31 @@ governance-create-profile: ## Create a new profile from YAML (PROFILE_NAME=jira 
 governance-demo: .check-saw-name ## Run governance interceptor demo
 	@$(SCRIPTS_DIR)/demo-governance.sh $(OPENSHELL_SAW_NAME)
 
-# --- Test ---
+##@ Test
 
 test: ## Run headless E2E test (auto-detects provider from ~/values-secret.yaml)
 	@$(SCRIPTS_DIR)/e2e-test.sh
 
-# --- Teardown ---
+##@ Teardown
 
 saw-delete: sandbox-pre-delete ## Uninstall a sandbox
 	helm uninstall $(OPENSHELL_SAW_NAME) --namespace $(NS)
 
-delete-all: ## Uninstall everything (keycloak + imagestreams + gateway image)
+delete-all: ## Uninstall everything (VMs + BOM + keycloak + imagestreams + secrets)
+	-helm uninstall $(AGENT_VM_NAME) -n $(NS) 2>/dev/null
+	-helm uninstall $(INTEG_VM_NAME) -n $(NS) 2>/dev/null
+	-helm uninstall saw-bom -n $(NS) 2>/dev/null
 	-helm uninstall openshell-keycloak --namespace $(NS) 2>/dev/null
 	-helm uninstall openshell-gateway-image --namespace $(NS) 2>/dev/null
+	-helm uninstall openshell-gateway-docker-image --namespace $(NS) 2>/dev/null
 	-helm uninstall nemoclaw-imagestream --namespace $(NS) 2>/dev/null
 	-helm uninstall nemoclaw-cli-imagestream --namespace $(NS) 2>/dev/null
-	@echo "Note: sandbox releases must be uninstalled individually."
+	-kubectl delete secret inter-vm-bearer inference openshell-aap-ssh -n $(NS) 2>/dev/null
+	@echo "Waiting for VMs to terminate..."
+	-@kubectl wait --for=delete vm/$(AGENT_VM_NAME) vm/$(INTEG_VM_NAME) -n $(NS) --timeout=120s 2>/dev/null || true
+	@echo "All resources deleted."
 
-# --- Two-VM Split Architecture ---
+##@ Two-VM Deployment
 #
 # Workflow (new VMs via OpenShift Virtualization):
 #   1. make generate-keys              # or use existing: SSH_KEY_PATH=~/.ssh/my_key
@@ -526,14 +555,39 @@ delete-all: ## Uninstall everything (keycloak + imagestreams + gateway image)
 AGENT_VM_NAME    ?= openshell-saw
 INTEG_VM_NAME    ?= openshell-saw-integ
 BOM_CHART        := charts/saw-bom
+GOV_POLICY_CHART := charts/governance-policy
+DEPLOY_GOV_PROFILES ?= false
 AGENT_HOST       ?=
 INTEG_HOST       ?=
 INTEG_PORT       ?= 18083
 INFERENCE_MODEL  ?= deepseek-ai/deepseek-v4-flash-0731
 
-deploy-config: .check-ssh-key ssh-secret deploy-bom ## Create SSH secrets, BOM configmap, and inference secret (if API_KEY set)
+deploy-gov-profiles: ## Deploy governance provider profiles ConfigMap
+	helm upgrade --install governance-policy $(GOV_POLICY_CHART) \
+		--namespace $(NS) --set enabled=$(GOVERNANCE_ENABLED)
+
+deploy-governance: deploy-gov-profiles ## Deploy governance interceptor + profiles
+	helm upgrade --install governance-interceptor charts/governance-interceptor \
+		--namespace $(NS)
+
+bearer-secret: ## Generate inter-VM bearer secret (idempotent)
+	@if kubectl get secret inter-vm-bearer -n $(NS) >/dev/null 2>&1; then \
+		echo "Bearer secret already exists."; \
+	else \
+		BEARER=$$(openssl rand -hex 32); \
+		BEARER_SHA=$$(printf '%s' "$$BEARER" | sha256sum | awk '{print $$1}'); \
+		kubectl create secret generic inter-vm-bearer -n $(NS) \
+			--from-literal=bearer="$$BEARER" \
+			--from-literal=sha256="$$BEARER_SHA"; \
+		echo "Bearer secret created."; \
+	fi
+
+deploy-config: .check-ssh-key ssh-secret deploy-bom bearer-secret ## Create SSH secrets, BOM configmap, inference secret, and bearer
 	@if [ -n "$(API_KEY)" ]; then \
 		$(MAKE) inference-secret; \
+	fi
+	@if [ "$(DEPLOY_GOV_PROFILES)" = "true" ]; then \
+		$(MAKE) deploy-gov-profiles; \
 	fi
 	@echo "Configuration deployed."
 
@@ -541,7 +595,8 @@ deploy-bom: ## Deploy BOM profiles (configures workspaces, providers, sandboxes)
 	helm upgrade --install saw-bom $(BOM_CHART) \
 		--namespace $(NS)
 
-deploy-agent-vm: ## Deploy Agent VM (set AGENT_HOST= for a pre-existing VM)
+deploy-agent-vm: .check-governance ## Deploy Agent VM (set AGENT_HOST= for a pre-existing VM)
+	-@kubectl delete job $(AGENT_VM_NAME)-setup -n $(NS) 2>/dev/null
 	@if [ -n "$(AGENT_HOST)" ]; then \
 		$(SCRIPTS_DIR)/configure-vm.sh --role agent \
 			--host $(AGENT_HOST) \
@@ -552,7 +607,12 @@ deploy-agent-vm: ## Deploy Agent VM (set AGENT_HOST= for a pre-existing VM)
 	else \
 		OIDC_URL="$(OIDC_ISSUER)"; \
 		if [ -z "$$OIDC_URL" ]; then \
-			KC_HOST=$$(oc get route -n $(KEYCLOAK_NS) -l app=keycloak -o jsonpath='{.items[0].spec.host}' 2>/dev/null); \
+			KC_NS=$(KEYCLOAK_NS); \
+			KC_HOST=$$(oc get route -n $$KC_NS -l app=keycloak -o jsonpath='{.items[0].spec.host}' 2>/dev/null); \
+			if [ -z "$$KC_HOST" ]; then \
+				KC_NS=$$(oc get keycloak --all-namespaces -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || true); \
+				if [ -n "$$KC_NS" ]; then KC_HOST=$$(oc get route -n $$KC_NS -l app=keycloak -o jsonpath='{.items[0].spec.host}' 2>/dev/null); fi; \
+			fi; \
 			if [ -n "$$KC_HOST" ]; then OIDC_URL="https://$$KC_HOST/realms/openshell"; fi; \
 		fi; \
 		helm upgrade --install $(AGENT_VM_NAME) $(SAW_CHART) \
@@ -560,10 +620,12 @@ deploy-agent-vm: ## Deploy Agent VM (set AGENT_HOST= for a pre-existing VM)
 			-f overrides/openshell-saw.yaml \
 			--set sshPublicKey="$$(cat $(SSH_KEY_PATH).pub)" \
 			$(if $(KEYCLOAK_NS),--set dashboard.keycloakNamespace=$(KEYCLOAK_NS)) \
+			--set governance.enabled=$(GOVERNANCE_ENABLED) \
 			$$([ -n "$$OIDC_URL" ] && echo "--set oidc.issuerUrl=$$OIDC_URL"); \
 	fi
 
-deploy-integ-vm: ## Deploy Integrations VM (set INTEG_HOST= for a pre-existing VM)
+deploy-integ-vm: .check-governance ## Deploy Integrations VM (set INTEG_HOST= for a pre-existing VM)
+	-@kubectl delete job $(INTEG_VM_NAME)-setup -n $(NS) 2>/dev/null
 	@if [ -n "$(INTEG_HOST)" ]; then \
 		$(SCRIPTS_DIR)/configure-vm.sh --role integ \
 			--host $(INTEG_HOST) \
@@ -571,16 +633,27 @@ deploy-integ-vm: ## Deploy Integrations VM (set INTEG_HOST= for a pre-existing V
 			--integ-port $(INTEG_PORT) \
 			$(if $(API_KEY),--api-key $(API_KEY)); \
 	else \
+		OIDC_URL="$(OIDC_ISSUER)"; \
+		if [ -z "$$OIDC_URL" ]; then \
+			KC_NS=$(KEYCLOAK_NS); \
+			KC_HOST=$$(oc get route -n $$KC_NS -l app=keycloak -o jsonpath='{.items[0].spec.host}' 2>/dev/null); \
+			if [ -z "$$KC_HOST" ]; then \
+				KC_NS=$$(oc get keycloak --all-namespaces -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || true); \
+				if [ -n "$$KC_NS" ]; then KC_HOST=$$(oc get route -n $$KC_NS -l app=keycloak -o jsonpath='{.items[0].spec.host}' 2>/dev/null); fi; \
+			fi; \
+			if [ -n "$$KC_HOST" ]; then OIDC_URL="https://$$KC_HOST/realms/openshell"; fi; \
+		fi; \
 		helm upgrade --install $(INTEG_VM_NAME) $(SAW_CHART) \
 			--namespace $(NS) --create-namespace \
 			-f overrides/openshell-saw-integ.yaml \
-			--set sshPublicKey="$$(cat $(SSH_KEY_PATH).pub)"; \
+			--set sshPublicKey="$$(cat $(SSH_KEY_PATH).pub)" \
+			--set governance.enabled=$(GOVERNANCE_ENABLED) \
+			$$([ -n "$$OIDC_URL" ] && echo "--set oidc.issuerUrl=$$OIDC_URL"); \
 	fi
 
-delete-vms: ## Delete both VMs and BOM
+delete-vms: ## Delete both VMs (keeps BOM profiles and secrets)
 	-helm uninstall $(AGENT_VM_NAME) -n $(NS) 2>/dev/null
 	-helm uninstall $(INTEG_VM_NAME) -n $(NS) 2>/dev/null
-	-helm uninstall saw-bom -n $(NS) 2>/dev/null
 	-kubectl delete secret inter-vm-bearer -n $(NS) 2>/dev/null
 	@echo "Waiting for VMs to terminate..."
 	-@kubectl wait --for=delete vm/$(AGENT_VM_NAME) vm/$(INTEG_VM_NAME) -n $(NS) --timeout=120s 2>/dev/null || true
@@ -591,15 +664,35 @@ e2e-test: ## Run two-VM E2E test
 		AGENT_VM=$(AGENT_VM_NAME) INTEG_VM=$(INTEG_VM_NAME) \
 		$(SCRIPTS_DIR)/test-two-vm-e2e.sh
 
-configure-gmail-refresh: ## Configure Gmail OAuth refresh on integrations VM (CLIENT_JSON=, TOKEN_EXPORT=)
+configure-gmail-refresh: ## Configure Gmail OAuth refresh on integrations VM (interactive by default; CLIENT_JSON=, TOKEN_EXPORT= optional)
 	$(SCRIPTS_DIR)/configure-gmail-refresh.sh \
-		--client-json $(CLIENT_JSON) \
-		--token-export $(TOKEN_EXPORT) \
-		--namespace $(NS) \
-		--vm $(INTEG_VM_NAME) \
-		--ssh-key $(SSH_KEY_PATH)
+		--namespace "$(NS)" \
+		--vm "$(INTEG_VM_NAME)" \
+		--ssh-key "$(SSH_KEY_PATH)" \
+		$(if $(GCP_PROJECT_ID),--gcp-project "$(GCP_PROJECT_ID)",) \
+		$(if $(GMAIL_ACCOUNT),--gmail-account "$(GMAIL_ACCOUNT)",) \
+		$(if $(AUTHORIZE_LOCAL),--authorize-local,) \
+		$(if $(INSTALL_GOG_IF_MISSING),--install-gog-if-missing,) \
+		$(if $(CLIENT_JSON),--client-json "$(CLIENT_JSON)",) \
+		$(if $(TOKEN_EXPORT),--token-export "$(TOKEN_EXPORT)",)
 
-# --- Status ---
+verify-keycloak: ## Verify Keycloak deployment (instance, realm, clients, users, OIDC)
+	@$(SCRIPTS_DIR)/verify-keycloak.sh --ns $(KEYCLOAK_NS)
+
+verify-integ: ## Verify integrations VM setup (gateway, sandboxes, proxies, logs)
+	@SSH_KEY_PATH=$(SSH_KEY_PATH) NS=$(NS) \
+	$(SCRIPTS_DIR)/verify-vm.sh --vm $(INTEG_VM_NAME) --role integrations --ssh-key $(SSH_KEY_PATH) --ns $(NS)
+
+verify-agent: ## Verify agent VM setup (gateway, sandboxes, providers, dashboard, logs)
+	@SSH_KEY_PATH=$(SSH_KEY_PATH) NS=$(NS) \
+	$(SCRIPTS_DIR)/verify-vm.sh --vm $(AGENT_VM_NAME) --role agent --ssh-key $(SSH_KEY_PATH) --ns $(NS)
+
+verify: ## Verify both VMs
+	@$(MAKE) verify-integ
+	@echo ""
+	@$(MAKE) verify-agent
+
+##@ Status
 
 status: ## Show status of all OpenShell resources
 	@echo "=== Helm releases ===" && helm list -n $(NS) 2>/dev/null || true

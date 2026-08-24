@@ -6,9 +6,9 @@ containerRuntime: podman
 onboardCli: openclaw
 
 openshell:
-  gatewayImage: "ghcr.io/nvidia/openshell/gateway:0.0.103"
-  supervisorImage: "ghcr.io/nvidia/openshell/supervisor:0.0.103"
-  version: "0.0.103"
+  gatewayImage: "ghcr.io/nvidia/openshell/gateway:0.0.110"
+  supervisorImage: "ghcr.io/nvidia/openshell/supervisor:0.0.110"
+  version: "0.0.110"
   pipIndexUrl: ""
 
 vm:
@@ -31,7 +31,7 @@ service:
   extraPorts:
     - name: mail-read
       port: 18080
-      targetPort: 19080
+      targetPort: 18080
     - name: slack-read
       port: 18081
       targetPort: 18081

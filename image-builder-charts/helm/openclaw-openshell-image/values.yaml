@@ -1,6 +1,6 @@
 # Base image: csb-openclaw-only, tagged per-release by the openclaw project.
 build:
-  baseImage: "quay.io/redhat-et/openclaw:csb-openclaw-only-openclaw-v2026.7.2-beta.7"
+  baseImage: "quay.io/redhat-et/openclaw-saw:demo1"
 
 output:
   imageStreamTag: "openclaw-openshell:latest"

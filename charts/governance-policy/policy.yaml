@@ -3,7 +3,7 @@ version: 1
 filesystem_policy:
   include_workdir: true
   read_only: [/usr, /lib, /proc, /dev/urandom, /app, /etc, /var/log]
-  read_write: [/sandbox, /tmp, /dev/null]
+  read_write: [/sandbox, /tmp, /dev/null, /proc/self/oom_score_adj, /proc/thread-self/oom_score_adj]
 
 landlock:
   compatibility: best_effort

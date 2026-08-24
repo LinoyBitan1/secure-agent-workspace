@@ -102,3 +102,31 @@ else
     sleep 2
   done
 fi
+
+# --- Regenerate client cert with OU=openshell-admin for platform admin access ---
+# The default cert has OU=openshell-user which lacks admin permissions when OIDC
+# is enabled. Re-sign with the existing CA to grant platform admin via mTLS.
+# Runs after gateway start so generate-certs has created the CA.
+echo "Regenerating mTLS client cert with admin role..."
+guest_ssh "
+  TLS_DIR=\$HOME/.local/state/openshell/tls
+  CA_CERT=\${TLS_DIR}/ca.crt
+  CA_KEY=\${TLS_DIR}/ca.key
+  CLIENT_DIR=\${TLS_DIR}/client
+  if [[ -f \${CA_KEY} && -f \${CA_CERT} ]]; then
+    openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+      -keyout \${CLIENT_DIR}/tls.key \
+      -subj '/CN=openshell-client/OU=openshell-admin' \
+      -out /tmp/client.csr 2>/dev/null
+    openssl x509 -req -in /tmp/client.csr \
+      -CA \${CA_CERT} -CAkey \${CA_KEY} -CAcreateserial \
+      -days 3650 -out \${CLIENT_DIR}/tls.crt 2>/dev/null
+    rm -f /tmp/client.csr
+    for gw_dir in \$HOME/.config/openshell/gateways/*/mtls; do
+      [[ -d \${gw_dir} ]] && cp \${CLIENT_DIR}/tls.crt \${CLIENT_DIR}/tls.key \${gw_dir}/
+    done
+    echo 'Client cert regenerated: OU=openshell-admin'
+  else
+    echo 'WARN: CA key not found, skipping cert regeneration'
+  fi
+" || echo "WARN: client cert regeneration failed (non-fatal)"

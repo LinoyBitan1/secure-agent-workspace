@@ -35,6 +35,8 @@ KEYCLOAK_NAME="{{ .Values.dashboard.keycloakName | default "openshell-keycloak" 
 OWNER="{{ .Values.accessControl.owner | default "alice" }}"
 NEMOCLAW_CLI_IMAGE="{{ .Values.nemoclawCliImage }}"
 ROLE="{{ .Values.role }}"
+PEER_LABEL="{{ .Values.networkPolicy.peerLabel }}"
+JOB_BACKOFF_LIMIT="{{ .Values.job.backoffLimit | default 3 }}"
 
 if [[ "${RUNTIME}" == "podman" && "${ONBOARD_CLI}" == "nemoclaw" ]]; then
   echo "ERROR: NemoClaw onboarding requires Docker. Set containerRuntime=docker or use onboardCli=openclaw." >&2
@@ -90,8 +92,6 @@ source "${SCRIPTS_DIR}/check-governance.sh"
 # --- Phase 7: BOM profile setup ---
 if [[ "${ROLE}" == "integrations" ]]; then
   source "${SCRIPTS_DIR}/setup-integ-proxies.sh"
-  # Enable OIDC on the gateway now that setup is complete
-  source "${SCRIPTS_DIR}/patch-oidc.sh"
   echo "Integrations VM setup complete on vm/${VM_NAME}."
   exit 0
 fi

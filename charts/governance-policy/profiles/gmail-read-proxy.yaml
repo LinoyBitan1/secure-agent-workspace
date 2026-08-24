@@ -1,0 +1,32 @@
+id: gmail-read-proxy
+display_name: Gmail read-only proxy transport
+description: Inter-VM bearer for agent access to the integrations VM Gmail proxy
+category: data
+inference_capable: false
+
+credentials:
+  - name: GOG_ACCESS_TOKEN
+    description: Random inter-VM bearer retained by the agent VM
+    env_vars: [GOG_ACCESS_TOKEN]
+    required: true
+    auth_style: header
+    header_name: X-Forge-Read-Bearer
+    refresh:
+      strategy: static
+
+discovery:
+  credentials: [GOG_ACCESS_TOKEN]
+
+endpoints:
+  - host: openshell-saw-integ-gateway.__NAMESPACE__.svc.cluster.local
+    port: 18080
+    protocol: rest
+    enforcement: enforce
+    access: read-only
+
+binaries:
+  - /usr/local/bin/gog
+  - /usr/local/bin/node
+  - /usr/bin/node
+  - /usr/bin/curl
+  - /usr/local/bin/curl

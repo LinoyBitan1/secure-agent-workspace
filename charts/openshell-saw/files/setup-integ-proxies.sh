@@ -15,60 +15,26 @@ echo "============================================================"
 echo "Phase: Deploy proxy sandboxes on integrations VM"
 echo "============================================================"
 
-# --- Step 1: Fetch OIDC token from Keycloak ---
-echo "Fetching OIDC token from Keycloak..."
-OIDC_TOKEN=""
-if [[ -n "${OIDC_ISSUER_URL}" && -n "${OWNER}" ]]; then
-  KEYCLOAK_SECRET="$(kubectl get secret ${KEYCLOAK_NAME}-initial-admin \
-    -n ${KEYCLOAK_NS} \
-    -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)"
-  if [[ -n "${KEYCLOAK_SECRET}" ]]; then
-    TOKEN_RESPONSE=$(curl -sk -X POST \
-      "${OIDC_ISSUER_URL}/protocol/openid-connect/token" \
-      -d "grant_type=password" \
-      -d "client_id=openshell-cli" \
-      -d "username=${OWNER}" \
-      -d "password=${OWNER}" \
-      -d "scope=openid" 2>/dev/null || true)
-    OIDC_TOKEN=$(echo "${TOKEN_RESPONSE}" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
-    if [[ -n "${OIDC_TOKEN}" ]]; then
-      echo "  OIDC token obtained for ${OWNER}"
-    else
-      echo "  WARN: failed to get OIDC token — proxy setup may fail"
-    fi
-  fi
-fi
+# All admin operations use mTLS with OU=openshell-admin cert — no OIDC token needed.
+# OIDC is enabled on the gateway by patch-oidc.sh at the end of run-setup.sh.
 
-# --- Step 2: Configure gateway with OIDC token ---
-echo "Configuring gateway access..."
-if [[ -n "${OIDC_TOKEN}" ]]; then
-  guest_ssh "
-    export PATH=\"\$HOME/.local/bin:\$PATH\"
-    # Write OIDC token for the OIDC gateway (same as apply_bom.py)
-    TOKEN_DIR=\$HOME/.config/openshell/gateways/openshell
-    mkdir -p \${TOKEN_DIR}
-    cat > \${TOKEN_DIR}/oidc_token.json <<TOKEOF
-{\"access_token\": \"${OIDC_TOKEN}\", \"issuer\": \"${OIDC_ISSUER_URL}\", \"client_id\": \"openshell-cli\"}
-TOKEOF
-    chmod 600 \${TOKEN_DIR}/oidc_token.json
-    echo 'OIDC token written for gateway openshell'
-    openshell gateway select openshell
-    openshell settings set --global --key providers_v2_enabled --value true --yes 2>&1 || true
-    openshell workspace member add --workspace default --subject openshell-client --role admin 2>&1 || true
-  " || true
-else
-  echo "  WARN: no OIDC token — using mTLS gateway directly"
-  guest_ssh "
-    export PATH=\"\$HOME/.local/bin:\$PATH\"
-    openshell gateway select openshell-local 2>/dev/null || true
-  " || true
-fi
+# --- Step 1: Register mTLS gateway for internal operations ---
+echo "Registering mTLS gateway..."
+guest_ssh "
+  export PATH=\"\$HOME/.local/bin:\$PATH\"
+  openshell gateway remove openshell-local 2>/dev/null || true
+  openshell gateway add https://127.0.0.1:17670 --name openshell-local --local
+  openshell gateway select openshell-local
+  echo 'mTLS gateway openshell-local registered'
+" || true
 
 # --- Step 3: Generate inter-VM bearer and store in K8s Secret ---
 BEARER_SECRET="inter-vm-bearer"
 if kubectl get secret "${BEARER_SECRET}" -n "${NS}" >/dev/null 2>&1; then
   echo "Inter-VM bearer secret already exists"
-  BEARER_SHA256="$(kubectl get secret "${BEARER_SECRET}" -n "${NS}" -o jsonpath='{.data.sha256}' | base64 -d)"
+  _bearer_json="$(kubectl get secret "${BEARER_SECRET}" -n "${NS}" -o json)"
+  BEARER="$(echo "${_bearer_json}" | jq -r '.data.bearer' | base64 -d)"
+  BEARER_SHA256="$(echo "${_bearer_json}" | jq -r '.data.sha256' | base64 -d)"
 else
   echo "Generating inter-VM bearer..."
   BEARER="$(openssl rand -hex 32)"
@@ -88,8 +54,9 @@ if kubectl get configmap "${BOM_CM}" -n "${NS}" >/dev/null 2>&1; then
 
   mkdir -p "${BOM_MOUNT}"
 
-  for key in $(kubectl get configmap "${BOM_CM}" -n "${NS}" -o json | jq -r '.data | keys[]'); do
-    kubectl get configmap "${BOM_CM}" -n "${NS}" -o json | jq -r --arg k "${key}" '.data[$k]' > "${BOM_MOUNT}/${key}"
+  _cm_json="$(kubectl get configmap "${BOM_CM}" -n "${NS}" -o json)"
+  for key in $(echo "${_cm_json}" | jq -r '.data | keys[]'); do
+    echo "${_cm_json}" | jq -r --arg k "${key}" '.data[$k]' > "${BOM_MOUNT}/${key}"
   done
 
   # Transfer BOM app + profiles to VM (clean old data first)
@@ -136,15 +103,30 @@ if kubectl get configmap "${BOM_CM}" -n "${NS}" >/dev/null 2>&1; then
 
   # Pass inter-VM bearer SHA256 so sandboxes can use it
   echo "INTER_VM_BEARER_SHA256=${BEARER_SHA256}" >> "${BOM_ENV}"
+  # Optional raw bearer for BOM-level auth verification checks.
+  echo "INTER_VM_BEARER=${BEARER}" >> "${BOM_ENV}"
+
+  echo "NAMESPACE=${NS}" >> "${BOM_ENV}"
 
   guest_scp "${BOM_ENV}" "/home/${SSH_USER}/bom-integ.env"
+
+  # Transfer governance profiles to VM (for provider profile import)
+  GOV_PROFILES_VM="/home/${SSH_USER}/governance-profiles"
+  guest_ssh "mkdir -p ${GOV_PROFILES_VM}"
+  if [[ -d /governance-profiles ]]; then
+    for file in /governance-profiles/*.yaml; do
+      [[ -f "$file" ]] && guest_scp "$file" "${GOV_PROFILES_VM}/$(basename "$file")"
+    done
+    echo "Governance profiles transferred to VM"
+  fi
+
+  # Build apply_bom.py args — same pattern as agent VM's setup-bom-profiles.sh
+  BOM_ARGS="--profiles-dir ${BOM_DIR} --mtls-gateway openshell-local --governance-profiles-dir ${GOV_PROFILES_VM}"
 
   echo "Running BOM setup on vm/${VM_NAME}..."
   guest_ssh "
     set -a; source /home/${SSH_USER}/bom-integ.env 2>/dev/null; set +a
-    python3 /home/${SSH_USER}/apply_bom.py \
-      --profiles-dir ${BOM_DIR} \
-      --mtls-gateway openshell-local
+    python3 /home/${SSH_USER}/apply_bom.py ${BOM_ARGS}
   " 2>&1
 
   echo "BOM integ profiles applied."
@@ -158,7 +140,7 @@ echo "Setting up inference reverse proxy on port ${INFERENCE_PROXY_PORT}..."
 
 # Read API key from mounted Secret first, fall back to Helm value
 NVIDIA_API_KEY_VALUE=""
-SECRET_PATH="/ws-secrets/{{ .Values.inference.secretName | default "inference" }}/api_key"
+SECRET_PATH='/ws-secrets/{{ .Values.inference.secretName | default "inference" }}/api_key'
 if [[ -f "${SECRET_PATH}" ]]; then
   NVIDIA_API_KEY_VALUE="$(cat "${SECRET_PATH}")"
   echo "  Inference API key read from Secret"

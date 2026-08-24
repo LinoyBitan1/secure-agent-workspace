@@ -3,7 +3,7 @@ accessControl:
   owner: alice
 
 role: agent
-containerRuntime: docker
+containerRuntime: podman
 
 job:
   backoffLimit: 5
@@ -11,9 +11,9 @@ job:
 nemoclawCliImage: "quay.io/rh-ai-quickstart/nemoclaw-cli:latest"
 
 openshell:
-  gatewayImage: "ghcr.io/nvidia/openshell/gateway:0.0.103"
-  supervisorImage: "ghcr.io/nvidia/openshell/supervisor:0.0.103"
-  version: "0.0.103"
+  gatewayImage: "ghcr.io/nvidia/openshell/gateway:0.0.110"
+  supervisorImage: "ghcr.io/nvidia/openshell/supervisor:0.0.110"
+  version: "0.0.110"
   pipIndexUrl: ""
 
 governance:
@@ -22,10 +22,8 @@ governance:
 dashboard:
   enabled: false
 
+additionalProviderSecrets:
+  - inter-vm-bearer
+
 networkPolicy:
-  peerLabel: openshell-saw-integ
-  allowedPorts:
-    - 18080
-    - 18081
-    - 18082
-    - 18083
+  peerLabel: ""

@@ -26,104 +26,101 @@ Agent VM (no real keys)              Integrations VM (real keys)
 
 ## Option A: Manual Deployment (no ArgoCD)
 
-### Step 1: Install operators and Keycloak
+### Step 1: Prerequisites and Keycloak
 
 ```bash
 # Verify operators are installed
 make check-prereqs
 
-# Deploy Keycloak (creates realm + client)
+# Deploy Keycloak (creates realm + clients + test users)
 make keycloak
+make verify-keycloak   # verify instance, realm, clients, users, OIDC endpoint
+
+# Mirror images into the namespace
+make copy-images
 
 # Generate SSH keys (if not done)
 make generate-keys
 ```
 
-### Step 2: Create the inference Secret
+### Step 2: Deploy BOM profiles + secrets
 
 ```bash
-make inference-secret API_KEY=nvapi-YOUR-REAL-KEY
+# Creates SSH secrets, BOM ConfigMap, and inference secret
+make deploy-config API_KEY=nvapi-YOUR-REAL-KEY
+
+# To also deploy governance provider profiles (for sandbox policy enforcement):
+make deploy-config API_KEY=nvapi-YOUR-REAL-KEY DEPLOY_GOV_PROFILES=true
 ```
 
 Defaults to `PROVIDER=nvidia MODEL=deepseek-ai/deepseek-v4-flash-0731`. Override as needed:
 
 ```bash
-make inference-secret API_KEY=sk-... PROVIDER=openai MODEL=gpt-4o
+make deploy-config API_KEY=sk-... PROVIDER=openai MODEL=gpt-4o DEPLOY_GOV_PROFILES=true
 ```
 
-### Step 3: Deploy the Agent VM
+Governance profiles define per-sandbox network and binary policies (e.g., `gmail-read` restricts the mail proxy to `gmail.googleapis.com:443`). When enabled, BOM sandboxes with `providerProfile: gmail-read` will automatically have the profile imported and attached.
+
+To deploy the full governance interceptor (optional):
 
 ```bash
-make deploy-agent
+make deploy-governance
 ```
 
-This runs:
-```
-helm upgrade --install openshell-saw charts/openshell-saw \
-  -n openshell-agents -f overrides/openshell-saw.yaml
-```
-
-The Agent VM boots, installs OpenShell, and waits for the inter-VM bearer Secret from the Integrations VM.
-
-### Step 4: Deploy the Integrations VM
+If you are **not** deploying the interceptor, set `GOVERNANCE_ENABLED=false` to skip the interceptor health check during VM setup:
 
 ```bash
-make deploy-integ
+export GOVERNANCE_ENABLED=false
+# Or add to .env file
 ```
 
-This runs:
-```
-helm upgrade --install openshell-saw-integ charts/openshell-saw \
-  -n openshell-agents -f overrides/openshell-saw-integ.yaml
-```
-
-The Integrations VM boots, installs OpenShell, creates the inter-VM bearer Secret, deploys the gmail-read proxy and inference reverse proxy.
-
-### Step 5: Deploy BOM profiles and configure both VMs
+### Step 3: Deploy the Integrations VM
 
 ```bash
-make deploy-bom
+make deploy-integ-vm
+make verify-integ      # verify gateway, sandboxes, proxies, check logs
 ```
 
-This runs:
-```
-helm upgrade --install saw-bom charts/saw-bom -n openshell-agents
-```
+The Integrations VM boots, installs OpenShell, creates the inter-VM bearer Secret, deploys the inference reverse proxy.
 
-The BOM chart creates a ConfigMap with workspace/provider/sandbox definitions. Both setup Jobs read from it:
-- Agent VM creates the OpenClaw sandbox with `baseUrl` pointing to the integ VM
-- Agent VM attaches the `inference-proxy` provider for endpoint whitelisting
-
-### Step 6: Follow setup progress
+### Step 4: Deploy the Agent VM
 
 ```bash
-# Agent VM setup logs
+make deploy-agent-vm
+make verify-agent      # verify gateway, sandboxes, providers, dashboard, check logs
+```
+
+The Agent VM boots, installs OpenShell, waits for the inter-VM bearer Secret, creates the inference-proxy provider, and runs BOM profiles.
+
+### Step 5: Verify and test
+
+```bash
+# Follow setup logs (if still running)
 make saw-logs OPENSHELL_SAW_NAME=openshell-saw
-
-# Integrations VM setup logs
 make saw-logs OPENSHELL_SAW_NAME=openshell-saw-integ
+
+# Run E2E test
+make e2e-test
 ```
 
-### Step 7: Run E2E test
+### Step 6: Use the agent
 
 ```bash
-./scripts/test-two-vm-e2e.sh
-```
+# Login via OIDC (opens browser)
+make login
 
-### Step 8: Use the agent
+# Launch TUI
+make tui
 
-```bash
-# SSH into agent VM
-make saw-ssh OPENSHELL_SAW_NAME=openshell-saw
-
-# Launch OpenClaw TUI
-make saw-tui OPENSHELL_SAW_NAME=openshell-saw
+# Or web UI
+make gui
 ```
 
 ### Teardown
 
 ```bash
-make delete-vms
+# Delete both VMs + BOM + secrets
+make delete-all
 ```
 
 ---
@@ -213,9 +210,11 @@ This SSHes into the VM and:
 - Attaches it to all sandboxes
 - Updates OpenClaw's baseUrl to point to the integ VM
 
-### Step 3: Test
+### Step 3: Verify and test
 
 ```bash
+make verify-integ
+make verify-agent
 make e2e-test
 ```
 
@@ -227,34 +226,47 @@ make e2e-test
 
 | Target | Description |
 |--------|-------------|
-| `make deploy-agent` | Deploy Agent VM |
-| `make deploy-integ` | Deploy Integrations VM |
-| `make deploy-bom` | Deploy BOM profiles |
+| `make deploy-config API_KEY=...` | Deploy BOM + SSH secrets + inference secret |
+| `make deploy-config ... DEPLOY_GOV_PROFILES=true` | Also deploy governance provider profiles |
+| `make deploy-agent-vm` | Deploy Agent VM |
+| `make deploy-integ-vm` | Deploy Integrations VM |
+| `make deploy-bom` | Deploy BOM profiles only |
+| `make deploy-gov-profiles` | Deploy governance profiles only |
+
+**Verify**
+
+| Target | Description |
+|--------|-------------|
+| `make verify-keycloak` | Verify Keycloak: instance, realm, clients, users, OIDC |
+| `make verify-integ` | Verify Integrations VM: gateway, sandboxes, proxies, logs |
+| `make verify-agent` | Verify Agent VM: gateway, sandboxes, providers, dashboard, logs |
+| `make verify` | Verify both VMs |
 
 **Access**
 
 | Target | Description |
 |--------|-------------|
-| `make saw-ssh OPENSHELL_SAW_NAME=<vm>` | SSH into a VM |
-| `make saw-logs OPENSHELL_SAW_NAME=<vm>` | Follow setup Job logs |
-| `make saw-list` | List all sandboxes |
+| `make login` | Authenticate via OIDC (opens browser) |
 | `make tui` | Launch OpenClaw TUI (auto-configures gateway) |
 | `make gui` | Open OpenClaw web UI (auto-configures gateway) |
+| `make saw-ssh OPENSHELL_SAW_NAME=<vm>` | SSH into a VM |
+| `make saw-logs OPENSHELL_SAW_NAME=<vm>` | Follow setup Job logs |
 
 **Configure pre-existing VMs**
 
 | Target | Description |
 |--------|-------------|
-| `make configure-integ INTEG_HOST=<ip> API_KEY=<key>` | Configure existing VM as integ node |
-| `make configure-agent AGENT_HOST=<ip> INTEG_HOST=<ip>` | Configure existing VM as agent node |
+| `make deploy-integ-vm INTEG_HOST=<ip>` | Configure existing VM as integ node |
+| `make deploy-agent-vm AGENT_HOST=<ip>` | Configure existing VM as agent node |
 
 **Test and Teardown**
 
 | Target | Description |
 |--------|-------------|
 | `make e2e-test` | Run E2E test |
-| `make delete-vms` | Delete both VMs and BOM |
-| `make saw-delete OPENSHELL_SAW_NAME=<vm>` | Delete a single VM |
+| `make delete-vms` | Delete both VMs + BOM + bearer secret |
+| `make delete-all` | Delete everything (VMs + Keycloak + images + secrets) |
+| `make status` | Show all OpenShell resources |
 
 ---
 
@@ -301,97 +313,37 @@ The integ VM reads `api_key` for the reverse proxy. The agent VM uses it as a pl
 
 ---
 
-## Manual Verification and Testing
+## Verification
 
-### Check running sandboxes
-
-```bash
-# Agent VM — should show "notebook" sandbox in Ready state
-virtctl -n openshell-agents ssh cloud-user@vm/openshell-saw \
-  --identity-file=~/.generated-ssh-keys/sandbox-ssh \
-  --local-ssh-opts=-oStrictHostKeyChecking=no \
-  --command="export PATH=\$HOME/.local/bin:\$PATH && openshell sandbox list && echo '---' && openshell provider list"
-
-# Integrations VM — should show "gmail-read" sandbox
-virtctl -n openshell-agents ssh cloud-user@vm/openshell-saw-integ \
-  --identity-file=~/.generated-ssh-keys/sandbox-ssh \
-  --local-ssh-opts=-oStrictHostKeyChecking=no \
-  --command="export PATH=\$HOME/.local/bin:\$PATH && openshell sandbox list && echo '---' && openshell provider list && echo '---' && systemctl --user status inference-proxy --no-pager | head -5"
-```
-
-### Set up the inference API key
-
-The inference proxy on the integrations VM needs a real API key. If you didn't create the `inference` K8s Secret before deployment, or want to update the key:
+Use the built-in verify targets to check each component after deployment:
 
 ```bash
-# Option 1: Create/update the K8s Secret (used on next Job run)
-kubectl create secret generic inference -n openshell-agents \
-  --from-literal=api_key=nvapi-YOUR-REAL-KEY \
-  --from-literal=provider=nvidia \
-  --from-literal=model=deepseek-ai/deepseek-v4-flash-0731 \
-  --dry-run=client -o yaml | kubectl apply -f -
+# Verify Keycloak: instance health, realm, clients, users, OIDC endpoint
+make verify-keycloak
 
-# Option 2: Set the key directly on the running integ VM (immediate, no redeploy)
-virtctl -n openshell-agents ssh cloud-user@vm/openshell-saw-integ \
-  --identity-file=~/.generated-ssh-keys/sandbox-ssh \
-  --local-ssh-opts=-oStrictHostKeyChecking=no \
-  --command="echo -n 'nvapi-YOUR-REAL-KEY' > ~/.config/secure-agent-workspace/nvidia-api-key && chmod 600 ~/.config/secure-agent-workspace/nvidia-api-key && systemctl --user restart inference-proxy && sleep 1 && curl -sf http://localhost:18083/healthz && echo ' OK'"
-```
+# Verify Integrations VM: gateway, sandboxes, exposed services, inference proxy, logs
+make verify-integ
 
-### Verify the inference proxy is working
+# Verify Agent VM: gateway, sandboxes, providers, dashboard, logs
+make verify-agent
 
-```bash
-# Get the inter-VM bearer token
-BEARER=$(kubectl get secret inter-vm-bearer -n openshell-agents -o jsonpath='{.data.bearer}' | base64 -d)
+# Verify both VMs at once
+make verify
 
-# Test from the agent VM host (bypasses sandbox, tests proxy directly)
-virtctl -n openshell-agents ssh cloud-user@vm/openshell-saw \
-  --identity-file=~/.generated-ssh-keys/sandbox-ssh \
-  --local-ssh-opts=-oStrictHostKeyChecking=no \
-  --command="curl -s --max-time 30 http://openshell-saw-integ-gateway.openshell-agents.svc.cluster.local:18083/v1/chat/completions -H 'Content-Type: application/json' -H 'Authorization: Bearer ${BEARER}' -d '{\"model\":\"deepseek-ai/deepseek-v4-flash-0731\",\"messages\":[{\"role\":\"user\",\"content\":\"Say OK\"}],\"max_completion_tokens\":5}'"
-```
-
-You should see a JSON response with `"content":"OK"`.
-
-### Launch the OpenClaw TUI
-
-```bash
-make tui
-```
-
-This auto-configures the gateway and connects to the agent VM's sandbox. No SSH, no gateway login needed.
-
-For the web UI:
-
-```bash
-make gui
-```
-
-Or manually:
-
-```bash
-# SSH into the agent VM
-virtctl -n openshell-agents ssh cloud-user@vm/openshell-saw \
-  --identity-file=~/.generated-ssh-keys/sandbox-ssh \
-  --local-ssh-opts=-oStrictHostKeyChecking=no
-
-# Inside the VM:
-export PATH=$HOME/.local/bin:$PATH
-openshell sandbox connect notebook
-# Inside the sandbox:
-export PATH=/opt/openclaw/node_modules/.bin:$PATH
-openclaw
-```
-
-Type a question like "Who is the president of America?" — the request routes through the integrations VM proxy to NVIDIA. The agent VM never sees the real API key.
-
-### Run the automated E2E test
-
-```bash
+# Full E2E test (inference flow across both VMs)
 make e2e-test
 ```
 
-This runs 11 checks: VM health, gateway, proxy, bearer, providers, sandbox connectivity, inference E2E, and security (no real keys on agent VM).
+### Use the agent
+
+```bash
+# Login via OIDC
+make login
+
+# Launch TUI or web UI
+make tui
+make gui
+```
 
 ---
 

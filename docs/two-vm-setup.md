@@ -45,7 +45,8 @@ Both VMs use the **same Helm chart** (`charts/openshell-saw`) with different ove
 make check-prereqs
 
 # 2. Deploy Keycloak (if not using a shared instance)
-make keycloak KEYCLOAK_NS=keycloak
+make keycloak
+make verify-keycloak  # verify instance, realm, clients, users, OIDC endpoint
 
 # 3. Mirror images into the namespace
 make copy-images
@@ -53,57 +54,74 @@ make copy-images
 # 4. Generate SSH keys (or use existing: SSH_KEY_PATH=~/.ssh/my_key)
 make generate-keys
 
-# 5. Deploy BOM profiles (workspaces, providers, sandbox definitions)
-make deploy-bom
+# 5. Deploy BOM profiles + SSH secrets + inference secret
+#    Add DEPLOY_GOV_PROFILES=true to deploy governance provider profiles
+make deploy-config API_KEY=nvapi-YOUR-KEY DEPLOY_GOV_PROFILES=true
 
-# 6. Create SSH secrets + inference secret
-make deploy-config API_KEY=nvapi-YOUR-KEY
-
-# 7. Deploy Integrations VM (creates bearer secret, inference proxy, BOM proxies)
+# 6. Deploy Integrations VM (creates bearer secret, inference proxy, BOM proxies)
 make deploy-integ-vm
+make verify-integ   # verify gateway, sandboxes, proxies, check logs for errors
 
-# 8. Deploy Agent VM (waits for bearer, creates inference-proxy provider, BOM sandboxes)
+# 7. Deploy Agent VM (waits for bearer, creates inference-proxy provider, BOM sandboxes)
 make deploy-agent-vm
+make verify-agent   # verify gateway, sandboxes, providers, dashboard, check logs
 
-# 9. Verify
+# 8. Run E2E test (inference flow across both VMs)
 make e2e-test
 ```
 
 ### Option B: Pre-existing VMs
 
 ```bash
-# 1. Deploy BOM profiles first
-make deploy-bom
-
-# 2. Create K8s config (secrets)
+# 1. Deploy BOM profiles + secrets
 make deploy-config API_KEY=nvapi-YOUR-KEY
 
-# 3. Configure integrations VM
+# 2. Configure integrations VM
 make deploy-integ-vm INTEG_HOST=10.0.1.6
+make verify-integ
 
-# 4. Configure agent VM (needs integ VM address)
+# 3. Configure agent VM (needs integ VM address)
 make deploy-agent-vm AGENT_HOST=10.0.1.5 INTEG_HOST=10.0.1.6
+make verify-agent
 ```
 
 ### Post-Deploy: Configure Gmail OAuth
 
 ```bash
+# Guided mode (prompts for existing files or lets you prepare new ones)
+make configure-gmail-refresh
+
+# Local gog authorization mode (generates token export temporarily)
 make configure-gmail-refresh \
+  GCP_PROJECT_ID=sa-001 \
+  GMAIL_ACCOUNT=you@gmail.com \
+  AUTHORIZE_LOCAL=1 \
+  CLIENT_JSON=$HOME/gog/client_secret.json
+
+# Non-interactive mode
+make configure-gmail-refresh \
+  GCP_PROJECT_ID=sa-001 \
+  GMAIL_ACCOUNT=you@gmail.com \
   CLIENT_JSON=/path/to/client_secret.json \
   TOKEN_EXPORT=/path/to/gog-token-export.json
 ```
 
+For a complete project-owned OAuth + gog flow (including ownership checks and token export), see `docs/gmail-gog-openclaw-runbook.md`.
+
 ### Access the TUI / Web UI
 
 ```bash
-# Login via OIDC (opens browser)
-make login OIDC_ISSUER=$(make keycloak-issuer KEYCLOAK_NS=keycloak)
+# Login via OIDC (opens browser — auto-detects Keycloak issuer)
+make login
+
+# For an external OIDC provider, set OIDC_ISSUER (or add to .env):
+#   make login OIDC_ISSUER=https://sso.example.com/realms/openshell
 
 # Launch TUI
-make tui KEYCLOAK_NS=keycloak
+make tui
 
 # Or web UI
-make gui KEYCLOAK_NS=keycloak
+make gui
 ```
 
 ## Files to Configure
@@ -265,5 +283,5 @@ The agent VM never sees the real NVIDIA API key.
 | `policy_denied` from sandbox | Provider not attached or stale policy | Detach + reattach provider |
 | `CertificateRequired` from laptop | `OPENSHELL_ENABLE_MTLS_AUTH` not set | Check `patch-oidc.sh` ran |
 | `missing authorization header` | OIDC enabled but no mTLS auth | Set `OPENSHELL_ENABLE_MTLS_AUTH=true` |
-| Keycloak not found | Keycloak in different namespace | Pass `KEYCLOAK_NS=keycloak` |
-| `openshell gateway login` fails | OIDC issuer URL wrong | Check `KEYCLOAK_NS` matches |
+| Keycloak not found | Keycloak not deployed | Run `make keycloak` or set `OIDC_ISSUER` for external provider |
+| `openshell gateway login` fails | OIDC issuer URL wrong | Check `make keycloak-issuer` output |

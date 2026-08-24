@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -35,6 +36,7 @@ class Provider:
     type: str
     enabled: bool = True
     nemoclaw_provider: str = ""
+    credential_key: str = ""
     credential_secret: str = ""
     credential_secret_key: str = "api_key"
     model: str = ""
@@ -51,6 +53,11 @@ class Sandbox:
     model: str = ""
     command: str = ""
     expose_port: int = 0
+    env: dict = field(default_factory=dict)
+    runtime_env: dict = field(default_factory=dict)
+    gateway_pre_start: str = ""
+    run_as_user: str = ""
+    run_as_group: str = ""
 
 
 @dataclass
@@ -146,6 +153,19 @@ def load_yaml_file(path):
         return yaml.safe_load(f) or {}
 
 
+def resolve_env_value(value):
+    """Resolve $VAR / ${VAR} indirection from process env."""
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    match = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", text)
+    if not match:
+        match = re.fullmatch(r"\$([A-Za-z_][A-Za-z0-9_]*)", text)
+    if not match:
+        return value
+    return os.environ.get(match.group(1), "")
+
+
 def parse_profiles(profiles_dir):
     profiles = []
     for profile_entry in sorted(Path(profiles_dir).iterdir()):
@@ -175,6 +195,7 @@ def parse_profiles(profiles_dir):
                         type=p["type"],
                         enabled=p.get("enabled", True),
                         nemoclaw_provider=p.get("nemoclawProvider", ""),
+                        credential_key=p.get("credentialKey", ""),
                         credential_secret=p.get("credentialSecret", ""),
                         credential_secret_key=p.get("credentialSecretKey", "api_key"),
                         model=p.get("model", ""),
@@ -193,6 +214,11 @@ def parse_profiles(profiles_dir):
                         model=s.get("model", ""),
                         command=s.get("command", ""),
                         expose_port=s.get("exposePort", 0),
+                        env=s.get("env", {}),
+                        runtime_env=s.get("runtimeEnv", {}),
+                        gateway_pre_start=s.get("gatewayPreStart", ""),
+                        run_as_user=str(s.get("runAsUser", "")),
+                        run_as_group=str(s.get("runAsGroup", "")),
                     ))
             profile.workspaces.append(ws)
         if profile.workspaces:
@@ -325,20 +351,22 @@ class GatewaySetup:
 
     def grant_default_workspace_access(self):
         section("Granting default workspace access")
-        self._with_oidc(lambda: self.sh.run([
+        self.select_mtls()
+        self.sh.run([
             "openshell", "workspace", "member", "add",
             "--workspace", "default",
             "--subject", "openshell-client",
             "--role", "admin"
-        ], check=False))
+        ], check=False)
 
     def enable_providers_v2(self):
         section("Enabling providers_v2")
-        self._with_oidc(lambda: self.sh.run([
+        self.select_mtls()
+        self.sh.run([
             "openshell", "settings", "set",
             "--global", "--key", "providers_v2_enabled",
             "--value", "true", "--yes"
-        ], check=False))
+        ], check=False)
 
     def select_oidc(self):
         if self.oidc_gw:
@@ -363,23 +391,24 @@ class GatewaySetup:
 # ---------------------------------------------------------------------------
 
 class WorkspaceDeployer:
-    def __init__(self, shell, gateway_setup):
+    def __init__(self, shell, gateway_setup, governance_profiles_dir=None):
         self.sh = shell
         self.gw = gateway_setup
+        self.governance_profiles_dir = Path(governance_profiles_dir or "/governance-profiles")
+        self._pending_gateway_services = []
 
     def create_workspace(self, ws):
         if ws.name == "default":
             log(f"Using existing 'default' workspace")
             return
         log(f"Creating workspace '{ws.name}'")
-        self.gw._with_oidc(lambda: (
-            self.sh.run(["openshell", "workspace", "create",
-                         "--name", ws.name], check=False),
-            self.sh.run(["openshell", "workspace", "member", "add",
-                         "--workspace", ws.name,
-                         "--subject", "openshell-client",
-                         "--role", "admin"], check=False),
-        ))
+        self.gw.select_mtls()
+        self.sh.run(["openshell", "workspace", "create",
+                     "--name", ws.name], check=False)
+        self.sh.run(["openshell", "workspace", "member", "add",
+                     "--workspace", ws.name,
+                     "--subject", "openshell-client",
+                     "--role", "admin"], check=False)
 
     def create_provider(self, provider, credential,
                         workspace_name="default"):
@@ -389,16 +418,73 @@ class WorkspaceDeployer:
                 f"'{provider.name}' creation. Fix values-secret.yaml or "
                 f"the BOM profile's declared type/nemoclawProvider.")
             return
+        # Import provider profile if available (governance or BOM profile)
+        self._import_profile_if_needed(provider.type)
+
         args = ["openshell", "provider", "create",
                 "--name", provider.name, "--type", provider.type]
         if workspace_name != "default":
             args += ["--workspace", workspace_name]
-        cred_key = PROVIDER_CRED_MAP.get(provider.type, "API_KEY")
+        cred_key = (provider.credential_key
+                    or PROVIDER_CRED_MAP.get(provider.type, "API_KEY"))
         if credential and cred_key:
             args += ["--credential", f"{cred_key}={credential}"]
+        elif provider.credential_secret:
+            log(f"ERROR: provider '{provider.name}' declares "
+                f"credentialSecret '{provider.credential_secret}', but no "
+                f"resolved credential was provided to apply_bom.py. "
+                f"Skipping create to avoid invalid runtime-credentials mode.")
+            return
         else:
             args += ["--from-existing"]
         self.sh.run(args, check=False)
+
+        # Keep provider credentials in sync with latest resolved secret/env
+        # values. `provider create` is not idempotent for credential updates:
+        # if a provider already exists, create may no-op/error and leave stale
+        # credentials (e.g. rotated inter-VM bearer tokens). Upsert credential
+        # material explicitly so reruns reconcile drift.
+        if credential and cred_key:
+            update_args = ["openshell", "provider", "update"]
+            if workspace_name != "default":
+                update_args += ["--workspace", workspace_name]
+            update_args += [
+                "--credential", f"{cred_key}={credential}",
+                provider.name,
+            ]
+            self.sh.run(update_args, check=False)
+
+    def _import_profile_if_needed(self, profile_type):
+        """Import or update provider profile from governance profiles dir."""
+        rc, out, _ = self.sh.run(
+            ["openshell", "provider", "profile", "export", profile_type],
+            check=False)
+        profile_path = self.governance_profiles_dir / f"{profile_type}.yaml"
+        if not profile_path.exists():
+            return
+        if rc != 0:
+            log(f"  Importing provider profile '{profile_type}'")
+            self.sh.run(
+                ["openshell", "provider", "profile", "import",
+                 "-f", str(profile_path)], check=False)
+            return
+        # Profile already exists: upsert latest chart content so schema/header
+        # fixes are applied even on existing clusters.
+        # Skip builtin profiles — they can't be updated.
+        if "source: builtin" in (out or ""):
+            return
+        rv_match = re.search(r"resource_version:\s*([0-9]+)", out or "")
+        profile_doc = load_yaml_file(profile_path)
+        if rv_match:
+            profile_doc["resource_version"] = int(rv_match.group(1))
+        tmp = Path(f"/tmp/provider-profile-{profile_type}.yaml")
+        tmp.write_text(
+            yaml.safe_dump(profile_doc, sort_keys=False), encoding="utf-8")
+        log(f"  Updating provider profile '{profile_type}'")
+        self.sh.run(
+            ["openshell", "provider", "profile", "update",
+             "--file", str(tmp), profile_type],
+            check=False)
 
     def _container_cmd(self):
         """Return the container runtime command (docker or podman)."""
@@ -420,6 +506,64 @@ class WorkspaceDeployer:
              f"rm -f ~/.config/systemd/user/{svc}; "
              f"systemctl --user daemon-reload"],
             check=False)
+
+    def ensure_forward_supervisor(self, sandbox_name, expose_port):
+        """Keep `openshell forward` alive for exposed integration proxies."""
+        svc = f"openshell-forward-{sandbox_name}.service"
+        script = f"""#!/usr/bin/env bash
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+while true; do
+  if ! openshell forward list 2>/dev/null | grep -q '^{sandbox_name}[[:space:]].*[[:space:]]{expose_port}[[:space:]].*[[:space:]]running'; then
+    openshell forward stop {expose_port} {sandbox_name} >/dev/null 2>&1 || true
+    openshell forward start -d 0.0.0.0:{expose_port} {sandbox_name} >/tmp/{sandbox_name}-forward.log 2>&1 || true
+  fi
+  sleep 30
+done
+"""
+        self.sh.run(
+            ["bash", "-c",
+             "mkdir -p ~/.local/bin ~/.config/systemd/user && "
+             f"cat > ~/.local/bin/{svc}.sh << 'FWEOF'\n{script}FWEOF\n"
+             f"chmod +x ~/.local/bin/{svc}.sh && "
+             f"cat > ~/.config/systemd/user/{svc} << 'SVCEOF'\n"
+             "[Unit]\n"
+             f"Description=OpenShell forward supervisor for {sandbox_name}\n"
+             "After=network.target\n"
+             "[Service]\n"
+             f"ExecStart=%h/.local/bin/{svc}.sh\n"
+             "Restart=always\n"
+             "RestartSec=3\n"
+             "[Install]\n"
+             "WantedBy=default.target\n"
+             "SVCEOF\n"
+             "loginctl enable-linger $(whoami) 2>/dev/null || true && "
+             "systemctl --user daemon-reload && "
+             f"systemctl --user enable {svc} >/dev/null 2>&1 || true && "
+             f"systemctl --user restart {svc}"],
+            check=False)
+
+    def wait_for_sandbox_port(self, sandbox_name, expose_port, workspace_name="default"):
+        """Wait for an exposed sandbox port to begin accepting connections."""
+        ws_args = (["--workspace", workspace_name]
+                   if workspace_name != "default" else [])
+        check_script = (
+            "if curl -so /dev/null --max-time 1 http://127.0.0.1:"
+            + str(expose_port) + "/ 2>/dev/null; "
+            "then echo PORT_READY=1; else echo PORT_READY=0; fi"
+        )
+        for _ in range(30):
+            _, out, _ = self.sh.run(
+                ["openshell", "sandbox", "exec", "-n", sandbox_name] + ws_args + [
+                    "--no-tty", "--", "/bin/sh", "-lc", check_script
+                ],
+                check=False,
+            )
+            if "PORT_READY=1" in (out or ""):
+                return True
+            if not self.sh.dry_run:
+                time.sleep(1)
+        return False
 
     def create_sandbox_generic(self, sandbox, workspace_name="default"):
         ws_args = (["--workspace", workspace_name]
@@ -447,17 +591,23 @@ class WorkspaceDeployer:
             if is_full_ref:
                 self.sh.run(["sudo", crt, "pull", sandbox.image], check=False)
             policy_path = Path("/tmp/sandbox-policy.yaml")
+            run_as_user = str(
+                sandbox.run_as_user
+                or os.environ.get("BOM_DEFAULT_RUN_AS_USER", "1001"))
+            run_as_group = str(
+                sandbox.run_as_group
+                or os.environ.get("BOM_DEFAULT_RUN_AS_GROUP", "1001"))
             policy_path.write_text(
                 "version: 1\n"
                 "filesystem_policy:\n"
                 "  include_workdir: true\n"
                 "  read_only: [/usr, /lib, /lib64, /etc, /proc, /dev/urandom, /app, /opt, /var/log]\n"
-                "  read_write: [/sandbox, /tmp, /dev/null, /dev/pts]\n"
+                "  read_write: [/sandbox, /tmp, /dev/null, /dev/pts, /proc/self/oom_score_adj, /proc/thread-self/oom_score_adj]\n"
                 "landlock:\n"
                 "  compatibility: best_effort\n"
                 "process:\n"
-                "  run_as_user: \"1001\"\n"
-                "  run_as_group: \"1001\"\n",
+                f"  run_as_user: \"{run_as_user}\"\n"
+                f"  run_as_group: \"{run_as_group}\"\n",
                 encoding="utf-8",
             )
             args = ["openshell", "sandbox", "create", "--name", sandbox.name]
@@ -468,6 +618,11 @@ class WorkspaceDeployer:
                 args += ["--workspace", workspace_name]
             for prov in sandbox.providers:
                 args += ["--provider", prov]
+            for k, v in sandbox.env.items():
+                resolved = resolve_env_value(v)
+                args += ["--env", f"{k}={resolved}"]
+            # Create must return; the long-lived command is started later as a
+            # tracked `sandbox exec` so provider credentials stay bound.
             args += ["--no-tty", "--", "sh", "-c", "echo sandbox-ready"]
             rc, out, err = self.sh.run(args, check=False)
             combined = re.sub(r'\x1b\[[0-9;]*m', '',
@@ -490,20 +645,73 @@ class WorkspaceDeployer:
                 return
 
         if sandbox.command:
-            log(f"Starting: {sandbox.command}")
+            inner_cmds = []
+            for k, v in sandbox.env.items():
+                resolved = resolve_env_value(v)
+                inner_cmds.append(f"export {k}={shlex.quote(resolved)}")
+            for k, v in sandbox.runtime_env.items():
+                var_name = v.strip().lstrip("$").strip("{}")
+                inner_cmds.append(f"export {k}=${var_name}")
+            inner_cmds.append(f"exec {sandbox.command}")
+            inner = "; ".join(inner_cmds)
+            svc = f"openshell-sandbox-{sandbox.name}.service"
+            script_path = f"$HOME/.local/bin/{svc}.sh"
+            ws_flag = (
+                f"--workspace {workspace_name} "
+                if workspace_name != "default" else ""
+            )
+            script = (
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "export PATH=\"$HOME/.local/bin:$PATH\"\n"
+                "openshell gateway select openshell-local "
+                ">/dev/null 2>&1 || true\n"
+                f"exec openshell sandbox exec -n {sandbox.name} {ws_flag}"
+                f"--no-tty -- /bin/sh -c {shlex.quote(inner)}\n"
+            )
+            log(f"Installing systemd service for '{sandbox.name}'")
             self.sh.run(
-                ["openshell", "sandbox", "exec", "-n",
-                 sandbox.name] + ws_args + [
-                    "--no-tty", "--", "/bin/sh", "-lc",
-                    f"nohup {sandbox.command} "
-                    f">/tmp/{sandbox.name}.log 2>&1 </dev/null &"
-                ], check=False)
-        if sandbox.expose_port:
-            log(f"Exposing on port {sandbox.expose_port}")
-            self.sh.run(
-                ["openshell", "service", "expose", sandbox.name,
-                 str(sandbox.expose_port), f"{sandbox.name}-svc"],
+                ["bash", "-c",
+                 f"mkdir -p ~/.local/bin ~/.config/systemd/user && "
+                 f"cat > {script_path} << 'SHEOF'\n{script}SHEOF\n"
+                 f"chmod +x {script_path} && "
+                 f"cat > ~/.config/systemd/user/{svc} << 'SVCEOF'\n"
+                 "[Unit]\n"
+                 f"Description=Sandbox command for {sandbox.name}\n"
+                 "After=openshell-gateway.service\n"
+                 "[Service]\n"
+                 "Type=simple\n"
+                 "Restart=always\n"
+                 "RestartSec=5\n"
+                 f"ExecStart=%h/.local/bin/{svc}.sh\n"
+                 "[Install]\n"
+                 "WantedBy=default.target\n"
+                 "SVCEOF\n"
+                 "loginctl enable-linger $(whoami) 2>/dev/null || true && "
+                 "systemctl --user daemon-reload && "
+                 f"systemctl --user enable --now {svc}"],
                 check=False)
+
+        if sandbox.expose_port:
+            if sandbox.command:
+                ready = self.wait_for_sandbox_port(
+                    sandbox.name, sandbox.expose_port, workspace_name)
+                if ready:
+                    log(f"Port {sandbox.expose_port} is ready in '{sandbox.name}'")
+                else:
+                    log(f"WARN: Port {sandbox.expose_port} in '{sandbox.name}' "
+                        "was not ready before forward")
+            log(f"Forwarding port {sandbox.expose_port}")
+            self.sh.run(
+                ["bash", "-c",
+                 f"nohup openshell forward start "
+                 f"-d 0.0.0.0:{sandbox.expose_port} {sandbox.name} "
+                 f">/tmp/{sandbox.name}-forward.log 2>&1 </dev/null &"],
+                check=False)
+            if not self.sh.dry_run:
+                time.sleep(2)
+            self.ensure_forward_supervisor(sandbox.name, sandbox.expose_port)
+
 
     def install_nemoclaw_cli(self, cli_image):
         if not cli_image:
@@ -576,7 +784,8 @@ class WorkspaceDeployer:
     def start_openclaw_gateway(self, sandbox_name, dashboard_route,
                                workspace_name="default",
                                provider_id="nvidia",
-                               model_id="nvidia/nemotron-3-super-120b-a12b"):
+                               model_id="",
+                               gateway_pre_start=""):
         import secrets as secrets_mod
 
         ws_args = ["--workspace", workspace_name] if workspace_name else []
@@ -598,29 +807,43 @@ class WorkspaceDeployer:
         exec_cmd = ["openshell", "sandbox", "exec", "-n",
                      sandbox_name] + ws_args + ["--no-tty", "--"]
 
-        # Configure openclaw: model, agent, gateway token
-        oc_env = ("OPENCLAW_HOME=/sandbox "
-                  "SQLITE_TMPDIR=/sandbox/.openclaw/state "
-                  "TMPDIR=/sandbox/.openclaw/state "
+        # Configure OpenClaw with secure writable dirs under /tmp.
+        # /sandbox/.openclaw can be unreadable/unwritable under policy.
+        home_dir = f"/tmp/openclaw-home-{sandbox_name}"
+        state_dir = f"/tmp/openclaw-state-{sandbox_name}"
+        oc_env = (f"HOME={home_dir} "
+                  f"OPENCLAW_HOME={home_dir} "
+                  f"SQLITE_TMPDIR={state_dir} "
+                  f"TMPDIR={state_dir} "
                   "OPENCLAW_NIX_MODE=0")
 
-        # Fix ownership from previous runs (different UIDs across images)
-        self.sh.run(
-            exec_cmd + ["sh", "-c",
-                        "chmod -R a+rw /sandbox/.openclaw/ 2>/dev/null; "
-                        "rm -f /sandbox/.openclaw/state/*/gateway.state.*.lock 2>/dev/null; "
-                        "true"],
-            check=False)
+        prep_dirs_cmd = (
+            "uid=$(id -u); "
+            f"mkdir -p {home_dir}/.openclaw/npm/projects; "
+            f"mkdir -p {state_dir} {state_dir}/openclaw-${{uid}}; "
+            f"chmod 755 {home_dir} {home_dir}/.openclaw "
+            f"{home_dir}/.openclaw/npm {home_dir}/.openclaw/npm/projects; "
+            f"chmod 700 {state_dir} {state_dir}/openclaw-${{uid}}; "
+            f"rm -f {state_dir}/*/gateway.state.*.lock 2>/dev/null; "
+            "true"
+        )
 
-        log("Running openclaw onboard...")
+        # Prepare secure OpenClaw home and temp/sqlite state dirs.
+        self.sh.run(exec_cmd + ["sh", "-c", prep_dirs_cmd], check=False)
+
+        # OpenClaw onboard with inference.local — the OpenShell supervisor
+        # routes requests through the provider created by BOM (e.g. nvidia).
+        # Credentials are on the gateway, not in OpenClaw — use a placeholder.
+        log(f"Running openclaw onboard (base=inference.local, "
+            f"provider={provider_id}, model={model_id})...")
         self.sh.run(
             exec_cmd + ["sh", "-c",
-                        f"{oc_env} CUSTOM_API_KEY=proxy-managed "
+                        f"{oc_env} CUSTOM_API_KEY=gateway-managed "
                         f"openclaw onboard "
                         f"--non-interactive --accept-risk "
                         f"--mode local "
                         f"--auth-choice custom-api-key "
-                        f'--custom-base-url "{os.environ.get("INFERENCE_BASE_URL", "https://inference.local/v1")}" '
+                        f'--custom-base-url "https://inference.local/v1" '
                         f"--custom-provider-id {provider_id} "
                         f'--custom-model-id "{model_id}" '
                         f"--custom-compatibility openai "
@@ -632,6 +855,13 @@ class WorkspaceDeployer:
                         f"{oc_env} openclaw config set "
                         f"gateway.auth.token '{token}'"],
             check=False)
+        # Make config readable for mixed-UID runtime contexts (e.g. 1000/1001).
+        self.sh.run(
+            exec_cmd + ["sh", "-c",
+                        f"chmod 755 {home_dir} {home_dir}/.openclaw 2>/dev/null; "
+                        f"chmod 644 {home_dir}/.openclaw/openclaw.json 2>/dev/null; "
+                        "true"],
+            check=False)
         if dashboard_route:
             self.sh.run(
                 exec_cmd + ["sh", "-c",
@@ -640,59 +870,93 @@ class WorkspaceDeployer:
                             f"'[\"https://{dashboard_route}\"]'"],
                 check=False)
 
-        # Fix ownership and stale locks before starting the gateway
+        # Re-assert secure perms and clear stale locks before starting gateway.
         self.sh.run(
             exec_cmd + ["sh", "-c",
-                        "chmod -R a+rw /sandbox/.openclaw/ 2>/dev/null; "
-                        "rm -f /sandbox/.openclaw/state/*/gateway.state.*.lock 2>/dev/null; "
+                        "uid=$(id -u); "
+                        f"mkdir -p {home_dir}/.openclaw/npm/projects; "
+                        f"mkdir -p {state_dir} {state_dir}/openclaw-${{uid}}; "
+                        f"chmod 755 {home_dir} {home_dir}/.openclaw "
+                        f"{home_dir}/.openclaw/npm {home_dir}/.openclaw/npm/projects; "
+                        f"chmod 700 {state_dir} {state_dir}/openclaw-${{uid}}; "
+                        f"rm -f {state_dir}/*/gateway.state.*.lock 2>/dev/null; "
                         "true"],
             check=False)
 
         log(f"Starting openclaw gateway (token={token[:8]}...)")
+        gateway_script = f"/tmp/openclaw-start-gateway-{sandbox_name}.sh"
+        wait_script = f"$HOME/.local/bin/openclaw-wait-gateway-{sandbox_name}.sh"
         self.sh.run(
             exec_cmd + ["sh", "-c",
-                        f"cat > /sandbox/.openclaw/start-gateway.sh << 'GWEOF'\n"
+                        f"cat > {gateway_script} << 'GWEOF'\n"
                         f"#!/bin/sh\n"
                         f"export OPENCLAW_GATEWAY_TOKEN={token} "
-                        f"OPENCLAW_HOME=/sandbox "
-                        f"SQLITE_TMPDIR=/sandbox/.openclaw/state "
-                        f"TMPDIR=/sandbox/.openclaw/state "
+                        f"HOME={home_dir} "
+                        f"OPENCLAW_HOME={home_dir} "
+                        f"SQLITE_TMPDIR={state_dir} "
+                        f"TMPDIR={state_dir} "
                         f"OPENCLAW_NIX_MODE=0\n"
-                        f"rm -f /sandbox/.openclaw/state/*/gateway.state.*.lock 2>/dev/null\n"
+                        f"rm -f {state_dir}/*/gateway.state.*.lock 2>/dev/null\n"
+                        + (gateway_pre_start.rstrip() + "\n" if gateway_pre_start.strip() else "") +
                         f"exec openclaw gateway run "
                         f"--allow-unconfigured "
-                        f"--bind lan --port 18789\n"
+                        f"--bind loopback --port 18789\n"
                         f"GWEOF\n"
-                        f"chmod +x /sandbox/.openclaw/start-gateway.sh"],
+                        f"chmod 700 {gateway_script}"],
             check=False)
         self.sh.run(
-            exec_cmd + ["sh", "-c",
-                        f"nohup /sandbox/.openclaw/start-gateway.sh "
-                        f"> /tmp/openclaw-gateway.log "
-                        f"2>&1 &"],
+            ["bash", "-c",
+             f"mkdir -p ~/.local/bin && "
+             f"cat > {wait_script} << 'WEOF'\n"
+             "#!/bin/bash\n"
+             "set -euo pipefail\n"
+             "for i in $(seq 1 90); do\n"
+             "  if (echo > /dev/tcp/127.0.0.1/17670) >/dev/null 2>&1; then\n"
+             "    exit 0\n"
+             "  fi\n"
+             "  sleep 2\n"
+             "done\n"
+             "echo 'openshell gateway port 17670 not ready in time' >&2\n"
+             "exit 1\n"
+             "WEOF\n"
+             f"chmod 700 {wait_script}"],
             check=False)
+        service_ws_args = (f"--workspace {workspace_name} "
+                           if workspace_name and workspace_name != "default"
+                           else "")
         self.sh.run(
             ["bash", "-c",
              f"cat > ~/.config/systemd/user/openclaw-gateway-{sandbox_name}.service << 'SVCEOF'\n"
              f"[Unit]\n"
              f"Description=OpenClaw gateway for sandbox {sandbox_name}\n"
-             f"After=openshell-gateway.service\n"
-             f"Requires=openshell-gateway.service\n"
              f"[Service]\n"
-             f"Type=oneshot\n"
-             f"RemainAfterExit=yes\n"
-             f"ExecStartPre=/bin/sleep 10\n"
-             f"ExecStart=/bin/bash -c '"
-             f"CNAME=$(sudo docker ps --format {{{{.Names}}}} | grep {sandbox_name} | head -1) && "
-             f"sudo docker exec -d $CNAME /sandbox/.openclaw/start-gateway.sh'\n"
+             f"Type=simple\n"
+             f"Restart=always\n"
+             f"RestartSec=5\n"
+             f"ExecStartPre=/bin/bash -lc '{wait_script}'\n"
+             f"ExecStart=/bin/bash -lc '"
+             f"openshell gateway select {self.gw.mtls_gw} >/dev/null 2>&1 || true; "
+             f"exec openshell sandbox exec -n {sandbox_name} {service_ws_args}--no-tty -- "
+             f"{gateway_script}"
+             f"'\n"
              f"[Install]\n"
              f"WantedBy=default.target\n"
              f"SVCEOF\n"
-             f"systemctl --user daemon-reload\n"
-             f"systemctl --user enable openclaw-gateway-{sandbox_name}.service"],
+             f"systemctl --user daemon-reload"],
             check=False)
 
-        if not self.sh.dry_run:
+        self._pending_gateway_services.append(sandbox_name)
+
+    def start_pending_gateway_services(self):
+        """Start gateway systemd services deferred from start_openclaw_gateway."""
+        for name in getattr(self, '_pending_gateway_services', []):
+            section(f"Starting openclaw-gateway-{name} service")
+            self.sh.run(
+                ["bash", "-c",
+                 f"systemctl --user enable --now openclaw-gateway-{name}.service"],
+                check=False)
+
+            exec_cmd = ["openshell", "sandbox", "exec", "-n", name, "--no-tty", "--"]
             for i in range(10):
                 rc, out, _ = self.sh.run(
                     exec_cmd + [
@@ -700,10 +964,13 @@ class WorkspaceDeployer:
                 ], check=False)
                 if rc == 0 and "ok" in out:
                     log("openclaw gateway ready")
-                    return
+                    break
                 log(f"  waiting for openclaw gateway... (attempt {i+1})")
-                time.sleep(3)
-            log("WARN: openclaw gateway health check failed")
+                if not self.sh.dry_run:
+                    time.sleep(3)
+            else:
+                log("WARN: openclaw gateway health check failed")
+        self._pending_gateway_services = []
 
 
 # ---------------------------------------------------------------------------
@@ -800,6 +1067,8 @@ def main():
     parser.add_argument("--mtls-gateway", default="openshell-local")
     parser.add_argument("--nemoclaw-cli-image", default="")
     parser.add_argument("--dashboard-route", default="")
+    parser.add_argument("--governance-profiles-dir",
+                        default="/governance-profiles")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -833,7 +1102,7 @@ def main():
     gw.enable_providers_v2()
 
     # --- Phase 2: Deploy profiles ---
-    deployer = WorkspaceDeployer(sh, gw)
+    deployer = WorkspaceDeployer(sh, gw, args.governance_profiles_dir)
     for profile in profiles:
         banner(f"Phase 2: Profile '{profile.name}' "
                f"({len(profile.workspaces)} workspace(s))")
@@ -848,23 +1117,23 @@ def main():
 
             deployer.create_workspace(ws)
 
-            # Create providers in the workspace
+            # Create non-inference providers before sandboxes (needed for
+            # --provider attachment at sandbox create time). Inference
+            # providers are created after openclaw onboard to avoid duplicates.
             enabled_provs = [p for p in ws.providers if p.enabled]
-            if enabled_provs:
-                section(f"Providers ({len(enabled_provs)}) "
+            inference_provs = []
+            non_inference_provs = []
+            for p in enabled_provs:
+                if p.type in PROVIDER_CRED_MAP or p.type == "nvidia":
+                    inference_provs.append(p)
+                else:
+                    non_inference_provs.append(p)
+            if non_inference_provs:
+                section(f"Providers ({len(non_inference_provs)}) "
                         f"in workspace '{ws.name}'")
-                inference_set = False
-                for prov in enabled_provs:
+                for prov in non_inference_provs:
                     cred = resolve_credential(prov)
                     deployer.create_provider(prov, cred, ws.name)
-                    if not inference_set and prov.model:
-                        log(f"  Setting inference route: "
-                            f"provider={prov.name} model={prov.model}")
-                        sh.run(["openshell", "inference", "set",
-                                "--provider", prov.name,
-                                "--model", prov.model,
-                                "--no-verify"], check=False)
-                        inference_set = True
 
             # Create sandboxes
             nemoclaw_cli_installed = False
@@ -918,22 +1187,64 @@ def main():
                         sb.name, args.dashboard_route or "",
                         workspace_name=ws.name,
                         provider_id=prov_id,
-                        model_id=model or "nvidia/nemotron-3-super-120b-a12b")
+                        model_id=model or "",
+                        gateway_pre_start=sb.gateway_pre_start)
 
                 elif sb.type == "openclaw":
                     deployer.create_sandbox_generic(sb, ws.name)
-                    prov = find_provider(ws, sb.providers)
-                    prov_id = prov.type if prov else "nvidia"
-                    model = sb.model or (prov.model if prov else "")
+                    prov_id = os.environ.get("INFERENCE_PROVIDER", "nvidia")
+                    model = sb.model or os.environ.get(
+                        "INFERENCE_MODEL", "")
                     deployer.start_openclaw_gateway(
                         sb.name, args.dashboard_route or "",
                         workspace_name=ws.name,
                         provider_id=prov_id,
-                        model_id=model or "nvidia/nemotron-3-super-120b-a12b")
+                        model_id=model or "",
+                        gateway_pre_start=sb.gateway_pre_start)
+                    # Create inference providers AFTER openclaw onboard to
+                    # avoid duplicate provider names in OpenClaw's config,
+                    # then attach them to the sandbox.
+                    ws_args = (["--workspace", ws.name]
+                               if ws.name != "default" else [])
+                    inference_set = False
+                    for ip in inference_provs:
+                        cred = resolve_credential(ip)
+                        deployer.create_provider(ip, cred, ws.name)
+                        sh.run(["openshell", "sandbox", "provider", "attach",
+                                sb.name, ip.name] + ws_args,
+                               check=False)
+                        if not inference_set:
+                            inf_model = (ip.model
+                                         or os.environ.get("INFERENCE_MODEL", "")
+                                         or model)
+                            if inf_model:
+                                sh.run(["openshell", "inference", "set",
+                                        "--provider", ip.name,
+                                        "--model", inf_model,
+                                        "--no-verify"], check=False)
+                                inference_set = True
 
                 else:
                     # Generic: just create the sandbox
                     deployer.create_sandbox_generic(sb, ws.name)
+
+    # --- Phase 3: Run proxy-setup scripts ---
+    for profile in profiles:
+        for ws in profile.workspaces:
+            if not ws.enabled:
+                continue
+            ws_dir = Path(args.profiles_dir) / profile.name / ws.name
+            proxy_script = ws_dir / "proxy-setup.sh"
+            if proxy_script.exists():
+                for sb in ws.sandboxes:
+                    if not sb.enabled:
+                        continue
+                    section(f"Running proxy-setup.sh for '{sb.name}'")
+                    sh.run(["bash", str(proxy_script), sb.name, ws.name],
+                           check=False)
+
+    # --- Phase 3b: Start deferred gateway services ---
+    deployer.start_pending_gateway_services()
 
     # --- Phase 4: Verify ---
     if not args.dry_run:

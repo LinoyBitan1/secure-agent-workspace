@@ -1,3 +1,4 @@
+id: nvidia
 display_name: NVIDIA Endpoints
 description: NVIDIA API inference endpoints
 provider_type: nvidia

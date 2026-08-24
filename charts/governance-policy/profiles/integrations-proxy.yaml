@@ -1,3 +1,4 @@
+id: integrations-proxy
 display_name: Integrations Proxy
 description: Agent VM outbound to Integrations VM gateway (two-VM split architecture)
 category: other

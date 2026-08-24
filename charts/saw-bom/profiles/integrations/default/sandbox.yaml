@@ -6,9 +6,13 @@ spec:
     - name: mail-proxy
       type: generic
       enabled: true
-      image: quay.io/sallyom/gmail-read-proxy:latest
+      image: quay.io/sauagarw/gmail-read-proxy:demo1-fix
       command: "/sandbox/gmail-read-proxy"
+      env:
+        INTER_VM_BEARER_SHA256: "${INTER_VM_BEARER_SHA256}"
       exposePort: 18080
+      providers:
+        - gmail-read
     - name: slack-read
       type: generic
       enabled: false

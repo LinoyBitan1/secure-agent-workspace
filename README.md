@@ -158,7 +158,9 @@ make check-prereqs
 
 ### Installation
 
-Two deployment paths are available:
+This guide deploys a **single-VM architecture** — one VM per user with the AI agent, gateway, and sandbox all on the same VM. For credential isolation with separate agent and integrations VMs, see the [Two-VM Split Architecture](README_TWO_VM_ARCH.md).
+
+Two deployment paths are available for single-VM:
 
 #### Option A: Validated Pattern (automated, GitOps)
 
@@ -224,9 +226,8 @@ make copy-images
 # 6. Deploy Keycloak
 make keycloak
 
-# 7. Verify Keycloak
-make keycloak-issuer
-curl -sk "$(make keycloak-issuer)/.well-known/openid-configuration" | python3 -m json.tool | head -5
+# 7. Verify Keycloak (instance, realm, clients, users, OIDC endpoint)
+make verify-keycloak
 
 # 8. Authenticate
 make login                    # Opens browser → login with alice / alice
@@ -242,15 +243,10 @@ make openshell-saw-create \
 # 10. Follow setup logs (in another terminal)
 make openshell-saw-logs
 
-# 11. Check status
-make openshell-saw-list
-make status
+# 11. Verify the VM setup (gateway, sandboxes, providers, dashboard, logs)
+make saw-verify
 
-# 12. Wait for VM to be ready
-oc get vmi -n openshell-agents
-# Wait for PHASE=Running, READY=True
-
-# 13. Configure the openshell CLI
+# 12. Configure the openshell CLI
 make openshell-saw-configure-gateway
 
 # 14. Authenticate CLI with the gateway
@@ -276,6 +272,28 @@ OPENSHELL_SAW_NAME=openshell-saw SANDBOX_NAME=notebook GUI_PORT=18790 make openc
 You can set `OPENSHELL_SAW_NAME` once via `export` and all `openshell-saw-*` targets will use it automatically.
 
 > **Sandbox name limit:** `OPENSHELL_SAW_NAME` must be **19 characters or fewer**. OpenShell rejects longer names with "name exceeds maximum length". The Helm chart and `make openshell-saw-create` will both fail fast with a clear error if this limit is exceeded.
+
+#### Governance (optional)
+
+Governance profiles define per-sandbox network and binary policies. Two deployment options:
+
+```bash
+# Option 1: Profiles only (imported locally on each VM, no interceptor)
+make deploy-gov-profiles
+
+# Option 2: Full governance (interceptor pod + profiles)
+make deploy-governance
+```
+
+If you are **not** deploying the governance interceptor, set `GOVERNANCE_ENABLED=false`:
+
+```bash
+export GOVERNANCE_ENABLED=false
+# Or pass on each command: make deploy-integ-vm GOVERNANCE_ENABLED=false
+# Or add to .env file: GOVERNANCE_ENABLED=false
+```
+
+BOM sandboxes with `providerProfile: gmail-read` will automatically have the profile imported and attached regardless of whether the interceptor is running. See the [Two-VM Split Architecture](README_TWO_VM_ARCH.md) for details.
 
 #### Supported inference providers
 

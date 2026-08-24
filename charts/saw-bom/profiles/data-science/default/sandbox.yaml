@@ -6,9 +6,27 @@ spec:
     - name: notebook
       type: openclaw
       enabled: true
-      image: quay.io/redhat-et/openclaw:csb-aipcc-based-amd64-2026.08.19
+      image: quay.io/redhat-et/openclaw-saw:demo1
+      runAsUser: "__OPENCLAW_NOTEBOOK_RUN_AS_USER__"
+      runAsGroup: "__OPENCLAW_NOTEBOOK_RUN_AS_GROUP__"
       providers:
-        - nvidia
+        - gmail-read-proxy
+      env:
+        GOG_GMAIL_BASE_URL: "http://127.0.0.1:18079/"
+        GMAIL_READ_UPSTREAM: "http://openshell-saw-integ-gateway.__NAMESPACE__.svc.cluster.local:18080/"
+        GOG_READONLY: "1"
+      gatewayPreStart: |
+        CRED_FILE=/tmp/gog-access-token
+        if [ -s "${CRED_FILE}" ]; then
+          export GOG_ACCESS_TOKEN="$(cat ${CRED_FILE})"
+        fi
+        if [ -n "${GMAIL_READ_UPSTREAM:-}" ] && [ -x /opt/gmail/read-agent-forwarder.mjs ] && command -v node >/dev/null 2>&1; then
+          if ! curl -sS -o /dev/null --noproxy 127.0.0.1 http://127.0.0.1:18079/gmail/v1/users/me/profile 2>/dev/null; then
+            nohup env GMAIL_READ_UPSTREAM="${GMAIL_READ_UPSTREAM}" GMAIL_READ_CREDENTIAL_FILE="${CRED_FILE}" \
+              node /opt/gmail/read-agent-forwarder.mjs >/tmp/gmail-forwarder.log 2>&1 </dev/null &
+            sleep 1
+          fi
+        fi
     - name: cuda-sandbox
       type: nemoclaw
       enabled: false

@@ -1,6 +1,10 @@
 {{- $profileFiles := dict }}
+{{- $defaultRunAsUser := .Values.sandboxPolicy.defaultRunAsUser | default "1001" | toString }}
+{{- $defaultRunAsGroup := .Values.sandboxPolicy.defaultRunAsGroup | default "1001" | toString }}
+{{- $openclawNotebookRunAsUser := .Values.openclawNotebook.runAsUser | default "1001" | toString }}
+{{- $openclawNotebookRunAsGroup := .Values.openclawNotebook.runAsGroup | default "1001" | toString }}
 {{- range $profile := .Values.profiles }}
-{{- $files := $.Files.Glob (printf "profiles/%s/**/*.yaml" $profile) }}
+{{- $files := $.Files.Glob (printf "profiles/%s/**/*" $profile) }}
 {{- range $path, $_ := $files }}
 {{- $_ := set $profileFiles $path ($.Files.Get $path) }}
 {{- end }}
@@ -16,14 +20,14 @@ metadata:
 data:
   {{- range $path, $content := $profileFiles }}
   {{ $path | replace "/" "__" }}: |
-{{ $content | indent 4 }}
+{{ $content | replace "__NAMESPACE__" $.Release.Namespace | replace "__BOM_DEFAULT_RUN_AS_USER__" $defaultRunAsUser | replace "__BOM_DEFAULT_RUN_AS_GROUP__" $defaultRunAsGroup | replace "__OPENCLAW_NOTEBOOK_RUN_AS_USER__" $openclawNotebookRunAsUser | replace "__OPENCLAW_NOTEBOOK_RUN_AS_GROUP__" $openclawNotebookRunAsGroup | indent 4 }}
   {{- end }}
   apply_bom.py: |
 {{ .Files.Get "scripts/apply_bom.py" | indent 4 }}
 {{- end }}
 {{- $integProfileFiles := dict }}
 {{- range $profile := .Values.integrationsProfiles }}
-{{- $files := $.Files.Glob (printf "profiles/%s/**/*.yaml" $profile) }}
+{{- $files := $.Files.Glob (printf "profiles/%s/**/*" $profile) }}
 {{- range $path, $_ := $files }}
 {{- $_ := set $integProfileFiles $path ($.Files.Get $path) }}
 {{- end }}
@@ -40,7 +44,7 @@ metadata:
 data:
   {{- range $path, $content := $integProfileFiles }}
   {{ $path | replace "/" "__" }}: |
-{{ $content | indent 4 }}
+{{ $content | replace "__NAMESPACE__" $.Release.Namespace | replace "__BOM_DEFAULT_RUN_AS_USER__" $defaultRunAsUser | replace "__BOM_DEFAULT_RUN_AS_GROUP__" $defaultRunAsGroup | replace "__OPENCLAW_NOTEBOOK_RUN_AS_USER__" $openclawNotebookRunAsUser | replace "__OPENCLAW_NOTEBOOK_RUN_AS_GROUP__" $openclawNotebookRunAsGroup | indent 4 }}
   {{- end }}
   apply_bom.py: |
 {{ .Files.Get "scripts/apply_bom.py" | indent 4 }}

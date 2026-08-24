@@ -1,3 +1,4 @@
+id: gmail-read
 display_name: Gmail Read Proxy
 description: Gmail read-only proxy on the integrations VM
 category: data
@@ -40,4 +41,5 @@ binaries:
   - /usr/bin/curl
   - /usr/local/bin/curl
   - /usr/local/bin/node
+  - /sandbox/rust-email-proxy
   - /sandbox/gmail-read-proxy
