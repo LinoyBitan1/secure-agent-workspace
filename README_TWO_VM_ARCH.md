@@ -346,12 +346,12 @@ make e2e-test
 role: agent                       # triggers two-VM behavior
 accessControl:
   owner: alice                    # your username
-containerRuntime: docker          # or podman
+containerRuntime: podman          # or docker
 governance:
   enabled: false
 networkPolicy:
   peerLabel: saw-integ            # must match integ VM sandboxName
-  allowedPorts: [18080, 18081, 18082, 18083]
+  allowedPorts: [18080, 18081, 18082, 18083, 18084, 18085, 18086]
 ```
 
 ### `overrides/openshell-saw-integ.yaml` (Integrations VM)
@@ -363,10 +363,15 @@ containerRuntime: podman
 service:
   extraPorts:                     # each proxy gets a port
     - {name: mail-read, port: 18080, targetPort: 18080}
+    - {name: mail-write, port: 18081, targetPort: 18081}
+    - {name: m365-read, port: 18082, targetPort: 18082}
     - {name: inference-proxy, port: 18083, targetPort: 18083}
+    - {name: slack-read, port: 18084, targetPort: 18084}
+    - {name: slack-write, port: 18085, targetPort: 18085}
+    - {name: m365-write, port: 18086, targetPort: 18086}
 networkPolicy:
   peerLabel: saw-agent
-  allowedPorts: [18080, 18081, 18082, 18083]
+  allowedPorts: [18080, 18081, 18082, 18083, 18084, 18085, 18086]
 ```
 
 ### Inference Secret
@@ -439,7 +444,7 @@ To switch from NVIDIA to OpenAI (or any OpenAI-compatible API):
 
 ```bash
 # On the integ VM:
-ssh cloud-user@integ-vm
+ssh openshell@integ-vm
 
 # Update the API key
 echo -n 'sk-your-openai-key' > ~/.config/secure-agent-workspace/nvidia-api-key
