@@ -1,0 +1,38 @@
+ui:
+  image: ""
+
+relay:
+  image: ""
+
+# Authenticated user email
+userEmail: ""
+
+# Agent VM (OpenClaw gateway WebSocket)
+agentVM: openshell-saw
+agentGatewayPort: 18789
+
+# Integrations VM (write proxy endpoints)
+integVM: openshell-saw-integ
+gmailWritePort: 18081
+m365WritePort: 18086
+slackWritePort: 18085
+m365UndoSeconds: 60
+
+# User header for the injector
+userHeader: x-forwarded-user
+
+# Front-door secret names (created by proxy deploy scripts)
+secrets:
+  gmailWriteFrontdoor: gmail-write-frontdoor
+  m365WriteFrontdoor: m365-write-frontdoor
+  slackWriteFrontdoor: slack-write-frontdoor
+  agentIngest: forge-agent-ingest
+  relayIdentity: forge-relay-identity
+  forgeSecrets: forge-secrets
+
+# Relay persistent storage
+storage:
+  size: 1Gi
+
+route:
+  enabled: true

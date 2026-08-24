@@ -13,23 +13,61 @@ spec:
       exposePort: 18080
       providers:
         - gmail-read
+    - name: gmail-write
+      type: generic
+      enabled: true
+      image: quay.io/redhat-et/gmail-write-proxy:demo1
+      command: "/sandbox/gmail-write-proxy"
+      env:
+        FRONT_DOOR_BEARER_SHA256: "${GMAIL_WRITE_FRONTDOOR_SHA256}"
+        UNDO_WINDOW_SECONDS: "60"
+        STATE_DIR: "/sandbox/state"
+      exposePort: 18081
+      providers:
+        - gmail-write
+    - name: proxy-m365
+      type: generic
+      enabled: true
+      image: quay.io/redhat-et/m365-read-proxy:demo1
+      command: "/sandbox/proxy-m365"
+      env:
+        INTER_VM_BEARER_SHA256: "${INTER_VM_BEARER_SHA256}"
+        LISTEN_ADDR: "127.0.0.1:18082"
+      exposePort: 18082
+      providers:
+        - m365-read
+    - name: proxy-m365-write
+      type: generic
+      enabled: true
+      image: quay.io/redhat-et/m365-write-proxy:demo1
+      command: "/sandbox/proxy-m365-write"
+      env:
+        INTER_VM_BEARER_SHA256: "${M365_WRITE_FRONTDOOR_SHA256}"
+        LISTEN_ADDR: "127.0.0.1:18086"
+      exposePort: 18086
+      providers:
+        - m365-write
     - name: slack-read
       type: generic
-      enabled: false
-      image: base
-    - name: slack-bot
+      enabled: true
+      image: quay.io/redhat-et/slack-read-proxy:demo1
+      command: "/sandbox/slack-read-proxy"
+      env:
+        LISTEN_ADDR: "127.0.0.1:18084"
+      exposePort: 18084
+      providers:
+        - slack-read
+    - name: slack-write
       type: generic
-      enabled: false
-      image: base
-    - name: slack-send
-      type: generic
-      enabled: false
-      image: base
-    - name: web-research
-      type: generic
-      enabled: false
-      image: base
-    - name: post-service
-      type: generic
-      enabled: false
-      image: base
+      enabled: true
+      image: quay.io/redhat-et/slack-write-proxy:demo1
+      command: "/sandbox/slack-send-service"
+      env:
+        LISTEN_ADDR: "127.0.0.1:18085"
+        SLACK_ALLOWED_CHANNEL_IDS: "${SLACK_ALLOWED_CHANNEL_IDS}"
+        SEND_UNDO_WINDOW_SECS: "60"
+        SLACK_SEND_STATE_FILE: "/sandbox/state/slack-send-state.json"
+        SLACK_SEND_MAX_RECORDS: "10000"
+      exposePort: 18085
+      providers:
+        - slack-write

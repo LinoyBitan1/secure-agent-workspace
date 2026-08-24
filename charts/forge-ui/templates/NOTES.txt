@@ -1,0 +1,18 @@
+Forge UI deployed.
+
+{{- if .Values.route.enabled }}
+
+  URL: https://{{ .Release.Name }}-{{ .Release.Namespace }}.apps.<cluster-domain>
+
+  Check the route:
+    oc get route rh-forge-ui -n {{ .Release.Namespace }} -o jsonpath='https://{.spec.host}'
+{{- end }}
+
+Prerequisites (create before installing this chart):
+  - forge-secrets: relay credentials (gateway token, write front-door bearers)
+  - forge-relay-identity: relay device identity
+  - Front-door secrets: gmail-write-frontdoor, m365-write-frontdoor, slack-write-frontdoor
+
+After install:
+  1. Approve the relay device on the agent VM OpenClaw gateway
+  2. Open the UI URL in a browser

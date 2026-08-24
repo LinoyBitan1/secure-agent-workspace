@@ -32,15 +32,24 @@ service:
     - name: mail-read
       port: 18080
       targetPort: 18080
-    - name: slack-read
+    - name: mail-write
       port: 18081
       targetPort: 18081
-    - name: slack-bot
+    - name: m365-read
       port: 18082
       targetPort: 18082
     - name: inference-proxy
       port: 18083
       targetPort: 18083
+    - name: slack-read
+      port: 18084
+      targetPort: 18084
+    - name: slack-write
+      port: 18085
+      targetPort: 18085
+    - name: m365-write
+      port: 18086
+      targetPort: 18086
 
 networkPolicy:
   peerLabel: openshell-saw
@@ -49,3 +58,6 @@ networkPolicy:
     - 18081
     - 18082
     - 18083
+    - 18084
+    - 18085
+    - 18086

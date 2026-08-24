@@ -7,3 +7,18 @@ spec:
     - name: gmail-read
       type: gmail-read
       credentialKey: access_token
+    - name: gmail-write
+      type: gmail-write
+      credentialKey: GMAIL_WRITE_TOKEN
+    - name: m365-read
+      type: microsoft365
+      credentialKey: CLIMICROSOFT365_ACCESS_TOKEN
+    - name: m365-write
+      type: microsoft365-write
+      credentialKey: CLIMICROSOFT365_ACCESS_TOKEN
+    - name: slack-read
+      type: slack-read
+      credentialKey: SLACK_READ_USER_TOKEN
+    - name: slack-write
+      type: slack-write
+      credentialKey: SLACK_WRITE_USER_TOKEN

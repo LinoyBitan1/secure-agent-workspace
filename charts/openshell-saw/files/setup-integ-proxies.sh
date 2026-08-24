@@ -46,6 +46,18 @@ else
 fi
 echo "  Bearer SHA256: ${BEARER_SHA256:0:16}..."
 
+# --- Step 3b: Front-door bearers for write proxies (relay-only) ---
+for secret_name in gmail-write-frontdoor m365-write-frontdoor slack-write-frontdoor; do
+  if ! kubectl get secret "${secret_name}" -n "${NS}" >/dev/null 2>&1; then
+    echo "Generating ${secret_name}..."
+    _fd_bearer="$(openssl rand -hex 32)"
+    kubectl create secret generic "${secret_name}" -n "${NS}" \
+      --from-literal=bearer="${_fd_bearer}"
+  fi
+done
+GMAIL_WRITE_FRONTDOOR_SHA256="$(kubectl get secret gmail-write-frontdoor -n "${NS}" -o jsonpath='{.data.bearer}' | base64 -d | sha256sum | cut -d ' ' -f 1 | tr -d '\n')"
+M365_WRITE_FRONTDOOR_SHA256="$(kubectl get secret m365-write-frontdoor -n "${NS}" -o jsonpath='{.data.bearer}' | base64 -d | sha256sum | cut -d ' ' -f 1 | tr -d '\n')"
+
 # --- Step 4: Deploy BOM profiles (workspaces, providers, sandboxes) ---
 BOM_CM="saw-bom-integ-profiles"
 BOM_MOUNT="/tmp/bom-integ-profiles"
@@ -105,6 +117,9 @@ if kubectl get configmap "${BOM_CM}" -n "${NS}" >/dev/null 2>&1; then
   echo "INTER_VM_BEARER_SHA256=${BEARER_SHA256}" >> "${BOM_ENV}"
   # Optional raw bearer for BOM-level auth verification checks.
   echo "INTER_VM_BEARER=${BEARER}" >> "${BOM_ENV}"
+  # Front-door SHA256 digests for write proxies
+  echo "GMAIL_WRITE_FRONTDOOR_SHA256=${GMAIL_WRITE_FRONTDOOR_SHA256}" >> "${BOM_ENV}"
+  echo "M365_WRITE_FRONTDOOR_SHA256=${M365_WRITE_FRONTDOOR_SHA256}" >> "${BOM_ENV}"
 
   echo "NAMESPACE=${NS}" >> "${BOM_ENV}"
 

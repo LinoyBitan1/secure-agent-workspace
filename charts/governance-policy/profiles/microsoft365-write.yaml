@@ -1,0 +1,43 @@
+id: microsoft365-write
+display_name: Microsoft 365 write
+description: Gateway-refreshed Microsoft Graph credential for the M365 write proxy
+category: data
+inference_capable: false
+
+credentials:
+  - name: access_token
+    description: Short-lived Microsoft Graph OAuth access token (Mail.ReadWrite scope)
+    env_vars: [CLIMICROSOFT365_ACCESS_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    refresh:
+      strategy: oauth2_refresh_token
+      token_url: https://login.microsoftonline.com/__TENANT_ID__/oauth2/v2.0/token
+      scopes: []
+      refresh_before_seconds: 300
+      max_lifetime_seconds: 3600
+      material:
+        - name: client_id
+          required: true
+        - name: client_secret
+          required: true
+          secret: true
+        - name: refresh_token
+          required: true
+          secret: true
+
+discovery:
+  credentials: [access_token]
+
+endpoints:
+  - host: graph.microsoft.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: POST, path: /v1.0/me/messages }
+      - allow: { method: POST, path: /v1.0/me/messages/*/send }
+
+binaries:
+  - /sandbox/proxy-m365-write

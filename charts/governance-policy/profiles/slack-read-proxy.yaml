@@ -1,0 +1,29 @@
+id: slack-read-proxy
+display_name: Slack read-only proxy transport
+description: Static capability for agent access to the integrations VM Slack read proxy
+category: data
+inference_capable: false
+
+credentials:
+  - name: SLACK_READ_PROXY_BEARER
+    env_vars: [SLACK_READ_PROXY_BEARER]
+    required: true
+    auth_style: header
+    header_name: x-forge-slack-read-bearer
+    refresh:
+      strategy: static
+
+discovery:
+  credentials: [SLACK_READ_PROXY_BEARER]
+
+endpoints:
+  - host: openshell-saw-integ-gateway.__NAMESPACE__.svc.cluster.local
+    port: 18084
+    protocol: rest
+    enforcement: enforce
+    access: read-only
+
+binaries:
+  - /usr/bin/curl
+  - /usr/local/bin/node
+  - /usr/bin/node

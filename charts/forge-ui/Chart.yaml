@@ -1,0 +1,5 @@
+apiVersion: v2
+name: forge-ui
+description: Forge UI and relay for the two-VM split architecture
+version: 0.1.0
+type: application

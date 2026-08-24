@@ -1,0 +1,45 @@
+id: gmail-write
+display_name: Gmail write proxy
+description: Gateway-refreshed Gmail credential for the sandboxed write proxy
+category: data
+inference_capable: false
+
+credentials:
+  - name: access_token
+    description: Short-lived Gmail OAuth access token (gmail.compose scope)
+    env_vars: [GMAIL_WRITE_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    refresh:
+      strategy: oauth2_refresh_token
+      token_url: https://oauth2.googleapis.com/token
+      scopes: []
+      refresh_before_seconds: 300
+      max_lifetime_seconds: 3600
+      material:
+        - name: client_id
+          required: true
+        - name: client_secret
+          required: true
+          secret: true
+        - name: refresh_token
+          required: true
+          secret: true
+
+discovery:
+  credentials: [access_token]
+
+endpoints:
+  - host: gmail.googleapis.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: POST, path: /gmail/v1/users/me/drafts }
+      - allow: { method: PUT, path: /gmail/v1/users/me/drafts/* }
+      - allow: { method: POST, path: /gmail/v1/users/me/drafts/send }
+      - allow: { method: DELETE, path: /gmail/v1/users/me/drafts/* }
+
+binaries:
+  - /sandbox/gmail-write-proxy

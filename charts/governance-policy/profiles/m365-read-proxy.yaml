@@ -1,0 +1,30 @@
+id: m365-read-intervm
+display_name: Microsoft 365 read inter-VM transport
+description: Static capability for agent access to the integrations VM M365 read proxy
+category: data
+inference_capable: false
+
+credentials:
+  - name: CLIMICROSOFT365_ACCESS_TOKEN
+    env_vars: [CLIMICROSOFT365_ACCESS_TOKEN]
+    required: true
+    auth_style: header
+    header_name: X-M365-Read-Bearer
+    refresh:
+      strategy: static
+
+discovery:
+  credentials: [CLIMICROSOFT365_ACCESS_TOKEN]
+
+endpoints:
+  - host: openshell-saw-integ-gateway.__NAMESPACE__.svc.cluster.local
+    port: 18082
+    protocol: rest
+    enforcement: enforce
+    access: read-only
+
+binaries:
+  - /usr/local/bin/node
+  - /usr/bin/node
+  - /usr/bin/curl
+  - /usr/local/bin/curl

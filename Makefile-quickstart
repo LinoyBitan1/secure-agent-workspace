@@ -659,6 +659,29 @@ delete-vms: ## Delete both VMs (keeps BOM profiles and secrets)
 	-@kubectl wait --for=delete vm/$(AGENT_VM_NAME) vm/$(INTEG_VM_NAME) -n $(NS) --timeout=120s 2>/dev/null || true
 	@echo "Resources deleted."
 
+FORGE_UI_CHART := charts/forge-ui
+UI_IMAGE       ?=
+RELAY_IMAGE    ?=
+DEMO_USER_EMAIL ?=
+
+deploy-forge-ui: ## Deploy Forge UI (UI_IMAGE=, RELAY_IMAGE=, DEMO_USER_EMAIL=)
+	@if [ -z "$(UI_IMAGE)" ] || [ -z "$(RELAY_IMAGE)" ] || [ -z "$(DEMO_USER_EMAIL)" ]; then \
+		echo "Error: UI_IMAGE, RELAY_IMAGE, and DEMO_USER_EMAIL are required."; \
+		echo "  Usage: make deploy-forge-ui UI_IMAGE=... RELAY_IMAGE=... DEMO_USER_EMAIL=user@example.com"; \
+		exit 1; \
+	fi
+	helm upgrade --install forge-ui $(FORGE_UI_CHART) \
+		--namespace $(NS) \
+		--set ui.image="$(UI_IMAGE)" \
+		--set relay.image="$(RELAY_IMAGE)" \
+		--set userEmail="$(DEMO_USER_EMAIL)" \
+		--set agentVM=$(AGENT_VM_NAME) \
+		--set integVM=$(INTEG_VM_NAME)
+
+delete-forge-ui: ## Uninstall Forge UI
+	-helm uninstall forge-ui -n $(NS) 2>/dev/null
+	-kubectl delete pvc rh-forge-ui-relay-store -n $(NS) 2>/dev/null
+
 e2e-test: ## Run two-VM E2E test
 	SSH_KEY_PATH=$(SSH_KEY_PATH) NS=$(NS) \
 		AGENT_VM=$(AGENT_VM_NAME) INTEG_VM=$(INTEG_VM_NAME) \

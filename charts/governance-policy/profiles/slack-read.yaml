@@ -1,0 +1,27 @@
+id: slack-read
+display_name: Slack read token
+description: Read-scoped Slack user token retained by the integrations VM gateway
+category: data
+inference_capable: false
+
+credentials:
+  - name: user_token
+    env_vars: [SLACK_READ_USER_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    refresh:
+      strategy: static
+
+discovery:
+  credentials: [user_token]
+
+endpoints:
+  - host: slack.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    access: read-write
+
+binaries:
+  - /sandbox/slack-read-proxy

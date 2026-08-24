@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rh-forge-ui
+  labels:
+    app.kubernetes.io/name: rh-forge-ui
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rh-forge-ui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rh-forge-ui
+    spec:
+      serviceAccountName: rh-forge-ui
+      containers:
+        - name: injector
+          image: {{ .Values.ui.image | quote }}
+          ports:
+            - containerPort: 8888
+              name: http
+          env:
+            - name: FORGE_RELAY_URL
+              value: "http://127.0.0.1:3001"
+            - name: FORGE_USER_HEADER
+              value: {{ .Values.userHeader | quote }}
+            {{- if .Values.userEmail }}
+            - name: FORGE_DEMO_USER
+              value: {{ .Values.userEmail | quote }}
+            {{- end }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+        - name: relay
+          image: {{ .Values.relay.image | quote }}
+          ports:
+            - containerPort: 3001
+              name: relay
+          env:
+            - name: FORGE_GATEWAY_URL
+              value: "ws://{{ .Values.agentVM }}-gateway.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.agentGatewayPort }}"
+            - name: FORGE_USER_HEADER
+              value: {{ .Values.userHeader | quote }}
+            - name: FORGE_STORE_DIR
+              value: /var/lib/forge
+            - name: FORGE_RELAY_IDENTITY_PATH
+              value: /etc/forge-identity/identity.json
+            - name: FORGE_MAIL_POST_URL
+              value: "http://{{ .Values.integVM }}-gateway.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.gmailWritePort }}"
+            - name: FORGE_M365_WRITE_URL
+              value: "http://{{ .Values.integVM }}-gateway.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.m365WritePort }}"
+            - name: FORGE_M365_UNDO_SECONDS
+              value: {{ .Values.m365UndoSeconds | quote }}
+            - name: FORGE_SLACK_SEND_URL
+              value: "http://{{ .Values.integVM }}-gateway.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.slackWritePort }}"
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secrets.forgeSecrets }}
+          volumeMounts:
+            - name: forge-outbox
+              mountPath: /var/lib/forge
+            - name: relay-identity
+              mountPath: /etc/forge-identity
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: forge-outbox
+          persistentVolumeClaim:
+            claimName: rh-forge-ui-relay-store
+        - name: relay-identity
+          secret:
+            secretName: {{ .Values.secrets.relayIdentity }}
