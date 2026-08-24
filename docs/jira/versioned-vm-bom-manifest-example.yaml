@@ -1,0 +1,131 @@
+apiVersion: saw.redhat.com/v1alpha1
+kind: VmBom
+metadata:
+  name: saw-vm-bom
+  version: v0.0.97-rhaiv.0
+  createdBy: platform-team
+  createdAt: "2026-08-10T00:00:00Z"
+
+spec:
+  platform:
+    os: fedora
+    arch: amd64
+    runtime: docker
+
+  artifacts:
+    openshell:
+      cli:
+        source:
+          type: pip
+          package: openshell
+          version: "0.0.97+rhaiv.0"
+          extraIndexUrl: "https://packages.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA1/cpu-ubi9-test/simple/"
+      gateway:
+        source:
+          type: image_binary
+          image: "quay.io/opendatahub/odh-openshell-gateway:v0.0.97-rhaiv.0"
+          pathInImage: "/usr/local/bin/openshell-gateway"
+        checksum:
+          algo: sha256
+          value: "<gateway-binary-sha256>"
+      supervisor:
+        source:
+          type: image_binary
+          image: "quay.io/opendatahub/odh-openshell-supervisor:v0.0.97-rhaiv.0"
+          pathInImage: "/openshell-sandbox"
+        checksum:
+          algo: sha256
+          value: "<supervisor-binary-sha256>"
+
+    nemoclaw:
+      cli:
+        source:
+          type: image_tree
+          image: "quay.io/rh-ai-quickstart/nemoclaw-cli:v0.0.97-rhaiv.0"
+          pathInImage: "/opt/nemoclaw"
+        checksum:
+          algo: sha256
+          value: "<nemoclaw-cli-tree-sha256>"
+      sandboxImage:
+        image: "quay.io/rh-ai-quickstart/nemoclaw-sandbox:v0.0.97-rhaiv.0"
+
+  system:
+    user: cloud-user
+    installPaths:
+      gatewayBin: /usr/local/bin/openshell-gateway
+      supervisorBin: /usr/local/bin/openshell-supervisor
+      nemoclawRoot: /opt/nemoclaw
+      nemoclawShim: /usr/local/bin/nemoclaw
+    packages:
+      required:
+        - docker-ce
+        - docker-ce-cli
+        - containerd.io
+        - jq
+        - lsof
+    services:
+      enable:
+        - docker
+      restartAfterInstall:
+        - openshell-gateway.service
+    gatewayEnv:
+      OPENSHELL_DRIVERS: docker
+      OPENSHELL_SERVER_PORT: "17670"
+      OPENSHELL_SSH_GATEWAY_PORT: "17670"
+      OPENSHELL_ENABLE_MTLS_AUTH: "true"
+
+  bootstrap:
+    gateway:
+      name: openshell
+      endpoint: "https://127.0.0.1:17670"
+      authMode: mtls
+      externallySupervised: true
+    workspaces:
+      mode: multi_workspace_bom
+      source:
+        type: file_refs
+        basePath: /etc/saw/workspaces
+      defaultMemberGrants:
+        - subject: openshell-client
+          role: admin
+      boms:
+        - id: default
+          workspaceFile: default/workspace.yaml
+          providersFile: default/providers.yaml
+          sandboxFile: default/sandbox.yaml
+      providerBehavior:
+        firstProviderSetsInference: true
+        prefixProviderNameForNonDefaultWorkspace: true
+        credentialSecretKeyDefault: api_key
+      sandboxBehavior:
+        defaultSandboxNameFromWorkspace: true
+        fallbackSandboxImageFromGlobal: true
+    providerConfig:
+      source:
+        type: file_ref
+        path: /etc/saw/provider.yaml
+    bootstrapSandboxConfig:
+      source:
+        type: file_ref
+        path: /etc/saw/bootstrap-sandbox.yaml
+
+  security:
+    verifyChecksums: true
+    denyLatestTags: true
+    failOnMissingSecrets: true
+
+  verify:
+    commands:
+      - "openshell --version"
+      - "openshell-gateway --version"
+      - "openshell-supervisor --version"
+      - "nemoclaw --version"
+      - "systemctl --user is-active openshell-gateway.service"
+      - "docker --version"
+    assert:
+      sandboxExists: nemoclaw-sandbox
+      providerProfileListRequired: []
+
+  report:
+    writeJson: /var/log/saw-bom-install-report.json
+    writeText: /var/log/saw-bom-install-report.txt
