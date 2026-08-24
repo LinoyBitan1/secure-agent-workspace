@@ -725,7 +725,14 @@ LOCAL_SSH_PORT=2222
 echo "Starting port-forward to ${INTEGRATIONS_VM}..."
 kubectl port-forward "svc/${INTEGRATIONS_VM}-gateway" -n "${NS}" "${LOCAL_SSH_PORT}:22" &
 PF_PID=$!
-sleep 2
+for _i in $(seq 1 10); do
+  if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=2 \
+       -o BatchMode=yes -i "${SSH_KEY_PATH}" -p "${LOCAL_SSH_PORT}" \
+       "${SSH_USER:-cloud-user}@127.0.0.1" "echo ready" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
 
 ssh_cmd() {
   ssh -i "${SSH_KEY_PATH}" \

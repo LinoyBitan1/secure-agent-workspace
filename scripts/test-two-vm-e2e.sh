@@ -40,9 +40,9 @@ PASS=0
 FAIL=0
 WARN=0
 
-pass() { echo -e "  ${GREEN}PASS${NC}  $1"; ((PASS++)); }
-fail() { echo -e "  ${RED}FAIL${NC}  $1"; ((FAIL++)); }
-warn() { echo -e "  ${YELLOW}WARN${NC}  $1"; ((WARN++)); }
+pass() { echo -e "  ${GREEN}PASS${NC}  $1"; PASS=$((PASS+1)); }
+fail() { echo -e "  ${RED}FAIL${NC}  $1"; FAIL=$((FAIL+1)); }
+warn() { echo -e "  ${YELLOW}WARN${NC}  $1"; WARN=$((WARN+1)); }
 step() { echo -e "\n${CYAN}=== $1 ===${NC}"; }
 
 agent_ssh() {
@@ -164,10 +164,11 @@ fi
 step "6. Agent VM: providers and sandbox"
 
 providers=$(agent_ssh "export PATH=\$HOME/.local/bin:\$PATH; openshell provider list 2>&1" || true)
-if echo "${providers}" | grep -q "inference-proxy"; then
-  pass "inference-proxy provider exists"
+if echo "${providers}" | grep -qE "inference-proxy|nvidia"; then
+  matched=$(echo "${providers}" | grep -oE "inference-proxy|nvidia" | head -1)
+  pass "inference provider exists (${matched})"
 else
-  fail "inference-proxy provider not found"
+  fail "no inference provider found (expected inference-proxy or nvidia)"
 fi
 
 sandbox_phase=$(agent_ssh "export PATH=\$HOME/.local/bin:\$PATH; openshell sandbox get notebook 2>&1 | grep Phase" || true)
@@ -178,10 +179,11 @@ else
 fi
 
 sandbox_providers=$(agent_ssh "export PATH=\$HOME/.local/bin:\$PATH; openshell sandbox provider list notebook 2>&1" || true)
-if echo "${sandbox_providers}" | grep -q "inference-proxy"; then
-  pass "inference-proxy attached to notebook"
+if echo "${sandbox_providers}" | grep -qE "inference-proxy|nvidia"; then
+  matched=$(echo "${sandbox_providers}" | grep -oE "inference-proxy|nvidia" | head -1)
+  pass "${matched} attached to notebook"
 else
-  warn "inference-proxy not attached to notebook — attach it with: openshell sandbox provider attach notebook inference-proxy"
+  warn "no inference provider attached to notebook — attach with: openshell sandbox provider attach notebook <provider>"
 fi
 
 # =============================================
@@ -191,9 +193,11 @@ step "7. Agent VM: OpenClaw baseUrl"
 
 base_url=$(agent_ssh "export PATH=\$HOME/.local/bin:\$PATH; openshell sandbox exec -n notebook --no-tty -- node -e \"
 const fs = require('fs');
-const c = JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json', 'utf8'));
-const p = Object.keys(c.models?.providers || {})[0];
-console.log(p ? c.models.providers[p].baseUrl : 'NOT_SET');
+const paths = ['/tmp/openclaw-home-notebook/.openclaw/openclaw.json', '/sandbox/.openclaw/openclaw.json'];
+let c; for (const p of paths) { try { c = JSON.parse(fs.readFileSync(p, 'utf8')); break; } catch {} }
+if (!c) { console.log('NOT_FOUND'); process.exit(0); }
+const pk = Object.keys(c.models?.providers || {})[0];
+console.log(pk ? c.models.providers[pk].baseUrl : 'NOT_SET');
 \" 2>/dev/null" || echo "ERROR")
 
 if echo "${base_url}" | grep -q "${INTEG_SERVICE}"; then
@@ -250,7 +254,7 @@ if [[ -n "${BEARER}" ]]; then
     content=$(echo "${sandbox_inference}" | python3 -c "import sys,json; print(json.load(sys.stdin)['choices'][0]['message']['content'])" 2>/dev/null || echo "?")
     pass "sandbox inference returned: ${content}"
   elif echo "${sandbox_inference}" | grep -q "policy_denied"; then
-    fail "policy_denied — inference-proxy provider may not be attached or enforcement is wrong"
+    fail "policy_denied — inference provider (nvidia or inference-proxy) may not be attached or enforcement is wrong"
   elif echo "${sandbox_inference}" | grep -q "Overloaded"; then
     warn "NVIDIA API overloaded — retry later"
   elif echo "${sandbox_inference}" | grep -q "401"; then

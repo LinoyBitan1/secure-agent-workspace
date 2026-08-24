@@ -220,11 +220,16 @@ copy-images: ## Mirror pre-built images from quay to the internal registry
 		if [ -z "$$REGISTRY" ]; then echo "Error: Image registry route not available after waiting."; exit 1; fi; \
 		for image in openshell-gateway openshell-gateway-docker nemoclaw-sandbox nemoclaw-cli; do \
 			echo "  Mirroring $${image}:$(OPENSHELL_VERSION)..."; \
-			if oc image mirror $(QUAY_REPO)/$${image}:$(OPENSHELL_VERSION) $${REGISTRY}/$(BUILD_NS)/$${image}:$(OPENSHELL_VERSION) --insecure=true 2>&1 | tail -1; then \
+			if oc image mirror $(QUAY_REPO)/$${image}:$(OPENSHELL_VERSION) $${REGISTRY}/$(BUILD_NS)/$${image}:$(OPENSHELL_VERSION) --insecure=true; then \
 				oc tag $(BUILD_NS)/$${image}:$(OPENSHELL_VERSION) $(BUILD_NS)/$${image}:latest 2>/dev/null || true; \
 				echo "  $${image} done."; \
 			else \
-				echo "  $${image} not found on quay — skipping."; \
+				echo "  WARN: $${image}:$(OPENSHELL_VERSION) mirror failed — trying :latest tag..."; \
+				if oc image mirror $(QUAY_REPO)/$${image}:latest $${REGISTRY}/$(BUILD_NS)/$${image}:latest --insecure=true; then \
+					echo "  $${image}:latest done."; \
+				else \
+					echo "  $${image} not found on quay — skipping."; \
+				fi; \
 			fi; \
 		done; \
 		echo "All images mirrored (tag: $(OPENSHELL_VERSION), also tagged as :latest)."; \
@@ -467,7 +472,7 @@ openclaw-tui: .check-saw-name ## Launch OpenClaw TUI (e.g. make openclaw-tui SAN
 		-o UserKnownHostsFile=/dev/null \
 		-o LogLevel=ERROR \
 		-tt sandbox@openshell-$$SANDBOX.$(WORKSPACE) \
-		'export HOME=/sandbox OPENCLAW_HOME=/sandbox SQLITE_TMPDIR=/sandbox/.openclaw/state TMPDIR=/sandbox/.openclaw/state OPENCLAW_NIX_MODE=0 TERM=xterm-256color; exec openclaw tui'
+		'OC_HOME=/tmp/openclaw-home-'"$$SANDBOX"'; if [ -f "$$OC_HOME/.openclaw/openclaw.json" ]; then H=$$OC_HOME; S=/tmp/openclaw-state-'"$$SANDBOX"'; else H=/sandbox; S=/sandbox/.openclaw/state; fi; export HOME=$$H OPENCLAW_HOME=$$H SQLITE_TMPDIR=$$S TMPDIR=$$S OPENCLAW_NIX_MODE=0 TERM=xterm-256color; exec openclaw tui'
 
 saw-tui: .check-saw-name ## Launch TUI (alias for nemoclaw-tui)
 	@$(MAKE) nemoclaw-tui OPENSHELL_SAW_NAME=$(OPENSHELL_SAW_NAME) SANDBOX_NAME=$(SANDBOX_NAME) WORKSPACE=$(WORKSPACE)
