@@ -54,6 +54,12 @@ spec:
             - name: cloudinitdisk
               disk:
                 bus: virtio
+            {{- if .Values.openshell.credentialDrivers.vault.enabled }}
+            - name: gateway-sa
+              serial: gwsa
+              disk:
+                bus: virtio
+            {{- end }}
           interfaces:
             - name: default
               masquerade: {}
@@ -88,3 +94,8 @@ spec:
           cloudInitNoCloud:
             secretRef:
               name: {{ include "openshell-sandbox.fullname" . }}-cloudinit
+        {{- if .Values.openshell.credentialDrivers.vault.enabled }}
+        - name: gateway-sa
+          serviceAccount:
+            serviceAccountName: {{ .Values.openshell.credentialDrivers.vault.serviceAccountName }}
+        {{- end }}

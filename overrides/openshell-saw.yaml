@@ -11,3 +11,8 @@ nemoclawCliImage: "quay.io/rh-ai-quickstart/nemoclaw-cli:latest"
 
 dashboard:
   insecureSkipIssuerTlsVerify: true
+
+openshell:
+  credentialDrivers:
+    vault:
+      enabled: true

@@ -90,6 +90,23 @@ openshell:
   version: "0.0.103+rhaiv.0"
   pipIndexUrl: "https://packages.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA1/cpu-ubi9-test/simple/"
 
+  # Provider credential storage. When disabled (default), the gateway uses
+  # its built-in encrypted database. Enable only on the Validated Pattern
+  # path (see overrides/openshell-saw.yaml). The gateway runs inside a
+  # KubeVirt VM — these fields are rendered into gateway.toml, they are
+  # not upstream OpenShell Helm server.credentialDrivers keys.
+  credentialDrivers:
+    vault:
+      enabled: false
+      address: "http://vault.vault.svc:8200"
+      mount: "openshell"
+      kvVersion: "2"
+      authMethod: "kubernetes"
+      role: "openshell-gateway"
+      kubernetesAuthMount: "kubernetes"
+      serviceAccountName: "openshell-gateway"
+      serviceAccountTokenPath: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
   # gatewayImage: "ghcr.io/nvidia/openshell/gateway:0.0.103"
   # supervisorImage: "ghcr.io/nvidia/openshell/supervisor:0.0.103"
   # version: "0.0.103"

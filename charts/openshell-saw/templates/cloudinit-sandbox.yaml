@@ -37,7 +37,8 @@ data:
           OPENSHELL_TLS_KEY=/home/cloud-user/.local/state/openshell/tls/server/tls.key
           OPENSHELL_TLS_CLIENT_CA=/home/cloud-user/.local/state/openshell/tls/ca.crt
           {{- $oidcIssuer := include "openshell-sandbox.oidcIssuerUrl" . }}
-          {{- if or .Values.oidc.token $oidcIssuer .Values.governance.enabled }}
+          {{- $vaultCreds := .Values.openshell.credentialDrivers.vault.enabled }}
+          {{- if or .Values.oidc.token $oidcIssuer .Values.governance.enabled $vaultCreds }}
           OPENSHELL_CONFIG_FILE=/etc/openshell/gateway.toml
           {{- end }}
           {{- if or .Values.oidc.token $oidcIssuer }}
@@ -45,7 +46,8 @@ data:
           {{- end }}
 
       {{- $oidcIssuer := include "openshell-sandbox.oidcIssuerUrl" . }}
-      {{- if or .Values.oidc.token $oidcIssuer .Values.governance.enabled }}
+      {{- $vault := .Values.openshell.credentialDrivers.vault }}
+      {{- if or .Values.oidc.token $oidcIssuer .Values.governance.enabled $vault.enabled }}
       - path: /etc/openshell/gateway.toml
         owner: root:root
         permissions: "0644"
@@ -59,12 +61,19 @@ data:
           allow_unauthenticated_users = false
           {{- end }}
 
-          {{- if .Values.governance.enabled }}
+          {{- if or .Values.governance.enabled $vault.enabled }}
           [openshell.gateway]
+          {{- if .Values.governance.enabled }}
           provider_profile_sources = [
             { type = "interceptor", name = "governance" },
           ]
+          {{- end }}
+          {{- if $vault.enabled }}
+          credential_drivers = ["vault"]
+          {{- end }}
+          {{- end }}
 
+          {{- if .Values.governance.enabled }}
           [[openshell.gateway.interceptors]]
           name           = "governance"
           grpc_endpoint  = {{ .Values.governance.endpoint | default (printf "http://governance-interceptor.%s.svc.cluster.local:%v" .Release.Namespace (.Values.governance.port | default 18081)) | quote }}
@@ -89,7 +98,26 @@ data:
           rpc = "openshell.v1.OpenShell/SubmitPolicyAnalysis"
           phases = ["validate"]
           {{- end }}
+
+          {{- if $vault.enabled }}
+          [openshell.credential_drivers.vault]
+          address = {{ $vault.address | quote }}
+          mount = {{ $vault.mount | quote }}
+          kv_version = {{ $vault.kvVersion | quote }}
+          auth_method = {{ $vault.authMethod | quote }}
+          role = {{ $vault.role | quote }}
+          kubernetes_auth_mount = {{ $vault.kubernetesAuthMount | quote }}
+          service_account_token_path = {{ $vault.serviceAccountTokenPath | quote }}
+          {{- end }}
       {{- end }}
+
+    {{- if .Values.openshell.credentialDrivers.vault.enabled }}
+    bootcmd:
+      - mkdir -p {{ .Values.openshell.credentialDrivers.vault.serviceAccountTokenPath | dir }}
+
+    mounts:
+      - [ /dev/disk/by-id/virtio-gwsa, {{ .Values.openshell.credentialDrivers.vault.serviceAccountTokenPath | dir }}, auto, "ro,nofail" ]
+    {{- end }}
 
     runcmd:
       - |

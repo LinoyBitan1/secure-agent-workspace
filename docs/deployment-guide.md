@@ -91,6 +91,18 @@ Three ExternalSecret CRs pull from Vault:
 | `openshell-ssh-pubkey` | `<prefix>/ssh` | SSH public key (for cloud-init) |
 | `inference` | `<prefix>/inference` | Provider type, model, API key |
 
+On the Validated Pattern path, OpenShell's Vault credential driver (enabled in
+`overrides/openshell-saw.yaml`) stores a **copy** of provider API keys under
+the dedicated KV mount `openshell/` after the first `openshell provider create
+--credential`. Runtime resolve uses that copy. The ESO secrets
+(`inference`, `web-search`) remain the first-boot seed from
+`secret/data/hub/...`. Rotating only `hub/inference` does not live-update
+OpenShell; either update the `openshell/` object or re-run provider
+create/update with `--credential`. `./pattern.sh make install` runs
+`make setup-vault-gateway-auth` after Vault is up and `load-secrets` has
+finished (not ArgoCD). Rerun with `make setup-vault-gateway-auth` if the
+mount or k8s role needs to be reapplied.
+
 ### Phase 4: Governance Policy
 
 The `governance-policy` chart creates two ConfigMaps from files in the chart:
@@ -108,7 +120,8 @@ The VM boots from a clone of the golden image. Cloud-init (rendered by the `clou
 
 - SSH authorized keys for `cloud-user`
 - `/etc/openshell/gateway.env` — bind address, port, TLS paths, driver config
-- `/etc/openshell/gateway.toml` — OIDC issuer/audience, governance interceptor endpoint and bindings
+- `/etc/openshell/gateway.toml` — OIDC issuer/audience, governance interceptor endpoint and bindings; may include `[openshell.credential_drivers.vault]` when the Vault driver is enabled
+- When Vault is enabled, the VM mounts a ServiceAccount token disk (`gwsa`) for Kubernetes auth
 - Starts `openshell-gateway-setup.service` which bootstraps the gateway user service
 
 #### Setup Job
@@ -151,6 +164,7 @@ A Kubernetes Job (`openshell-saw-setup`) runs after the VM boots. It:
 | Gateway (VM) | Keycloak (pod) | HTTPS | OIDC token validation |
 | Setup Job (pod) | VM | SSH (via virtctl) | Binary install, configuration |
 | Dashboard (VM) | Gateway (VM) | gRPC over TLS | Agent operations |
+| Gateway (VM) | `vault.vault.svc:8200` | HTTPS/HTTP | Kubernetes auth + KV credential storage |
 
 ### Authentication Flows
 
@@ -169,10 +183,12 @@ make check-prereqs          # Verify operators and CLI tools
 ### Initial Setup
 
 ```bash
-make generate-keys           # Create SSH keypair
-make ssh-secret              # Create Kubernetes secrets from keys
-make build-gateway-docker    # Build Docker golden VM image (or: make copy-images)
-make keycloak                # Deploy Keycloak (if not via ArgoCD)
+make generate-keys              # Create SSH keypair
+make ssh-secret                 # Create Kubernetes secrets from keys
+make build-gateway-docker       # Build Docker golden VM image (or: make copy-images)
+make keycloak                   # Deploy Keycloak (if not via ArgoCD)
+# Pattern path: included in `make install`. Rerun:
+make setup-vault-gateway-auth
 ```
 
 ### Sandbox Lifecycle

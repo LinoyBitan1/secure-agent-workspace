@@ -105,7 +105,7 @@ SSH_PUBKEY = $(shell cat "$(SSH_KEY_PATH).pub" 2>/dev/null)
 	echo "  Image registry route: enabled"
 	@echo "Prerequisites OK."
 
-.PHONY: check-prereqs generate-keys \
+.PHONY: check-prereqs generate-keys setup-vault-gateway-auth \
         build-nemoclaw build-nemoclaw-cli build-openclaw-openshell build-openclaw-openshell-local \
         build-gateway-docker build-gateway-podman copy-images \
         keycloak keycloak-issuer login whoami logout delete-keycloak \
@@ -116,6 +116,14 @@ SSH_PUBKEY = $(shell cat "$(SSH_KEY_PATH).pub" 2>/dev/null)
         .check-saw-name .check-ssh-key .check-prereqs
 
 check-prereqs: .check-prereqs ## Verify required operators and CLI tools
+
+# After pattern-install (Vault is up, load-secrets has run). Must be a recipe,
+# not a prerequisite — a sibling prereq can run before vault-0 exists.
+install: pattern-install
+	$(MAKE) setup-vault-gateway-auth
+
+setup-vault-gateway-auth: ## Configure Vault KV mount + k8s auth role for the OpenShell gateway
+	$(SCRIPTS_DIR)/setup-vault-gateway-auth.sh
 
 generate-keys: ## Generate SSH keypair for sandbox provisioning
 	@$(SCRIPTS_DIR)/generate-keys.sh

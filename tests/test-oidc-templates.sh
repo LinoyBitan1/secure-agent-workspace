@@ -268,6 +268,63 @@ run_test "accepts sandbox name exactly 19 characters" \
 
 # ============================================================
 echo ""
+echo "=== Sandbox Chart (Vault credential driver) ==="
+# ============================================================
+
+SB_NO_VAULT="$(helm template my-sandbox "${CHARTS_DIR}/openshell-saw" \
+  --set sandboxName=my-sandbox \
+  --set sshPublicKey="${SSH_KEY}" \
+  --set inference.provider=gemini \
+  --set inference.model=flash \
+  --set inference.apiKey=test-key 2>&1)"
+assert_not_contains "${SB_NO_VAULT}" 'credential_drivers = \["vault"\]' \
+  "vault driver omitted by default"
+assert_not_contains "${SB_NO_VAULT}" "name: openshell-gateway$" \
+  "gateway ServiceAccount omitted by default"
+assert_not_contains "${SB_NO_VAULT}" "serial: gwsa" \
+  "SA token disk omitted by default"
+
+SB_VAULT="$(helm template my-sandbox "${CHARTS_DIR}/openshell-saw" \
+  --set sandboxName=my-sandbox \
+  --set sshPublicKey="${SSH_KEY}" \
+  --set inference.provider=gemini \
+  --set inference.model=flash \
+  --set inference.apiKey=test-key \
+  --set openshell.credentialDrivers.vault.enabled=true \
+  --set openshell.credentialDrivers.vault.address=http://vault.vault.svc:8200 \
+  --set openshell.credentialDrivers.vault.role=openshell-gateway 2>&1)"
+assert_contains "${SB_VAULT}" 'credential_drivers = \["vault"\]' \
+  "vault driver listed in gateway.toml"
+assert_contains "${SB_VAULT}" 'address = "http://vault.vault.svc:8200"' \
+  "vault address rendered"
+assert_contains "${SB_VAULT}" 'mount = "openshell"' \
+  "dedicated KV mount rendered"
+assert_contains "${SB_VAULT}" 'auth_method = "kubernetes"' \
+  "kubernetes auth rendered"
+assert_contains "${SB_VAULT}" 'role = "openshell-gateway"' \
+  "vault role rendered"
+assert_contains "${SB_VAULT}" "OPENSHELL_CONFIG_FILE=/etc/openshell/gateway.toml" \
+  "config file env set when vault enabled"
+assert_contains "${SB_VAULT}" "kind: ServiceAccount" \
+  "gateway ServiceAccount rendered"
+assert_contains "${SB_VAULT}" "name: openshell-gateway$" \
+  "stable gateway SA name"
+assert_contains "${SB_VAULT}" "serial: gwsa" \
+  "SA token disk serial on VM"
+assert_contains "${SB_VAULT}" "serviceAccountName: openshell-gateway" \
+  "KubeVirt serviceAccount volume references gateway SA"
+assert_contains "${SB_VAULT}" "virtio-gwsa" \
+  "cloud-init mounts virtio-gwsa"
+
+SB_OVERLAY="$(helm template my-sandbox "${CHARTS_DIR}/openshell-saw" \
+  -f "${REPO_ROOT}/overrides/openshell-saw.yaml" \
+  --set sandboxName=my-sandbox \
+  --set sshPublicKey="${SSH_KEY}" 2>&1)"
+assert_contains "${SB_OVERLAY}" 'credential_drivers = \["vault"\]' \
+  "pattern overlay enables vault driver"
+
+# ============================================================
+echo ""
 echo "=== Summary ==="
 echo "${PASS} passed, ${FAIL} failed"
 if (( FAIL > 0 )); then
