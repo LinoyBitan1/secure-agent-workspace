@@ -51,7 +51,7 @@ wait_for_sync() {
   for i in $(seq 1 36); do
     sleep 5
     local profiles
-    profiles=$(openshell --gateway "${SAW_NAME}" --gateway-insecure provider list-profiles 2>&1 || true)
+    profiles=$(openshell --gateway "${SAW_NAME}" provider list-profiles 2>&1 || true)
     if [[ -n "${expected_action}" && -n "${profile_name}" ]]; then
       if [[ "${expected_action}" == "appear" ]] && echo "${profiles}" | grep -q "${profile_name}"; then
         echo "  Profile '${profile_name}' is now active. (${i} polls)"
@@ -68,8 +68,7 @@ wait_for_sync() {
 cmd_list() {
   echo "Active profiles (enforced on gateway):"
   echo ""
-  openshell --gateway "${SAW_NAME}" --gateway-insecure provider list-profiles 2>&1 \
-    | grep -v 'TLS certificate'
+  openshell --gateway "${SAW_NAME}" provider list-profiles
 }
 
 cmd_add() {

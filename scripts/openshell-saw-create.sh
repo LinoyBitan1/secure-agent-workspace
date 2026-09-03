@@ -101,6 +101,14 @@ if [[ "${NAMESPACE_MODE}" == "perUser" ]]; then
   oc create namespace "${DEPLOY_NS}" --dry-run=client -o yaml | oc apply -f - 2>/dev/null
 fi
 
+# --- Compute route hostname ---
+ROUTE_HOST=""
+APPS_DOMAIN=$(oc get ingress.config.openshift.io cluster \
+  -o jsonpath='{.spec.domain}' 2>/dev/null || true)
+if [[ -n "${APPS_DOMAIN}" ]]; then
+  ROUTE_HOST="${OPENSHELL_SAW_NAME}-gateway-${DEPLOY_NS}.${APPS_DOMAIN}"
+fi
+
 # --- Deploy ---
 echo "Provisioning sandbox '${OPENSHELL_SAW_NAME}' for owner '${OWNER}' in namespace '${DEPLOY_NS}'..."
 
@@ -122,7 +130,8 @@ helm upgrade --install "${OPENSHELL_SAW_NAME}" "${SAW_CHART}" \
   --set namespaceMode="${NAMESPACE_MODE}" \
   --set containerRuntime="${CONTAINER_RUNTIME}" \
   --set governance.enabled="${GOVERNANCE_ENABLED}" \
-  --set route.enabled=true --set route.dashboard=true
+  --set route.enabled=true --set route.dashboard=true \
+  ${ROUTE_HOST:+--set route.host="${ROUTE_HOST}"}
 
 echo ""
 echo "Sandbox '${OPENSHELL_SAW_NAME}' deployed."
@@ -143,4 +152,4 @@ echo ""
 echo "Next steps:"
 echo "  1. make openshell-saw-configure-gateway OPENSHELL_SAW_NAME=${OPENSHELL_SAW_NAME} NS=${DEPLOY_NS}"
 echo "  2. openshell gateway login"
-echo "  3. openshell --gateway-insecure sandbox list"
+echo "  3. openshell sandbox list"

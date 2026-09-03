@@ -41,8 +41,7 @@ step() {
 }
 
 gw() {
-  openshell --gateway "${SAW_NAME}" --gateway-insecure "$@" 2>&1 \
-    | grep -v 'TLS certificate'
+  openshell --gateway "${SAW_NAME}" "$@" 2>&1
 }
 
 run_on_vm() {

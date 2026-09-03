@@ -194,10 +194,10 @@ make copy-images
 make login                    # Opens browser → login with alice / alice
 export OPENSHELL_SAW_NAME=openshell-saw
 make openshell-saw-configure-gateway
-openshell gateway login $OPENSHELL_SAW_NAME --gateway-insecure   # Authenticate CLI with gateway
+openshell gateway login $OPENSHELL_SAW_NAME   # Authenticate CLI with gateway
 
 # 8. Verify
-openshell --gateway-insecure sandbox list
+openshell sandbox list
 ```
 
 #### Option B: Quickstart (manual, step-by-step)
@@ -265,8 +265,8 @@ openshell gateway add https://$(oc get route openshell-saw-gateway -n openshell-
 
 # 15. Verify sandboxes
 # sandbox list without --workspace only shows workspace "default"
-openshell --gateway-insecure sandbox list
-openshell --gateway-insecure sandbox list --workspace cuda-dev
+openshell sandbox list
+openshell sandbox list --workspace cuda-dev
 
 # 16. Launch TUI (pick one)
 OPENSHELL_SAW_NAME=openshell-saw \
@@ -288,8 +288,6 @@ SANDBOX_NAME=notebook \
 GUI_PORT=18790 \
 make openclaw-gui # OpenClaw
 ```
-
-> **Note:** The gateway VM uses a self-signed TLS certificate. Pass `--gateway-insecure` to `openshell` commands, or set `export OPENSHELL_GATEWAY_INSECURE=true`.
 
 > **Token expiry:** The OIDC access token lasts 10 hours. If it expires, run `make login` to re-authenticate, then `make openshell-saw-configure-gateway` to copy the fresh token. Alternatively, run `openshell gateway login` directly to re-authenticate with the gateway.
 
@@ -313,8 +311,8 @@ You can set `OPENSHELL_SAW_NAME` once via `export` and all `openshell-saw-*` tar
 
 ```bash
 # List sandboxes (default workspace, then cuda-dev)
-openshell --gateway-insecure sandbox list
-openshell --gateway-insecure sandbox list --workspace cuda-dev
+openshell sandbox list
+openshell sandbox list --workspace cuda-dev
 
 # NemoClaw sandbox (TUI and GUI) — workspace cuda-dev
 OPENSHELL_SAW_NAME=openshell-saw \

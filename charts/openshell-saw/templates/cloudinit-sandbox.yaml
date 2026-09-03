@@ -43,6 +43,10 @@ data:
           {{- if or .Values.oidc.token $oidcIssuer }}
           OPENSHELL_ENABLE_MTLS_AUTH=true
           {{- end }}
+          {{- $routeHost := include "openshell-sandbox.routeHost" . }}
+          {{- if $routeHost }}
+          OPENSHELL_ROUTE_FQDN={{ $routeHost }}
+          {{- end }}
 
       {{- $oidcIssuer := include "openshell-sandbox.oidcIssuerUrl" . }}
       {{- if or .Values.oidc.token $oidcIssuer .Values.governance.enabled }}
@@ -106,6 +110,18 @@ data:
           cp /etc/openshell/gateway.toml "${USER_HOME}/.config/openshell/gateway.toml"
         fi
         chown -R "${USER_NAME}:${USER_NAME}" "${USER_HOME}/.config/openshell"
+        ROUTE_FQDN=$(grep -oP 'OPENSHELL_ROUTE_FQDN=\K.*' "${USER_HOME}/.config/openshell/gateway.env" || true)
+        if [[ -n "${ROUTE_FQDN}" ]]; then
+          echo "Adding route FQDN to gateway cert SANs: ${ROUTE_FQDN}"
+          OVERRIDE_DIR="${USER_HOME}/.config/systemd/user/openshell-gateway.service.d"
+          install -d -m 0755 -o "${USER_NAME}" -g "${USER_NAME}" "${OVERRIDE_DIR}"
+          cat > "${OVERRIDE_DIR}/route-san.conf" <<SANEOF
+        [Service]
+        ExecStartPre=
+        ExecStartPre=/usr/local/bin/openshell-gateway generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal --server-san ${ROUTE_FQDN}
+        SANEOF
+          chown "${USER_NAME}:${USER_NAME}" "${OVERRIDE_DIR}/route-san.conf"
+        fi
         systemctl start openshell-gateway-setup.service
 
     final_message: "openshell-saw cloud-init finished"

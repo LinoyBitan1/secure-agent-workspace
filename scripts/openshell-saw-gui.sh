@@ -24,13 +24,12 @@ fi
 
 # Fetch dashboard token via openshell sandbox exec
 echo "Fetching dashboard token..."
-TOKEN=$(openshell --gateway-insecure sandbox exec -n "${SANDBOX_NAME}" --workspace "${WORKSPACE}" --no-tty -- \
+TOKEN=$(openshell sandbox exec -n "${SANDBOX_NAME}" --workspace "${WORKSPACE}" --no-tty -- \
   cat /sandbox/.openclaw/openclaw.json 2>/dev/null \
-  | grep -v 'TLS certificate verification is disabled' \
   | python3 -c "import sys,json; c=json.load(sys.stdin); print((c.get('gateway',{}).get('auth',{}).get('token','')))" 2>/dev/null | grep -oE '^[a-f0-9]+$' || true)
 
 if [[ -z "${TOKEN}" ]]; then
-  TOKEN=$(openshell --gateway-insecure sandbox exec -n "${SANDBOX_NAME}" --workspace "${WORKSPACE}" --no-tty -- \
+  TOKEN=$(openshell sandbox exec -n "${SANDBOX_NAME}" --workspace "${WORKSPACE}" --no-tty -- \
     cat /tmp/auth-token 2>/dev/null | grep -oE '[a-f0-9]{32,}' || true)
 fi
 
@@ -38,7 +37,7 @@ if [[ -z "${TOKEN}" ]]; then
   echo "Error: Could not extract dashboard token."
   echo "  Make sure the sandbox setup has completed and openclaw is configured."
   echo ""
-  echo "  Try: openshell --gateway-insecure sandbox list"
+  echo "  Try: openshell sandbox list"
   exit 1
 fi
 
@@ -48,7 +47,7 @@ echo "Press Ctrl-C to stop."
 echo ""
 
 # Port-forward via openshell ssh-proxy — uses local OIDC token
-ssh -o "ProxyCommand=openshell --gateway-insecure ssh-proxy --gateway-name ${GATEWAY_NAME} --name ${SANDBOX_NAME} --workspace ${WORKSPACE}" \
+ssh -o "ProxyCommand=openshell ssh-proxy --gateway-name ${GATEWAY_NAME} --name ${SANDBOX_NAME} --workspace ${WORKSPACE}" \
   -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/dev/null \
   -o LogLevel=ERROR \

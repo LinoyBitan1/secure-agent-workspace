@@ -66,6 +66,21 @@ OpenShell rejects names longer than 19 chars with "name exceeds maximum length".
 {{- end }}
 
 {{/*
+Resolve the external Route hostname for the gateway.
+Priority: explicit route.host > computed from global.clusterDomain.
+Used to add the route FQDN to the gateway TLS certificate SANs.
+*/}}
+{{- define "openshell-sandbox.routeHost" -}}
+{{- if .Values.route.host -}}
+  {{- .Values.route.host -}}
+{{- else if .Values.global -}}
+  {{- if .Values.global.clusterDomain -}}
+    {{- printf "%s-gateway-%s.apps.%s" (include "openshell-sandbox.fullname" .) .Release.Namespace .Values.global.clusterDomain -}}
+  {{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Resolve the golden image DataSource name.
 Priority: explicit source.dataSource > derived from containerRuntime.
 */}}

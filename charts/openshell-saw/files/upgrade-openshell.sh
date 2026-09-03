@@ -97,7 +97,7 @@ fi
 
 # --- Restart gateway with new binaries ---
 echo "Restarting gateway service..."
-guest_ssh "systemctl --user restart openshell-gateway.service" || true
+guest_ssh "systemctl --user daemon-reload && systemctl --user restart openshell-gateway.service" || true
 GW_READY=0
 for i in $(seq 1 10); do
   if guest_ssh "systemctl --user is-active openshell-gateway.service" 2>/dev/null; then
