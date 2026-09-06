@@ -3,6 +3,7 @@
 
 # Secret values (never commit)
 values-secret.yaml
+.env
 .vscode/
 .DS_Store
 jira/

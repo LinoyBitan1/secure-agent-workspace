@@ -1,0 +1,45 @@
+name: Build and push governance-interceptor image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - image-builder-charts/governance-interceptor/**
+      - image-builder-charts/helm/governance-interceptor-image/**
+  pull_request:
+    paths:
+      - image-builder-charts/governance-interceptor/**
+      - image-builder-charts/helm/governance-interceptor-image/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-governance-interceptor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read build parameters from values.yaml
+        id: params
+        run: |
+          VALUES="image-builder-charts/helm/governance-interceptor-image/values.yaml"
+          echo "openshell_ref=$(yq '.source.git.ref' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/build-push-image
+        with:
+          image_name: governance-interceptor
+          context: image-builder-charts/governance-interceptor
+          dockerfile: image-builder-charts/governance-interceptor/Dockerfile
+          cache_scope: governance-interceptor
+          build_args: |
+            OPENSHELL_REF=${{ steps.params.outputs.openshell_ref }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}

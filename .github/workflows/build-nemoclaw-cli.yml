@@ -1,0 +1,70 @@
+name: Build and push nemoclaw-cli image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - image-builder-charts/helm/nemoclaw-cli-imagestream/**
+      - image-builder-charts/nemoclaw-cli/**
+  pull_request:
+    paths:
+      - image-builder-charts/helm/nemoclaw-cli-imagestream/**
+      - image-builder-charts/nemoclaw-cli/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-nemoclaw-cli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read build parameters from values.yaml
+        id: params
+        run: |
+          VALUES="image-builder-charts/helm/nemoclaw-cli-imagestream/values.yaml"
+          echo "git_ref=$(yq '.source.git.ref' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "git_uri=$(yq '.source.git.uri' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "node_image=$(yq '.build.nodeImage' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "max_openshell_version=$(yq '.build.maxOpenshellVersion' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+
+      # git_uri/git_ref come from values.yaml, which a PR can modify — pass them
+      # through env and quote them so a crafted ref/uri can't inject commands.
+      - name: Clone NemoClaw at pinned ref
+        env:
+          GIT_URI: ${{ steps.params.outputs.git_uri }}
+          GIT_REF: ${{ steps.params.outputs.git_ref }}
+        run: |
+          UPSTREAM_DIR="${RUNNER_TEMP}/nemoclaw-src"
+          mkdir -p "${UPSTREAM_DIR}"
+          cd "${UPSTREAM_DIR}"
+          git init -q
+          git remote add origin "${GIT_URI}"
+          git fetch --depth 1 origin "${GIT_REF}"
+          git checkout -q FETCH_HEAD
+          echo "UPSTREAM_DIR=${UPSTREAM_DIR}" >> "${GITHUB_ENV}"
+
+      # Build the upstream checkout with this repo's Dockerfile (context lives in
+      # the clone; the Dockerfile stays here).
+      - uses: ./.github/actions/build-push-image
+        with:
+          image_name: nemoclaw-cli
+          context: ${{ env.UPSTREAM_DIR }}
+          dockerfile: image-builder-charts/nemoclaw-cli/Dockerfile
+          cache_scope: nemoclaw-cli
+          build_args: |
+            NODE_IMAGE=${{ steps.params.outputs.node_image }}
+            MAX_OPENSHELL_VERSION=${{ steps.params.outputs.max_openshell_version }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
