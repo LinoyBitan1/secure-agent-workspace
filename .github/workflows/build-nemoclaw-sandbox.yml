@@ -1,0 +1,106 @@
+name: Build and push nemoclaw-sandbox image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - image-builder-charts/helm/nemoclaw-imagestream/**
+      - image-builder-charts/nemoclaw-sandbox/**
+  pull_request:
+    paths:
+      - image-builder-charts/helm/nemoclaw-imagestream/**
+      - image-builder-charts/nemoclaw-sandbox/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-nemoclaw-sandbox-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read build parameters from values.yaml
+        id: params
+        run: |
+          VALUES="image-builder-charts/helm/nemoclaw-imagestream/values.yaml"
+          echo "git_ref=$(yq '.source.git.ref' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "git_uri=$(yq '.source.git.uri' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "target_arch=$(yq '.build.targetArch' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "base_image=$(yq '.build.baseImage' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "model=$(yq '.build.model' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "inference_base_url=$(yq '.build.inferenceBaseUrl' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "inference_api=$(yq '.build.inferenceApi' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "context_window=$(yq '.build.contextWindow' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "max_tokens=$(yq '.build.maxTokens' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "reasoning=$(yq '.build.reasoning' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "tool_disclosure=$(yq '.build.toolDisclosure' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "agent_timeout=$(yq '.build.agentTimeout' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          echo "web_search_enabled=$(yq '.build.webSearchEnabled' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+          # otelEnabled is referenced in the BuildConfig but not yet
+          # defined in values.yaml — default to empty until resolved
+          echo "otel_enabled=$(yq '.build.otelEnabled // ""' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
+
+      # git_uri/git_ref come from values.yaml, which a PR can modify — pass them
+      # through env and quote them so a crafted ref/uri can't inject commands.
+      - name: Clone NemoClaw at pinned ref
+        env:
+          GIT_URI: ${{ steps.params.outputs.git_uri }}
+          GIT_REF: ${{ steps.params.outputs.git_ref }}
+        run: |
+          UPSTREAM_DIR="${RUNNER_TEMP}/nemoclaw-src"
+          mkdir -p "${UPSTREAM_DIR}"
+          cd "${UPSTREAM_DIR}"
+          git init -q
+          git remote add origin "${GIT_URI}"
+          git fetch --depth 1 origin "${GIT_REF}"
+          git checkout -q FETCH_HEAD
+          echo "UPSTREAM_DIR=${UPSTREAM_DIR}" >> "${GITHUB_ENV}"
+
+      - name: Inject install-reviewed-runtime.sh into build context
+        run: |
+          mkdir -p "${UPSTREAM_DIR}/tools/mcp-tool-discovery-runtime"
+          cp image-builder-charts/nemoclaw-sandbox/install-reviewed-runtime.sh \
+            "${UPSTREAM_DIR}/tools/mcp-tool-discovery-runtime/"
+
+      # dockerfile omitted -> use the upstream checkout's own Dockerfile.
+      - uses: ./.github/actions/build-push-image
+        with:
+          image_name: nemoclaw-sandbox
+          context: ${{ env.UPSTREAM_DIR }}
+          cache_scope: nemoclaw-sandbox
+          build_args: |
+            TARGETARCH=${{ steps.params.outputs.target_arch }}
+            BASE_IMAGE=${{ steps.params.outputs.base_image }}
+            NEMOCLAW_MODEL=${{ steps.params.outputs.model }}
+            NEMOCLAW_INFERENCE_BASE_URL=${{ steps.params.outputs.inference_base_url }}
+            NEMOCLAW_INFERENCE_API=${{ steps.params.outputs.inference_api }}
+            NEMOCLAW_CONTEXT_WINDOW=${{ steps.params.outputs.context_window }}
+            NEMOCLAW_MAX_TOKENS=${{ steps.params.outputs.max_tokens }}
+            NEMOCLAW_REASONING=${{ steps.params.outputs.reasoning }}
+            NEMOCLAW_TOOL_DISCLOSURE=${{ steps.params.outputs.tool_disclosure }}
+            NEMOCLAW_AGENT_TIMEOUT=${{ steps.params.outputs.agent_timeout }}
+            NEMOCLAW_WEB_SEARCH_ENABLED=${{ steps.params.outputs.web_search_enabled }}
+            NEMOCLAW_OPENCLAW_OTEL=${{ steps.params.outputs.otel_enabled }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
