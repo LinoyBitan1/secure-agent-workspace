@@ -47,6 +47,13 @@ SSH_PUBKEY = $(shell cat "$(SSH_KEY_PATH).pub" 2>/dev/null)
 		exit 1; \
 	}
 
+.check-gateway-ca:
+	@test -f "$(HOME)/.config/openshell/gateways/$(OPENSHELL_SAW_NAME)/mtls/ca.crt" || { \
+		echo "Error: Gateway CA certificate not found for '$(OPENSHELL_SAW_NAME)'."; \
+		echo "Run 'make openshell-saw-configure-gateway OPENSHELL_SAW_NAME=$(OPENSHELL_SAW_NAME)' first."; \
+		exit 1; \
+	}
+
 .check-prereqs:
 	@echo "Checking prerequisites..."
 	@command -v oc >/dev/null 2>&1 || { echo "Error: 'oc' CLI not found."; exit 1; }
@@ -113,7 +120,7 @@ SSH_PUBKEY = $(shell cat "$(SSH_KEY_PATH).pub" 2>/dev/null)
         openshell-saw-configure-gateway openshell-saw-tui openshell-saw-gui test \
         openshell-saw-delete sandbox-pre-delete delete-all status \
         governance-list-profiles governance-add-profile governance-remove-profile governance-create-profile governance-demo \
-        .check-saw-name .check-ssh-key .check-prereqs
+        .check-saw-name .check-ssh-key .check-gateway-ca .check-prereqs
 
 check-prereqs: .check-prereqs ## Verify required operators and CLI tools
 
@@ -406,7 +413,7 @@ openshell-saw-list: ## List all sandboxes
 openshell-saw-logs: .check-saw-name ## Follow sandbox setup Job logs
 	oc -n $(NS) logs -f job/$(OPENSHELL_SAW_NAME)-setup
 
-openshell-saw-ssh: .check-saw-name ## SSH into a sandbox
+openshell-saw-ssh: .check-saw-name .check-gateway-ca ## SSH into a sandbox
 	@ssh -o "ProxyCommand=openshell ssh-proxy --gateway-name $(OPENSHELL_SAW_NAME) --name $(OPENSHELL_SAW_NAME) " \
 		-o StrictHostKeyChecking=no \
 		-o UserKnownHostsFile=/dev/null \
@@ -415,7 +422,7 @@ openshell-saw-ssh: .check-saw-name ## SSH into a sandbox
 
 # --- User access ---
 
-nemoclaw-tui: .check-saw-name ## Launch NemoClaw TUI (e.g. make nemoclaw-tui SANDBOX_NAME=cuda-sandbox WORKSPACE=cuda-dev)
+nemoclaw-tui: .check-saw-name .check-gateway-ca ## Launch NemoClaw TUI (e.g. make nemoclaw-tui SANDBOX_NAME=cuda-sandbox WORKSPACE=cuda-dev)
 	@if [ -n "$(SANDBOX_NAME)" ]; then \
 		SANDBOX="$(SANDBOX_NAME)"; \
 	else \
@@ -429,7 +436,7 @@ nemoclaw-tui: .check-saw-name ## Launch NemoClaw TUI (e.g. make nemoclaw-tui SAN
 		-o LogLevel=ERROR \
 		-tt sandbox@openshell-$$SANDBOX.$(WORKSPACE) openclaw
 
-openclaw-tui: .check-saw-name ## Launch OpenClaw TUI (e.g. make openclaw-tui SANDBOX_NAME=notebook)
+openclaw-tui: .check-saw-name .check-gateway-ca ## Launch OpenClaw TUI (e.g. make openclaw-tui SANDBOX_NAME=notebook)
 	@if [ -n "$(SANDBOX_NAME)" ]; then \
 		SANDBOX="$(SANDBOX_NAME)"; \
 	else \
@@ -443,7 +450,7 @@ openclaw-tui: .check-saw-name ## Launch OpenClaw TUI (e.g. make openclaw-tui SAN
 openshell-saw-tui: .check-saw-name ## Launch TUI (alias for nemoclaw-tui)
 	@$(MAKE) nemoclaw-tui OPENSHELL_SAW_NAME=$(OPENSHELL_SAW_NAME) SANDBOX_NAME=$(SANDBOX_NAME) WORKSPACE=$(WORKSPACE)
 
-nemoclaw-gui: .check-saw-name ## Open NemoClaw web UI (e.g. make nemoclaw-gui SANDBOX_NAME=cuda-sandbox WORKSPACE=cuda-dev)
+nemoclaw-gui: .check-saw-name .check-gateway-ca ## Open NemoClaw web UI (e.g. make nemoclaw-gui SANDBOX_NAME=cuda-sandbox WORKSPACE=cuda-dev)
 	@if [ -n "$(SANDBOX_NAME)" ]; then \
 		SANDBOX="$(SANDBOX_NAME)"; \
 	else \
@@ -453,7 +460,7 @@ nemoclaw-gui: .check-saw-name ## Open NemoClaw web UI (e.g. make nemoclaw-gui SA
 	SANDBOX_NAME=$$SANDBOX GATEWAY_NAME=$(OPENSHELL_SAW_NAME) \
 	WORKSPACE=$(WORKSPACE) GUI_PORT=$(GUI_PORT) $(SCRIPTS_DIR)/openshell-saw-gui.sh
 
-openclaw-gui: .check-saw-name ## Open OpenClaw web UI (e.g. make openclaw-gui SANDBOX_NAME=notebook GUI_PORT=28789)
+openclaw-gui: .check-saw-name .check-gateway-ca ## Open OpenClaw web UI (e.g. make openclaw-gui SANDBOX_NAME=notebook GUI_PORT=28789)
 	@if [ -n "$(SANDBOX_NAME)" ]; then \
 		SANDBOX="$(SANDBOX_NAME)"; \
 	else \
