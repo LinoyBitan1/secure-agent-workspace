@@ -49,13 +49,17 @@ WEOF
   chmod 755 "${WORK_DIR}/openshell-wrapper"
   guest_scp "${WORK_DIR}/openshell-wrapper" "/tmp/openshell-wrapper"
   guest_ssh "
+    set -eu
     OS_BIN=\$(command -v openshell 2>/dev/null || echo /home/${SSH_USER}/.local/bin/openshell)
     OS_DIR=\$(dirname \${OS_BIN})
-    if [[ -f \${OS_BIN} && ! -f \${OS_DIR}/openshell-real ]]; then
-      mv \${OS_BIN} \${OS_DIR}/openshell-real
+    OS_REAL=\${OS_DIR}/openshell-real
+    test -x \${OS_BIN}
+    if [[ ! -x \${OS_REAL} ]]; then
+      mv \${OS_BIN} \${OS_REAL}
     fi
-    mv /tmp/openshell-wrapper \${OS_BIN}
-    chmod 755 \${OS_BIN}
+    install -m 755 /tmp/openshell-wrapper \${OS_BIN}
+    test -x \${OS_REAL}
+    \${OS_BIN} --help >/dev/null
     echo 'openshell version wrapper installed'
   " || echo "WARN: openshell wrapper install failed (non-fatal)"
   guest_ssh "openshell-gateway --version; openshell-supervisor --version; openshell --version" || true
