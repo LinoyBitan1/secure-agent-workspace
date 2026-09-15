@@ -47,7 +47,7 @@ if [[ -n "${GATEWAY_IMAGE}" && -n "${SUPERVISOR_IMAGE}" && -n "${OPENSHELL_PIP_V
       CLI_TMP_DIR=\$(mktemp -d)
       trap 'rm -rf \${CLI_TMP_DIR}' EXIT
       curl -fsSL 'https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_PIP_VERSION}/${CLI_ASSET}' -o \${CLI_TMP_DIR}/${CLI_ASSET}
-      echo '${CLI_SHA256}  \${CLI_TMP_DIR}/${CLI_ASSET}' | sha256sum -c -
+      printf '%s  %s\n' '${CLI_SHA256}' "\${CLI_TMP_DIR}/${CLI_ASSET}" | sha256sum -c -
       tar xzf \${CLI_TMP_DIR}/${CLI_ASSET} -C \${CLI_TMP_DIR}
       install -d -m 755 /home/${SSH_USER}/.local/bin
       install -m 755 \${CLI_TMP_DIR}/openshell ${CLI_BIN}
