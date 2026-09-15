@@ -28,9 +28,32 @@ if [[ -n "${GATEWAY_IMAGE}" && -n "${SUPERVISOR_IMAGE}" && -n "${OPENSHELL_PIP_V
   [[ -n "${PIP_INDEX_URL}" ]] && PIP_EXTRA="--extra-index-url ${PIP_INDEX_URL}"
   guest_ssh "
     pip3 install openshell==${OPENSHELL_PIP_VERSION} ${PIP_EXTRA} \
-    && echo 'openshell CLI upgraded'
-  " || echo "WARN: openshell CLI upgrade failed (continuing with existing version)"
+    && echo 'openshell Python SDK upgraded'
+  " || echo "WARN: openshell Python SDK upgrade failed (continuing with existing version)"
   CLI_BIN="/home/${SSH_USER}/.local/bin/openshell"
+  case "${OPENSHELL_PIP_VERSION}" in
+    0.0.116)
+      CLI_ASSET="openshell-x86_64-unknown-linux-musl.tar.gz"
+      CLI_SHA256="4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e"
+      ;;
+    *)
+      echo "WARN: no pinned OpenShell CLI asset for ${OPENSHELL_PIP_VERSION}"
+      CLI_ASSET=""
+      ;;
+  esac
+  if [[ -n "${CLI_ASSET}" ]]; then
+    guest_ssh "
+      set -eu
+      CLI_TMP_DIR=\$(mktemp -d)
+      trap 'rm -rf \${CLI_TMP_DIR}' EXIT
+      curl -fsSL 'https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_PIP_VERSION}/${CLI_ASSET}' -o \${CLI_TMP_DIR}/${CLI_ASSET}
+      echo '${CLI_SHA256}  \${CLI_TMP_DIR}/${CLI_ASSET}' | sha256sum -c -
+      tar xzf \${CLI_TMP_DIR}/${CLI_ASSET} -C \${CLI_TMP_DIR}
+      install -d -m 755 /home/${SSH_USER}/.local/bin
+      install -m 755 \${CLI_TMP_DIR}/openshell ${CLI_BIN}
+      ${CLI_BIN} --version
+    " || echo "WARN: OpenShell CLI installation failed (continuing with existing version)"
+  fi
   guest_ssh "openshell-gateway --version; openshell-supervisor --version; ${CLI_BIN} --version" || true
 fi
 
