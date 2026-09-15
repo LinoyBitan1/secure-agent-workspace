@@ -1,12 +1,12 @@
 # Container runtime to bake into the golden image: docker or podman
 # docker: removes Podman, installs Docker CE, tags as openshell-gateway-docker
 # podman: keeps Fedora default Podman, enables podman.socket, tags as openshell-gateway
-containerRuntime: docker
+containerRuntime: podman
 
 openshell:
-  version: "0.0.103"
-  gatewayImage: "quay.io/opendatahub/odh-openshell-gateway:v0.0.103-rhaiv.0"
-  supervisorImage: "quay.io/opendatahub/odh-openshell-supervisor:v0.0.103-rhaiv.0"
+  version: "0.0.106"
+  gatewayImage: "quay.io/opendatahub/odh-openshell-gateway:v0.0.106-rhaiv.0"
+  supervisorImage: "quay.io/opendatahub/odh-openshell-supervisor:v0.0.106-rhaiv.0"
   pipIndexUrl: "https://packages.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA1/cpu-ubi9-test/simple/"
 
 build:

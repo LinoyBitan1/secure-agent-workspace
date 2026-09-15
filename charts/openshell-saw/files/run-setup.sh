@@ -36,11 +36,6 @@ OWNER="{{ .Values.accessControl.owner | default "alice" }}"
 NEMOCLAW_CLI_IMAGE="{{ .Values.nemoclawCliImage }}"
 ALLOW_ANONYMOUS_PULL="{{ .Values.internalRegistry.allowAnonymousPull }}"
 
-if [[ "${RUNTIME}" == "podman" && "${ONBOARD_CLI}" == "nemoclaw" ]]; then
-  echo "ERROR: NemoClaw onboarding requires Docker. Set containerRuntime=docker or use onboardCli=openclaw." >&2
-  exit 1
-fi
-
 SCRIPTS_DIR="/scripts"
 SECRETS_DIR="/secrets"
 WORK_DIR="/tmp/setup-work"

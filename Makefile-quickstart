@@ -1,11 +1,11 @@
 NS             ?= openshell-agents
 BUILD_NS       ?= openshell-agents
 QUAY_REPO      ?= quay.io/rh-ai-quickstart
-OPENSHELL_VERSION ?= 0.0.103
+OPENSHELL_VERSION ?= 0.0.106
 OPENSHELL_SAW_NAME ?=
 SANDBOX_IMAGE  ?=
 AGENT          ?= openclaw
-CONTAINER_RUNTIME ?= docker
+CONTAINER_RUNTIME ?= podman
 IMAGE_NAME      = $(if $(filter docker,$(CONTAINER_RUNTIME)),openshell-gateway-docker,openshell-gateway)
 GOVERNANCE_ENABLED ?= true
 PROVIDER       ?=
@@ -347,7 +347,7 @@ ssh-secret: ## Create SSH key secrets for sandbox Jobs
 
 # --- Sandbox ---
 
-openshell-saw-create: .check-saw-name .check-ssh-key ssh-secret ## Provision a sandbox (PROVIDER=, MODEL=, API_KEY=, CONTAINER_RUNTIME=docker|podman)
+openshell-saw-create: .check-saw-name .check-ssh-key ssh-secret ## Provision a sandbox (PROVIDER=, MODEL=, API_KEY=, CONTAINER_RUNTIME=podman|docker)
 	@NS=$(NS) OPENSHELL_SAW_NAME=$(OPENSHELL_SAW_NAME) SAW_CHART=$(SAW_CHART) \
 	SANDBOX_IMAGE=$(SANDBOX_IMAGE) SSH_PUBKEY="$(SSH_PUBKEY)" AGENT=$(AGENT) \
 	PROVIDER=$(PROVIDER) MODEL=$(MODEL) API_KEY=$(API_KEY) \

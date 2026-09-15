@@ -124,6 +124,19 @@ assert_not_contains "${SB_DEFAULT}" "OIDC_TOKEN=ey" "no OIDC token value in setu
 assert_contains "${SB_DEFAULT}" "NEMOCLAW_PROVIDER=gemini" "provider set in env"
 assert_contains "${SB_DEFAULT}" "NEMOCLAW_MODEL=flash" "model set in env"
 assert_contains "${SB_DEFAULT}" "NEMOCLAW_API_KEY=test-key" "API key set in env"
+assert_contains "${SB_DEFAULT}" "OPENSHELL_DRIVERS=podman" "Podman driver selected by default"
+assert_contains "${SB_DEFAULT}" "openshell-gateway$" "Podman golden image selected by default"
+assert_not_contains "${SB_DEFAULT}" "NemoClaw onboarding requires Docker" "NemoClaw Podman preflight removed"
+
+SB_DOCKER="$(helm template my-sandbox "${CHARTS_DIR}/openshell-saw" \
+  --set sandboxName=my-sandbox \
+  --set sshPublicKey="${SSH_KEY}" \
+  --set inference.provider=gemini \
+  --set inference.model=flash \
+  --set inference.apiKey=test-key \
+  --set containerRuntime=docker 2>&1)"
+assert_contains "${SB_DOCKER}" "OPENSHELL_DRIVERS=docker" "explicit Docker driver preserved"
+assert_contains "${SB_DOCKER}" "openshell-gateway-docker" "explicit Docker golden image preserved"
 
 # ============================================================
 echo ""

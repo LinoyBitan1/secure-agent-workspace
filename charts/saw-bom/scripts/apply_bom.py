@@ -116,6 +116,14 @@ class Shell:
         return result.returncode, stdout, stderr
 
 
+def container_cli():
+    """Return the VM-local container CLI, preserving explicit Docker support."""
+    runtime = os.environ.get("OPENSHELL_DRIVERS", "podman").strip().lower()
+    if runtime == "docker":
+        return "sudo docker"
+    return "podman"
+
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -362,6 +370,7 @@ class WorkspaceDeployer:
     def __init__(self, shell, gateway_setup):
         self.sh = shell
         self.gw = gateway_setup
+        self.container_cli = container_cli()
 
     def create_workspace(self, ws):
         if ws.name == "default":
@@ -416,7 +425,7 @@ class WorkspaceDeployer:
                 return
         is_full_ref = sandbox.image and ("/" in sandbox.image or ":" in sandbox.image)
         if is_full_ref:
-            self.sh.run(["sudo", "docker", "pull", sandbox.image], check=False)
+            self.sh.run(self.container_cli.split() + ["pull", sandbox.image], check=False)
         args = ["openshell", "sandbox", "create", "--name", sandbox.name]
         if sandbox.image:
             args += ["--from", sandbox.image]
@@ -434,14 +443,14 @@ class WorkspaceDeployer:
                 time.sleep(10)
             self.sh.run([
                 "bash", "-c",
-                "CNAME=$(sudo docker ps -a "
+                f"CNAME=$({self.container_cli} ps -a "
                 f"--filter 'name=openshell.*{sandbox.name}' "
                 "--format '{{.Names}}' | head -1) && "
                 "echo \"Container: $CNAME\" && "
-                "echo \"Status: $(sudo docker inspect $CNAME "
+                f"echo \"Status: $({self.container_cli} inspect $CNAME "
                 "--format '{{.State.Status}} ExitCode={{.State.ExitCode}}')"
                 "\" && echo '--- logs ---' && "
-                "sudo docker logs $CNAME 2>&1 | tail -30"
+                f"{self.container_cli} logs $CNAME 2>&1 | tail -30"
             ], check=False)
 
     def chown_sandbox_home(self, sandbox_name):
@@ -456,11 +465,11 @@ class WorkspaceDeployer:
         log(f"Chowning /sandbox to sandbox user in '{sandbox_name}'")
         self.sh.run([
             "bash", "-c",
-            "CNAME=$(sudo docker ps -a "
+            f"CNAME=$({self.container_cli} ps -a "
             f"--filter 'name=openshell.*{sandbox_name}' "
             "--format '{{.Names}}' | head -1) && "
             "[ -n \"$CNAME\" ] && "
-            "sudo docker exec -u 0 \"$CNAME\" "
+            f"{self.container_cli} exec -u 0 \"$CNAME\" "
             "chown -R sandbox:sandbox /sandbox",
         ], check=False)
 
@@ -474,9 +483,9 @@ class WorkspaceDeployer:
         section("Installing nemoclaw CLI")
         self.sh.run([
             "bash", "-c",
-            f"CID=$(docker create '{cli_image}' 2>/dev/null) && "
-            f"docker cp $CID:/opt/nemoclaw /tmp/nemoclaw-cli && "
-            f"docker rm $CID >/dev/null && "
+            f"CID=$({self.container_cli} create '{cli_image}' 2>/dev/null) && "
+            f"{self.container_cli} cp $CID:/opt/nemoclaw /tmp/nemoclaw-cli && "
+            f"{self.container_cli} rm $CID >/dev/null && "
             f"sudo mv /tmp/nemoclaw-cli /opt/nemoclaw && "
             f"printf '#!/usr/bin/env bash\\nexec node "
             f"/opt/nemoclaw/bin/nemoclaw.js \"$@\"\\n' "
@@ -798,7 +807,7 @@ def main():
                 section(f"Sandbox '{sb.name}' (type={sb.type})")
 
                 if sb.type == "nemoclaw":
-                    # Nemoclaw flow (matches feat/fix-docker-golden-image):
+                    # NemoClaw flow uses the configured container runtime.
                     # 1. Install nemoclaw CLI
                     # 2. nemoclaw onboard (configures provider)
                     # 3. Fallback: openshell provider create
@@ -815,7 +824,7 @@ def main():
                                                 or ":" in sb.image)
                     if is_full_ref:
                         deployer.sh.run(
-                            ["sudo", "docker", "pull", sb.image],
+                            deployer.container_cli.split() + ["pull", sb.image],
                             check=False)
 
                     prov = find_provider(ws, sb.providers)

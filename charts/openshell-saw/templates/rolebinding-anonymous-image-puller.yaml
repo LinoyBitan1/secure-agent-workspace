@@ -1,5 +1,5 @@
 {{- if .Values.internalRegistry.allowAnonymousPull }}
-# Lets the sandbox VM's Docker daemon (an external client to the cluster —
+# Lets the sandbox VM's container runtime (an external client to the cluster —
 # it has no ServiceAccount pull secret) pull internally-built images (e.g.
 # a self-built openclaw-openshell, see values.yaml's internalRegistry
 # comment) from this namespace's registry without credentials. Standard

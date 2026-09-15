@@ -66,7 +66,7 @@ guest_ssh "sudo dnf install -y lsof 2>&1 | tail -3" || echo "WARN: lsof install 
 
 # --- Trust cluster's service-serving CA (for the internal image registry) ---
 # Only needed when internalRegistry.allowAnonymousPull is enabled (see
-# values.yaml) — the sandbox VM's Docker daemon needs this to pull
+# values.yaml) — the sandbox VM's configured container runtime needs this to pull
 # internally-built images over TLS. Every namespace gets an
 # "openshift-service-ca.crt" ConfigMap containing the CA that signs
 # internal service serving certs. Requires a Docker restart to pick up
@@ -77,7 +77,7 @@ if [[ "${ALLOW_ANONYMOUS_PULL:-false}" == "true" ]]; then
   if [[ -n "${SERVICE_CA}" ]]; then
     echo "${SERVICE_CA}" > "${WORK_DIR}/service-ca.crt"
     guest_scp "${WORK_DIR}/service-ca.crt" "/tmp/openshift-service-ca.crt"
-    guest_ssh "sudo cp /tmp/openshift-service-ca.crt /etc/pki/ca-trust/source/anchors/openshift-service-ca.crt && sudo update-ca-trust extract && sudo systemctl restart docker" \
+    guest_ssh "sudo cp /tmp/openshift-service-ca.crt /etc/pki/ca-trust/source/anchors/openshift-service-ca.crt && sudo update-ca-trust extract && if [[ '${RUNTIME}' == 'docker' ]]; then sudo systemctl restart docker; else systemctl --user restart podman.socket; fi" \
       || echo "WARN: failed to install service-serving CA into VM trust store (non-fatal)"
   else
     echo "WARN: could not fetch cluster service-serving CA (non-fatal, continuing)"

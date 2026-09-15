@@ -19,11 +19,22 @@ from apply_bom import (  # noqa: E402
     Sandbox,
     Workspace,
     check_provider_type_mismatch,
+    container_cli,
     find_provider,
     parse_profiles,
     resolve_configured_type,
     resolve_credential,
 )
+
+
+def test_container_cli_defaults_to_rootless_podman(monkeypatch):
+    monkeypatch.delenv("OPENSHELL_DRIVERS", raising=False)
+    assert container_cli() == "podman"
+
+
+def test_container_cli_preserves_explicit_docker(monkeypatch):
+    monkeypatch.setenv("OPENSHELL_DRIVERS", "docker")
+    assert container_cli() == "sudo docker"
 
 
 def _write_profile(root, profile="data-science", workspace="default",
