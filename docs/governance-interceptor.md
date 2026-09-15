@@ -161,6 +161,7 @@ provider_profile_sources = [
 [[openshell.gateway.interceptors]]
 name           = "governance"
 grpc_endpoint  = "http://governance-interceptor.<namespace>.svc.cluster.local:18081"
+allow_insecure_transport = true
 failure_policy = "fail_closed"
 binding_policy = "allowlist"
 
