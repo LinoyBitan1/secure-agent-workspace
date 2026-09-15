@@ -180,7 +180,9 @@ dashboard:
 # Governance interceptor — enforces signed sandbox policies.
 # Deployed as a Kubernetes pod, accessed from VM over the pod network.
 governance:
-  enabled: true
+  # Disabled for the Podman/NemoClaw validation; the current interceptor
+  # endpoint is plaintext and OpenShell requires TLS for authenticated HTTP.
+  enabled: false
   # gRPC endpoint reachable from the gateway VM. Leave empty to derive
   # from the release namespace (http://governance-interceptor.<namespace>.svc.cluster.local:18081).
   endpoint: ""
