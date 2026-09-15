@@ -30,39 +30,8 @@ if [[ -n "${GATEWAY_IMAGE}" && -n "${SUPERVISOR_IMAGE}" && -n "${OPENSHELL_PIP_V
     pip3 install openshell==${OPENSHELL_PIP_VERSION} ${PIP_EXTRA} \
     && echo 'openshell CLI upgraded'
   " || echo "WARN: openshell CLI upgrade failed (continuing with existing version)"
-  # Patch the pip-installed openshell binary's version output so nemoclaw's
-  # feature gate sees matching versions across all three components. The pip
-  # binary uses '+' (PEP 440 local) while the native Go binaries use '-'
-  # (semver pre-release); the mismatch causes componentBuildVersionsMatch()
-  # to return false. We wrap the original binary with a script that fixes
-  # --version output and delegates everything else.
-  NATIVE_VERSION="$(guest_ssh "openshell-gateway --version 2>/dev/null" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\S*' | head -1 || echo "${OPENSHELL_PIP_VERSION}" | sed 's/+/-/')"
-  cat > "${WORK_DIR}/openshell-wrapper" <<WEOF
-#!/usr/bin/env bash
-if [[ "\$1" == "--version" ]]; then
-  echo "openshell ${NATIVE_VERSION}"
-  exit 0
-fi
-SELF_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
-exec "\${SELF_DIR}/openshell-real" "\$@"
-WEOF
-  chmod 755 "${WORK_DIR}/openshell-wrapper"
-  guest_scp "${WORK_DIR}/openshell-wrapper" "/tmp/openshell-wrapper"
-  guest_ssh "
-    set -eu
-    OS_BIN=\$(command -v openshell 2>/dev/null || echo /home/${SSH_USER}/.local/bin/openshell)
-    OS_DIR=\$(dirname \${OS_BIN})
-    OS_REAL=\${OS_DIR}/openshell-real
-    test -x \${OS_BIN}
-    if [[ ! -x \${OS_REAL} ]]; then
-      mv \${OS_BIN} \${OS_REAL}
-    fi
-    install -m 755 /tmp/openshell-wrapper \${OS_BIN}
-    test -x \${OS_REAL}
-    \${OS_BIN} --help >/dev/null
-    echo 'openshell version wrapper installed'
-  " || echo "WARN: openshell wrapper install failed (non-fatal)"
-  guest_ssh "openshell-gateway --version; openshell-supervisor --version; openshell --version" || true
+  CLI_BIN="/home/${SSH_USER}/.local/bin/openshell"
+  guest_ssh "openshell-gateway --version; openshell-supervisor --version; ${CLI_BIN} --version" || true
 fi
 
 # --- Install lsof (needed by nemoclaw for gateway listener identification) ---
