@@ -2,7 +2,7 @@ source:
   git:
     uri: "https://github.com/NVIDIA/NemoClaw.git"
     # Keep CLI and sandbox images on the same published NemoClaw release.
-    ref: "f75f722bb4a1ec9642c8df36c8924e24500d78f0"
+    ref: "db2e3eefc2372cc1f4641eaee4621f4955f11004"
 
 build:
   nodeImage: "node:22-trixie-slim"
