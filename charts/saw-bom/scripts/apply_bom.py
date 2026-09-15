@@ -513,6 +513,8 @@ class WorkspaceDeployer:
 
         nc_prov = provider.nemoclaw_provider or provider.type
         env = {
+            "NEMOCLAW_GATEWAY_RUNTIME": os.environ.get(
+                "NEMOCLAW_GATEWAY_RUNTIME", "podman"),
             "NEMOCLAW_GATEWAY_MANAGEMENT": mgmt_path,
             "NEMOCLAW_GATEWAY_PORT": "17670",
             "NEMOCLAW_IGNORE_RUNTIME_RESOURCES": "1",

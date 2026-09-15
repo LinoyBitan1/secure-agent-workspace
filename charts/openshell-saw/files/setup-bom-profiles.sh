@@ -126,6 +126,9 @@ fi
 echo "OIDC_ISSUER=${OIDC_ISSUER_URL}" >> "${BOM_ENV}"
 echo "OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-openshell-cli}" >> "${BOM_ENV}"
 echo "OPENSHELL_GATEWAY=${OPENSHELL_GATEWAY:-openshell}" >> "${BOM_ENV}"
+# NemoClaw uses a separate provider selector. Keep it aligned with the
+# OpenShell driver so onboarding does not fall back to Docker preflight.
+echo "NEMOCLAW_GATEWAY_RUNTIME=${RUNTIME}" >> "${BOM_ENV}"
 
 # Nemoclaw CLI image
 if [[ -n "${NEMOCLAW_CLI_IMAGE}" ]]; then

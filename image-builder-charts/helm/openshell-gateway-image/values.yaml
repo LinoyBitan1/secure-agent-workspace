@@ -4,9 +4,9 @@
 containerRuntime: podman
 
 openshell:
-  version: "0.0.106"
-  gatewayImage: "quay.io/opendatahub/odh-openshell-gateway:v0.0.106-rhaiv.0"
-  supervisorImage: "quay.io/opendatahub/odh-openshell-supervisor:v0.0.106-rhaiv.0"
+  version: "0.0.116"
+  gatewayImage: "quay.io/opendatahub/odh-openshell-gateway:v0.0.116-rhaiv.0"
+  supervisorImage: "quay.io/opendatahub/odh-openshell-supervisor:v0.0.116-rhaiv.0"
   pipIndexUrl: "https://packages.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA1/cpu-ubi9-test/simple/"
 
 build:

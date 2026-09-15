@@ -1,8 +1,8 @@
 source:
   git:
     uri: "https://github.com/NVIDIA/NemoClaw.git"
-    # Pinned peeled commit for the latest published NemoClaw release (v0.0.125).
-    ref: "8cddceec26c7b99bf2b499ffe2cb7329471bccfb"
+    # OpenShell 0.0.116-compatible revision with native rootless Podman onboarding.
+    ref: "f47724f29838fe08898993fad1c8c6b7fcb3e080"
 
 build:
   targetArch: "amd64"
