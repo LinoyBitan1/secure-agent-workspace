@@ -6,9 +6,7 @@ source:
 
 build:
   targetArch: "amd64"
-  # Pin the base built from the same NemoClaw release as the source commit.
-  # Using :latest can drift and fail the release's security inventory checks.
-  baseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:8562697ff795aef2ca809e6a9310e8712ee453f2565657ed6b13bc080fbb6973"
+  baseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest"
   model: "claude-sonnet-4-6"
   inferenceBaseUrl: "https://inference.local/v1"
   inferenceApi: "openai-completions"
