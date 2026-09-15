@@ -33,6 +33,7 @@ spec:
       COPY --from=builder /opt/nemoclaw/agents/ ./agents/
       COPY --from=builder /opt/nemoclaw/scripts/ ./scripts/
       COPY --from=builder /opt/nemoclaw/nemoclaw-blueprint/ ./nemoclaw-blueprint/
+      COPY --from=builder /opt/nemoclaw/managed-inference/ ./managed-inference/
       COPY --from=builder /opt/nemoclaw/schemas/ ./schemas/
       COPY --from=builder /opt/nemoclaw/Dockerfile ./Dockerfile
       COPY --from=builder /opt/nemoclaw/tsconfig.runtime-preloads.json ./tsconfig.runtime-preloads.json
