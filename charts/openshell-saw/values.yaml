@@ -44,6 +44,11 @@ vm:
 # Sandbox container image. When empty, auto-detects from the internal registry.
 sandboxImage: ""
 
+# BOM profile ConfigMap consumed by the setup Job. The default is provided by
+# the validated-pattern saw-bom release.
+bom:
+  configMapName: saw-bom-profiles
+
 # If you don't have push access to the quay.io registry referenced by a BOM
 # profile's sandbox image (e.g. the default openclaw profile points at
 # quay.io/rh-ai-quickstart/openclaw-openshell:latest), build it yourself

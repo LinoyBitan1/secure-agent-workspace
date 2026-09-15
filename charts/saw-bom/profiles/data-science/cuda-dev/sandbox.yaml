@@ -7,7 +7,7 @@ spec:
       type: nemoclaw
       enabled: true
       agent: openclaw
-      image: quay.io/rh-ai-quickstart/nemoclaw-sandbox:latest
+      image: {{ .Values.nemoclawSandboxImage | default "quay.io/rh-ai-quickstart/nemoclaw-sandbox:latest" | quote }}
       providers:
         - nvidia
     - name: toolbox

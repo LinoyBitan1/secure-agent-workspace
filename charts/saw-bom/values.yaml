@@ -1,3 +1,11 @@
 # Active profiles to deploy on this SAW instance.
 profiles:
   - data-science
+
+# Name of the ConfigMap consumed by the SAW setup Job. Leave at the default for
+# the validated-pattern deployment; a temporary validation release can use an
+# isolated name.
+configMapName: saw-bom-profiles
+
+# Optional replacement for the NemoClaw sandbox image in a test profile.
+nemoclawSandboxImage: ""

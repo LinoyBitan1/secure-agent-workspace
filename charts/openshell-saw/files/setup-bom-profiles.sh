@@ -4,7 +4,7 @@
 #          KEYCLOAK_NAME, KEYCLOAK_NS, NEMOCLAW_CLI_IMAGE, VM_NAME,
 #          guest_ssh, guest_scp (functions)
 
-BOM_CM="saw-bom-profiles"
+BOM_CM="${BOM_CONFIG_MAP:-saw-bom-profiles}"
 BOM_MOUNT="/tmp/bom-profiles"
 if ! kubectl get configmap "${BOM_CM}" -n "${NS}" >/dev/null 2>&1; then
   echo "WARNING: No BOM profiles ConfigMap (${BOM_CM}) found — no workspaces or sandboxes will be provisioned."

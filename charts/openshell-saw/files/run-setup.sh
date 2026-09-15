@@ -35,6 +35,7 @@ KEYCLOAK_NAME="{{ .Values.dashboard.keycloakName | default "openshell-keycloak" 
 OWNER="{{ .Values.accessControl.owner | default "alice" }}"
 NEMOCLAW_CLI_IMAGE="{{ .Values.nemoclawCliImage }}"
 ALLOW_ANONYMOUS_PULL="{{ .Values.internalRegistry.allowAnonymousPull }}"
+BOM_CONFIG_MAP="{{ .Values.bom.configMapName }}"
 
 SCRIPTS_DIR="/scripts"
 SECRETS_DIR="/secrets"
