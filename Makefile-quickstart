@@ -1,7 +1,7 @@
 NS             ?= openshell-agents
 BUILD_NS       ?= openshell-agents
 QUAY_REPO      ?= quay.io/rh-ai-quickstart
-OPENSHELL_VERSION ?= 0.0.116
+OPENSHELL_VERSION ?= 0.0.106
 OPENSHELL_SAW_NAME ?=
 SANDBOX_IMAGE  ?=
 AGENT          ?= openclaw

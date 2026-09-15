@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Phase: upgrade OpenShell binaries on the VM, patch OIDC, restart gateway.
-# Expects: GATEWAY_IMAGE, SUPERVISOR_IMAGE, OPENSHELL_PIP_VERSION, PIP_INDEX_URL,
+# Expects: GATEWAY_IMAGE, SUPERVISOR_IMAGE, OPENSHELL_PIP_VERSION,
+#          OPENSHELL_CLI_VERSION, PIP_INDEX_URL,
 #          RUNTIME, SECRETS_DIR, WORK_DIR, NS, ALLOW_ANONYMOUS_PULL,
 #          guest_ssh/guest_scp (functions)
 
@@ -31,13 +32,17 @@ if [[ -n "${GATEWAY_IMAGE}" && -n "${SUPERVISOR_IMAGE}" && -n "${OPENSHELL_PIP_V
     && echo 'openshell Python SDK upgraded'
   " || echo "WARN: openshell Python SDK upgrade failed (continuing with existing version)"
   CLI_BIN="/home/${SSH_USER}/.local/bin/openshell"
-  case "${OPENSHELL_PIP_VERSION}" in
+  case "${OPENSHELL_CLI_VERSION}" in
+    0.0.106)
+      CLI_ASSET="openshell-x86_64-unknown-linux-musl.tar.gz"
+      CLI_SHA256="d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0"
+      ;;
     0.0.116)
       CLI_ASSET="openshell-x86_64-unknown-linux-musl.tar.gz"
       CLI_SHA256="4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e"
       ;;
     *)
-      echo "WARN: no pinned OpenShell CLI asset for ${OPENSHELL_PIP_VERSION}"
+      echo "WARN: no pinned OpenShell CLI asset for ${OPENSHELL_CLI_VERSION}"
       CLI_ASSET=""
       ;;
   esac
@@ -46,7 +51,7 @@ if [[ -n "${GATEWAY_IMAGE}" && -n "${SUPERVISOR_IMAGE}" && -n "${OPENSHELL_PIP_V
       set -eu
       CLI_TMP_DIR=\$(mktemp -d)
       trap 'rm -rf \${CLI_TMP_DIR}' EXIT
-      curl -fsSL 'https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_PIP_VERSION}/${CLI_ASSET}' -o \${CLI_TMP_DIR}/${CLI_ASSET}
+      curl -fsSL 'https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_CLI_VERSION}/${CLI_ASSET}' -o \${CLI_TMP_DIR}/${CLI_ASSET}
       printf '%s  %s\n' '${CLI_SHA256}' "\${CLI_TMP_DIR}/${CLI_ASSET}" | sha256sum -c -
       tar xzf \${CLI_TMP_DIR}/${CLI_ASSET} -C \${CLI_TMP_DIR}
       install -d -m 755 /home/${SSH_USER}/.local/bin

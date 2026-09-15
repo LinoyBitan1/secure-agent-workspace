@@ -1,8 +1,8 @@
 source:
   git:
     uri: "https://github.com/NVIDIA/NemoClaw.git"
-    # OpenShell 0.0.116-compatible revision with native rootless Podman onboarding.
-    ref: "f47724f29838fe08898993fad1c8c6b7fcb3e080"
+    # OpenShell 0.0.106-compatible revision that activates rootless Podman onboarding.
+    ref: "5c8f991d2d7273ad512946dc701b230b3b338d5a"
 
 build:
   nodeImage: "node:22-trixie-slim"
