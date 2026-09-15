@@ -143,6 +143,7 @@ DASHBOARD_ROUTE_HOST="$(kubectl get route "${VM_NAME}-dashboard" -n "${NS}" -o j
 # Run apply_bom.py on the VM
 echo "Running BOM setup on vm/${VM_NAME}..."
 guest_ssh "
+  export PATH=/home/${SSH_USER}/.local/bin:\$PATH
   set -a; source /home/${SSH_USER}/bom.env 2>/dev/null; set +a
   python3 /home/${SSH_USER}/apply_bom.py \
     --profiles-dir ${BOM_DIR} \
