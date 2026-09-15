@@ -63,6 +63,11 @@ data:
           allow_unauthenticated_users = false
           {{- end }}
 
+          {{- if and (eq .Values.containerRuntime "podman") .Values.openshell.supervisorImage }}
+          [openshell.drivers.podman]
+          supervisor_image = {{ .Values.openshell.supervisorImage | quote }}
+          {{- end }}
+
           {{- if .Values.governance.enabled }}
           [openshell.gateway]
           provider_profile_sources = [
