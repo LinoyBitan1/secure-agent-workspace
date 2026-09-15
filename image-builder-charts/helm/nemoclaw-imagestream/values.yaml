@@ -2,7 +2,7 @@ source:
   git:
     uri: "https://github.com/NVIDIA/NemoClaw.git"
     # Pinned peeled commit for the latest published NemoClaw release (v0.0.125).
-    ref: "db2e3eefc2372cc1f4641eaee4621f4955f11004"
+    ref: "8cddceec26c7b99bf2b499ffe2cb7329471bccfb"
 
 build:
   targetArch: "amd64"
