@@ -260,5 +260,26 @@ def test_sandbox_fallback_keeps_workload_alive():
     assert create[-3:] == ["sh", "-c", "sleep infinity"]
 
 
+def test_completed_sandbox_is_recreated_for_fallback():
+    class ExistingCompletedShell:
+        dry_run = False
+
+        def __init__(self):
+            self.calls = []
+
+        def run(self, cmd, **kwargs):
+            self.calls.append(cmd)
+            if cmd[:3] == ["openshell", "sandbox", "get"]:
+                return 0, "Phase: Completed", ""
+            return 0, "", ""
+
+    shell = ExistingCompletedShell()
+    WorkspaceDeployer(shell, gateway_setup=None).create_sandbox_generic(
+        Sandbox(name="cuda-sandbox"), workspace_name="cuda-dev")
+
+    assert ["openshell", "sandbox", "delete", "cuda-sandbox",
+            "--workspace", "cuda-dev"] in shell.calls
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

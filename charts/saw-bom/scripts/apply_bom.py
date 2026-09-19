@@ -432,8 +432,9 @@ class WorkspaceDeployer:
             check=False)
         if rc == 0:
             clean = re.sub(r'\x1b\[[0-9;]*m', '', out)
-            if "Error" in clean:
-                log(f"Sandbox '{sandbox.name}' is in Error state, "
+            if "Error" in clean or "Phase: Completed" in clean:
+                state = "Completed" if "Phase: Completed" in clean else "Error"
+                log(f"Sandbox '{sandbox.name}' is in {state} state, "
                     "recreating...")
                 self.sh.run(
                     ["openshell", "sandbox", "delete",
