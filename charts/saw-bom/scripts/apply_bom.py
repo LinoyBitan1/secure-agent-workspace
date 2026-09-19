@@ -457,7 +457,9 @@ class WorkspaceDeployer:
         # to this OpenShell sandbox and configure OpenClaw with subsequent
         # `sandbox exec` calls. A one-shot probe such as `echo sandbox-ready`
         # exits immediately and leaves the sandbox in Completed state.
-        args += ["--no-tty", "--", "sh", "-c", "sleep infinity"]
+        # Detach so the setup job can continue to configure OpenClaw while
+        # the long-lived workload keeps the sandbox in Ready state.
+        args += ["--no-tty", "--detach", "--", "sh", "-c", "sleep infinity"]
         rc, out, err = self.sh.run(args, check=False)
         combined = re.sub(r'\x1b\[[0-9;]*m', '',
                           (out or "") + " " + (err or ""))
