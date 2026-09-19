@@ -14,7 +14,7 @@ sshPublicKey: ""
 #
 # 2. Registry: import a bootc/containerDisk image directly from a container registry.
 #      source:
-#        registryURL: "docker://quay.io/rh-ai-quickstart/openshell-gateway:latest"
+#        registryURL: "docker://quay.io/rh-ee-lbitan/openshell-gateway:latest"
 #
 # 3. HTTP: download a qcow2 disk image from a URL.
 #      source:
@@ -46,7 +46,7 @@ sandboxImage: ""
 
 # If you don't have push access to the quay.io registry referenced by a BOM
 # profile's sandbox image (e.g. the default openclaw profile points at
-# quay.io/rh-ai-quickstart/openclaw-openshell:latest), build it yourself
+# quay.io/rh-ee-lbitan/openclaw-openshell:latest), build it yourself
 # into this cluster's own internal registry instead:
 #   make build-openclaw-openshell-local
 # then point the BOM profile's sandbox image at:
@@ -55,11 +55,11 @@ sandboxImage: ""
 # VM's systemd-resolved doesn't apply search-domain suffixing to
 # multi-label hostnames the way a pod's glibc resolver does, so the short
 # "...svc:5000" form used elsewhere in this chart won't resolve there).
-# The sandbox VM's Docker daemon is external to the cluster (no
+# The sandbox VM's container runtime is external to the cluster (no
 # ServiceAccount pull secret), so also enable anonymous pull below.
 internalRegistry:
   # Grants system:image-puller to system:unauthenticated, scoped to this
-  # namespace only, so the sandbox VM's Docker daemon can pull
+  # namespace only, so the sandbox VM's container runtime can pull
   # internally-built images without credentials. Off by default since it's
   # only needed for the internal-registry fallback above.
   allowAnonymousPull: false
@@ -70,13 +70,13 @@ nemoclawCliImage: ""
 # Agent to run inside the sandbox: openclaw, hermes, or langchain-deepagents-code
 agent: openclaw
 
-# Onboarding CLI: openclaw (runs inside sandbox) or nemoclaw (runs on gateway VM, requires Docker)
-onboardCli: openclaw
+# Onboarding CLI: openclaw (runs inside sandbox) or nemoclaw (runs on gateway VM)
+onboardCli: nemoclaw
 
 # Container runtime inside the gateway VM: docker or podman
-# docker: uses openshell-gateway-docker golden image. Required for NemoClaw onboarding.
-# podman: uses openshell-gateway golden image. For openclaw, opencode, or any external sandbox image.
-containerRuntime: docker
+# docker: uses openshell-gateway-docker golden image (legacy)
+# podman: uses openshell-gateway golden image and the rootless Podman socket.
+containerRuntime: podman
 
 # OpenShell gateway runtime configuration inside the sandbox VM.
 openshell:
@@ -85,14 +85,14 @@ openshell:
   # to restrict access to local VM context only.
   bindAddress: "0.0.0.0"
   # OpenShell binaries installed at provisioning time (not baked into golden image).
-  gatewayImage: "quay.io/opendatahub/odh-openshell-gateway:v0.0.103-rhaiv.0"
-  supervisorImage: "quay.io/opendatahub/odh-openshell-supervisor:v0.0.103-rhaiv.0"
-  version: "0.0.103+rhaiv.0"
+  gatewayImage: "quay.io/opendatahub/odh-openshell-gateway:v0.0.116-rhaiv.0"
+  supervisorImage: "quay.io/opendatahub/odh-openshell-supervisor:v0.0.116-rhaiv.0"
+  version: "0.0.116+rhaiv.0"
   pipIndexUrl: "https://packages.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA1/cpu-ubi9-test/simple/"
 
-  # gatewayImage: "ghcr.io/nvidia/openshell/gateway:0.0.103"
-  # supervisorImage: "ghcr.io/nvidia/openshell/supervisor:0.0.103"
-  # version: "0.0.103"
+  # gatewayImage: "ghcr.io/nvidia/openshell/gateway:0.0.116"
+  # supervisorImage: "ghcr.io/nvidia/openshell/supervisor:0.0.116"
+  # version: "0.0.116"
   # pipIndexUrl: ""
 # Inference provider configuration.
 # Provider keys: gemini, brave, tavily (governed profiles required for each)
@@ -153,8 +153,8 @@ route:
   webui: true
 
 # OpenShell Dashboard — standalone Go BFF + React admin UI for OpenShell
-# (gateways, workspaces, sandboxes, providers). Runs via docker inside the
-# sandbox VM (this branch has no podman — see docs/jira/switch-podman-to-docker.md),
+# (gateways, workspaces, sandboxes, providers). Runs via the configured
+# container runtime inside the sandbox VM,
 # fronted by oauth2-proxy for OIDC/PKCE auth against the
 # centralized Keycloak. Requires oidc.issuerUrl/oidc.token to be set — the
 # dashboard's gRPC client has no mTLS support, so it only works against an

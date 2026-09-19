@@ -66,19 +66,24 @@ guest_ssh "sudo dnf install -y lsof 2>&1 | tail -3" || echo "WARN: lsof install 
 
 # --- Trust cluster's service-serving CA (for the internal image registry) ---
 # Only needed when internalRegistry.allowAnonymousPull is enabled (see
-# values.yaml) — the sandbox VM's Docker daemon needs this to pull
+# values.yaml) — the sandbox VM's configured container runtime needs this to pull
 # internally-built images over TLS. Every namespace gets an
 # "openshift-service-ca.crt" ConfigMap containing the CA that signs
-# internal service serving certs. Requires a Docker restart to pick up
-# the refreshed system trust store.
+# internal service serving certs. Docker requires a daemon restart to pick up
+# the refreshed system trust store; rootless Podman reads it per invocation.
 if [[ "${ALLOW_ANONYMOUS_PULL:-false}" == "true" ]]; then
   echo "Installing cluster service-serving CA into VM trust store..."
   SERVICE_CA="$(kubectl get configmap openshift-service-ca.crt -n "${NS}" -o jsonpath='{.data.service-ca\.crt}' 2>/dev/null || true)"
   if [[ -n "${SERVICE_CA}" ]]; then
     echo "${SERVICE_CA}" > "${WORK_DIR}/service-ca.crt"
     guest_scp "${WORK_DIR}/service-ca.crt" "/tmp/openshift-service-ca.crt"
-    guest_ssh "sudo cp /tmp/openshift-service-ca.crt /etc/pki/ca-trust/source/anchors/openshift-service-ca.crt && sudo update-ca-trust extract && sudo systemctl restart docker" \
-      || echo "WARN: failed to install service-serving CA into VM trust store (non-fatal)"
+    if [[ "${RUNTIME}" == "docker" ]]; then
+      guest_ssh "sudo cp /tmp/openshift-service-ca.crt /etc/pki/ca-trust/source/anchors/openshift-service-ca.crt && sudo update-ca-trust extract && sudo systemctl restart docker" \
+        || echo "WARN: failed to install service-serving CA into VM trust store (non-fatal)"
+    else
+      guest_ssh "sudo cp /tmp/openshift-service-ca.crt /etc/pki/ca-trust/source/anchors/openshift-service-ca.crt && sudo update-ca-trust extract" \
+        || echo "WARN: failed to install service-serving CA into VM trust store (non-fatal)"
+    fi
   else
     echo "WARN: could not fetch cluster service-serving CA (non-fatal, continuing)"
   fi

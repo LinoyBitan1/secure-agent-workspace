@@ -7,7 +7,7 @@ job:
   waitForSecrets: true
   backoffLimit: 5
 
-nemoclawCliImage: "quay.io/rh-ai-quickstart/nemoclaw-cli:latest"
+nemoclawCliImage: "quay.io/rh-ee-lbitan/nemoclaw-cli:latest"
 
 dashboard:
   insecureSkipIssuerTlsVerify: true

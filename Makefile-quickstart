@@ -1,11 +1,11 @@
 NS             ?= openshell-agents
 BUILD_NS       ?= openshell-agents
-QUAY_REPO      ?= quay.io/rh-ai-quickstart
-OPENSHELL_VERSION ?= 0.0.103
+QUAY_REPO      ?= quay.io/rh-ee-lbitan
+OPENSHELL_VERSION ?= 0.0.116
 OPENSHELL_SAW_NAME ?=
 SANDBOX_IMAGE  ?=
 AGENT          ?= openclaw
-CONTAINER_RUNTIME ?= docker
+CONTAINER_RUNTIME ?= podman
 IMAGE_NAME      = $(if $(filter docker,$(CONTAINER_RUNTIME)),openshell-gateway-docker,openshell-gateway)
 GOVERNANCE_ENABLED ?= true
 PROVIDER       ?=
@@ -167,7 +167,7 @@ build-governance-interceptor: ## Build governance interceptor image on cluster a
 		--namespace $(BUILD_NS) --create-namespace
 	oc start-build governance-interceptor -n $(BUILD_NS) --follow
 	@echo "Pushing governance-interceptor to $(QUAY_REPO)..."
-	@$(SCRIPTS_DIR)/push-image.sh $(BUILD_NS) governance-interceptor $(QUAY_REPO)
+	@$(SCRIPTS_DIR)/push-image.sh $(BUILD_NS) governance-interceptor $(QUAY_REPO) $(OPENSHELL_VERSION)
 
 # --- Gateway VM image ---
 
@@ -353,7 +353,7 @@ ssh-secret: ## Create SSH key secrets for sandbox Jobs
 
 # --- Sandbox ---
 
-openshell-saw-create: .check-saw-name .check-ssh-key ssh-secret ## Provision a sandbox (PROVIDER=, MODEL=, API_KEY=, CONTAINER_RUNTIME=docker|podman)
+openshell-saw-create: .check-saw-name .check-ssh-key ssh-secret ## Provision a sandbox (PROVIDER=, MODEL=, API_KEY=, CONTAINER_RUNTIME=podman|docker)
 	@NS=$(NS) OPENSHELL_SAW_NAME=$(OPENSHELL_SAW_NAME) SAW_CHART=$(SAW_CHART) \
 	SANDBOX_IMAGE=$(SANDBOX_IMAGE) SSH_PUBKEY="$(SSH_PUBKEY)" AGENT=$(AGENT) \
 	PROVIDER=$(PROVIDER) MODEL=$(MODEL) API_KEY=$(API_KEY) \

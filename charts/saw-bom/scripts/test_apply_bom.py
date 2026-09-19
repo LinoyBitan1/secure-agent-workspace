@@ -23,6 +23,7 @@ from apply_bom import (  # noqa: E402
     parse_profiles,
     resolve_configured_type,
     resolve_credential,
+    runtime_command,
 )
 
 
@@ -213,6 +214,24 @@ def test_resolve_configured_type_none_when_unset(monkeypatch):
     monkeypatch.delenv("PROV_NVIDIA_TYPE", raising=False)
     p = Provider(name="nvidia", type="nvidia")
     assert resolve_configured_type(p) is None
+
+
+# ---------------------------------------------------------------------------
+# Container runtime selection
+# ---------------------------------------------------------------------------
+
+def test_runtime_command_uses_rootless_podman(monkeypatch):
+    monkeypatch.setenv("CONTAINER_RUNTIME", "podman")
+    assert runtime_command("pull", "example/image:latest") == [
+        "podman", "pull", "example/image:latest"
+    ]
+
+
+def test_runtime_command_uses_podman_default(monkeypatch):
+    monkeypatch.delenv("CONTAINER_RUNTIME", raising=False)
+    assert runtime_command("pull", "example/image:latest") == [
+        "podman", "pull", "example/image:latest"
+    ]
 
 
 if __name__ == "__main__":
