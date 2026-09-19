@@ -452,7 +452,11 @@ class WorkspaceDeployer:
             args += ["--workspace", workspace_name]
         for prov in sandbox.providers:
             args += ["--provider", prov]
-        args += ["--no-tty", "--", "sh", "-c", "echo sandbox-ready"]
+        # Keep the sandbox workload alive: NemoClaw onboarding may fall back
+        # to this OpenShell sandbox and configure OpenClaw with subsequent
+        # `sandbox exec` calls. A one-shot probe such as `echo sandbox-ready`
+        # exits immediately and leaves the sandbox in Completed state.
+        args += ["--no-tty", "--", "sh", "-c", "sleep infinity"]
         rc, out, err = self.sh.run(args, check=False)
         combined = re.sub(r'\x1b\[[0-9;]*m', '',
                           (out or "") + " " + (err or ""))
