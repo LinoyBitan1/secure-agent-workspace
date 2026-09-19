@@ -116,15 +116,24 @@ if [[ ! -f "${VALUES_SECRET}" ]]; then
 fi
 
 DETECTED=$(python3 -c "
+import os
 import yaml, sys
 with open('${VALUES_SECRET}') as f:
     data = yaml.safe_load(f)
 for s in data.get('secrets', []):
     if s['name'] == 'inference':
-        fields = {f['name']: f.get('value') for f in s.get('fields', [])}
-        provider = fields.get('provider')
-        model = fields.get('model') or ''
-        api_key = fields.get('api_key')
+        fields = {f['name']: f for f in s.get('fields', [])}
+        provider = fields.get('provider', {}).get('value')
+        model = fields.get('model', {}).get('value') or ''
+        api_key_field = fields.get('api_key', {})
+        api_key = api_key_field.get('value')
+        if not api_key and api_key_field.get('path'):
+            key_path = os.path.expanduser(api_key_field['path'])
+            try:
+                with open(key_path) as key_file:
+                    api_key = key_file.read().strip()
+            except OSError:
+                api_key = None
         if provider and api_key and str(api_key) != 'null':
             print(f'{provider}|{model}|{api_key}')
             sys.exit(0)
