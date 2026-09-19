@@ -185,6 +185,9 @@ governance:
   # from the release namespace (http://governance-interceptor.<namespace>.svc.cluster.local:18081).
   endpoint: ""
   port: 18081
+  # The interceptor is an in-cluster plaintext gRPC service. OpenShell 0.0.116+
+  # requires this explicit opt-out from extension authentication for http://.
+  allowInsecureTransport: true
   failurePolicy: "fail_closed"
   timeout: "500ms"
 
