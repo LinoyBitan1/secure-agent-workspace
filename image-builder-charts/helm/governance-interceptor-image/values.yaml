@@ -8,5 +8,4 @@ build:
   builderImage: "rust:1.90-bookworm"
 
 output:
-  externalImage: "quay.io/rh-ee-lbitan/governance-interceptor:latest"
-  pushSecretName: "quay-push-secret"
+  imageStreamTag: "governance-interceptor:latest"

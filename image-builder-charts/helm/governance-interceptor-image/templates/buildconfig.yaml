@@ -25,10 +25,8 @@ spec:
       forcePull: true
   output:
     to:
-      kind: DockerImage
-      name: {{ .Values.output.externalImage }}
-    pushSecret:
-      name: {{ .Values.output.pushSecretName }}
+      kind: ImageStreamTag
+      name: {{ .Values.output.imageStreamTag }}
   resources:
     limits:
       memory: 4Gi

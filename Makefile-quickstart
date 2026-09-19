@@ -161,7 +161,7 @@ build-openclaw-openshell-local: ## Build the openclaw-openshell sandbox image in
 
 # --- Governance interceptor image ---
 
-build-governance-interceptor: ## Build governance interceptor image on cluster and push to quay
+build-governance-interceptor: ## Build governance interceptor internally, then push to quay using local credentials
 	-@oc delete is governance-interceptor -n $(BUILD_NS) 2>/dev/null
 	helm upgrade --install governance-interceptor-image $(HELM_DIR)governance-interceptor-image \
 		--namespace $(BUILD_NS) --create-namespace
