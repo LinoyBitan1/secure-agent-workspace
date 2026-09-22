@@ -521,7 +521,8 @@ class WorkspaceDeployer:
         runtime_rm = runtime_shell_command(self.runtime, "rm")
         self.sh.run([
             "bash", "-c",
-            f"CID=$({runtime_create} '{cli_image}' 2>/dev/null) && "
+            f"{shlex.join(image_pull_command(self.runtime, cli_image))} && "
+            f"CID=$({runtime_create} '{cli_image}') && "
             f"{runtime_cp} $CID:/opt/nemoclaw /tmp/nemoclaw-cli && "
             f"{runtime_rm} $CID >/dev/null && "
             f"sudo mv /tmp/nemoclaw-cli /opt/nemoclaw && "
