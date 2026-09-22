@@ -12,3 +12,5 @@ def test_cli_image_patches_gateway_binding_before_preflight():
     assert 'NEMOCLAW_GATEWAY_PORT' in template
     assert 'dist/lib/onboard.js' in template
     assert 'compiled NemoClaw bundle does not honor' in template
+    assert 'dist/lib/onboard/gateway-host-runtime.js' in template
+    assert 'NEMOCLAW_PRESERVE_GATEWAY_REGISTRATION' in template

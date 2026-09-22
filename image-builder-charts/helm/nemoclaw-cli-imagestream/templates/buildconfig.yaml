@@ -53,6 +53,10 @@ spec:
       COPY --from=builder /opt/nemoclaw/schemas/ ./schemas/
       COPY --from=builder /opt/nemoclaw/Dockerfile ./Dockerfile
       COPY --from=builder /opt/nemoclaw/tsconfig.runtime-preloads.json ./tsconfig.runtime-preloads.json
+      # Patch the generated host-runtime bundle as the final compatibility
+      # boundary. The external supervisor already owns this listener and its
+      # OIDC registration must not be replaced by NemoClaw's --local mTLS add.
+      RUN node -e 'const fs=require("node:fs");const p="dist/lib/onboard/gateway-host-runtime.js";let s=fs.readFileSync(p,"utf8");const a="const added = await deps.lifecycle.registerGateway({ ...request, endpoint: owner.endpoint });";const b="const added = process.env.NEMOCLAW_PRESERVE_GATEWAY_REGISTRATION === \"1\" ? { ok: true, state: \"completed\" } : await deps.lifecycle.registerGateway({ ...request, endpoint: owner.endpoint });";if(s.includes(a)){s=s.replace(a,b);fs.writeFileSync(p,s);}if(!s.includes("NEMOCLAW_PRESERVE_GATEWAY_REGISTRATION"))throw new Error("compiled NemoClaw bundle does not preserve external gateway registration");'
       # Patch inference route parser to match both "Gateway inference:" and "Inference:" output formats
       RUN sed -i 's|/\^Gateway inference:\\\\s\*\$/i|/^(Gateway )?[Ii]nference:\\s*$/i|' ./dist/lib/inference/config.js
       ENTRYPOINT ["node", "/opt/nemoclaw/bin/nemoclaw.js"]

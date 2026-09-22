@@ -4,7 +4,9 @@ provider_type: nvidia
 credentials:
   - name: api_key
     description: NVIDIA API key
-    env_vars: [NVIDIA_API_KEY]
+    # Keep the OpenShell/BOM name and NemoClaw's hosted-inference alias
+    # equivalent so either onboarding path satisfies the profile contract.
+    env_vars: [NVIDIA_API_KEY, NVIDIA_INFERENCE_API_KEY]
     required: true
     auth_style: bearer
     header_name: authorization
