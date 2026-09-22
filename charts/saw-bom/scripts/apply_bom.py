@@ -821,13 +821,6 @@ def main():
     gw.register_mtls_gateway()
     gw.grant_default_workspace_access()
     gw.enable_providers_v2()
-    # NemoClaw performs an admin-only gateway observation during onboarding.
-    # When an OIDC token is available, keep the OIDC registration selected so
-    # that this probe uses the authenticated gateway identity instead of the
-    # local mTLS client certificate (which is only a regular OpenShell user).
-    if oidc_token and oidc_gw:
-        section("Selecting OIDC gateway for NemoClaw onboarding")
-        gw.select_oidc()
 
     # --- Phase 2: Deploy profiles ---
     deployer = WorkspaceDeployer(sh, gw)
@@ -913,9 +906,6 @@ def main():
                         if not ok:
                             log("nemoclaw onboard failed, "
                                 "configuring provider manually")
-                            # Preserve the existing mTLS fallback path if the
-                            # OIDC registration itself is unavailable.
-                            gw.select_mtls()
                             deployer.create_provider(prov, cred, ws.name)
 
                     deployer.create_sandbox_generic(sb, ws.name)
