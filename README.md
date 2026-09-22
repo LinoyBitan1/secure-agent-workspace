@@ -197,7 +197,9 @@ make openshell-saw-configure-gateway
 openshell gateway login $OPENSHELL_SAW_NAME   # Authenticate CLI with gateway
 
 # 8. Verify
+# The first command lists the default workspace; the second lists cuda-dev.
 openshell sandbox list
+openshell sandbox list --workspace cuda-dev
 ```
 
 #### Option B: Quickstart (manual, step-by-step)
@@ -341,7 +343,8 @@ make openshell-saw-gui
 # Or access the dashboard directly via the route
 oc get route ${OPENSHELL_SAW_NAME}-dashboard -n openshell-agents -o jsonpath='https://{.spec.host}'
 
-# Run the automated E2E test (headless, creates its own sandbox)
+# Option B only: automated E2E test (headless, creates its own sandbox)
+# Do not run this against an Option A GitOps deployment.
 make test
 
 # Run offline template validation (43 checks)
