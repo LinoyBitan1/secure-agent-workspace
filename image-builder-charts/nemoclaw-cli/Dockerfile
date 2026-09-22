@@ -23,6 +23,7 @@ COPY --from=builder /opt/nemoclaw/nemoclaw/dist/ ./nemoclaw/dist/
 COPY --from=builder /opt/nemoclaw/agents/ ./agents/
 COPY --from=builder /opt/nemoclaw/scripts/ ./scripts/
 COPY --from=builder /opt/nemoclaw/nemoclaw-blueprint/ ./nemoclaw-blueprint/
+COPY --from=builder /opt/nemoclaw/managed-inference/ ./managed-inference/
 RUN sed -i "s/max_openshell_version: \"[^\"]*\"/max_openshell_version: \"${MAX_OPENSHELL_VERSION}\"/" ./nemoclaw-blueprint/blueprint.yaml \
     && grep -Fq "max_openshell_version: \"${MAX_OPENSHELL_VERSION}\"" ./nemoclaw-blueprint/blueprint.yaml
 COPY --from=builder /opt/nemoclaw/schemas/ ./schemas/
