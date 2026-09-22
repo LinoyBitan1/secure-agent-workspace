@@ -30,7 +30,9 @@ OIDC_TOKEN_DIR="${OIDC_TOKEN_DIR:-$HOME/.config/openshell/oidc}"
 OWNER="${OWNER:-}"
 NAMESPACE_MODE="${NAMESPACE_MODE:-shared}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-scripts}"
-CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
+CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-podman}"
+ONBOARD_CLI="${ONBOARD_CLI:-openclaw}"
+NEMOCLAW_CLI_IMAGE="${NEMOCLAW_CLI_IMAGE:-}"
 GOVERNANCE_ENABLED="${GOVERNANCE_ENABLED:-true}"
 
 # Validate provider
@@ -129,6 +131,8 @@ helm upgrade --install "${OPENSHELL_SAW_NAME}" "${SAW_CHART}" \
   --set accessControl.owner="${OWNER}" \
   --set namespaceMode="${NAMESPACE_MODE}" \
   --set containerRuntime="${CONTAINER_RUNTIME}" \
+  --set onboardCli="${ONBOARD_CLI}" \
+  ${NEMOCLAW_CLI_IMAGE:+--set nemoclawCliImage="${NEMOCLAW_CLI_IMAGE}"} \
   --set governance.enabled="${GOVERNANCE_ENABLED}" \
   --set route.enabled=true --set route.dashboard=true \
   ${ROUTE_HOST:+--set route.host="${ROUTE_HOST}"}

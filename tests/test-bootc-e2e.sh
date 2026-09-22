@@ -343,9 +343,20 @@ check "cloud-init finished" \
 check "cloud-user exists with sudo" \
   guest_ssh "sudo whoami | grep -q root"
 
-RUNTIME="${CONTAINER_RUNTIME:-docker}"
+RUNTIME="${CONTAINER_RUNTIME:-podman}"
 check "${RUNTIME} is installed" \
   guest_ssh "${RUNTIME} --version"
+
+if [[ "${RUNTIME}" == "podman" ]]; then
+  check "docker is absent from Podman VM" \
+    guest_ssh "! command -v docker"
+  check "rootless Podman socket exists" \
+    guest_ssh 'test -S /run/user/$(id -u)/podman/podman.sock'
+  check "gateway selects Podman driver" \
+    guest_ssh "grep -q '^OPENSHELL_DRIVERS=podman' ~/.config/openshell/gateway.env"
+  check "gateway records Podman socket" \
+    guest_ssh 'grep -q "^OPENSHELL_PODMAN_SOCKET=/run/user/$(id -u)/podman/podman.sock" ~/.config/openshell/gateway.env'
+fi
 
 check "openshell CLI is installed" \
   guest_ssh "openshell --version"

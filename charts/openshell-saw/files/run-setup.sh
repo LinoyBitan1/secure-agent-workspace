@@ -18,6 +18,7 @@ GOLDEN_IMAGE_URL="{{ .Values.source.goldenImageURL }}"
 PULL_METHOD="{{ .Values.source.pullMethod | default "node" }}"
 GATEWAY_IMAGE="{{ .Values.openshell.gatewayImage }}"
 SUPERVISOR_IMAGE="{{ .Values.openshell.supervisorImage }}"
+CLI_IMAGE="{{ .Values.openshell.cliImage }}"
 OPENSHELL_PIP_VERSION="{{ .Values.openshell.version }}"
 PIP_INDEX_URL="{{ .Values.openshell.pipIndexUrl }}"
 GOVERNANCE_ENABLED="{{ .Values.governance.enabled }}"
@@ -33,13 +34,15 @@ OIDC_REALM="{{ .Values.oidc.realm }}"
 KEYCLOAK_NS="{{ .Values.dashboard.keycloakNamespace | default .Release.Namespace }}"
 KEYCLOAK_NAME="{{ .Values.dashboard.keycloakName | default "openshell-keycloak" }}"
 OWNER="{{ .Values.accessControl.owner | default "alice" }}"
-NEMOCLAW_CLI_IMAGE="{{ .Values.nemoclawCliImage }}"
+NEMOCLAW_CLI_IMAGE="{{ .Values.nemoclawCliImage | default (printf "image-registry.openshift-image-registry.svc.cluster.local:5000/%s/nemoclaw-cli:latest" .Release.Namespace) }}"
 ALLOW_ANONYMOUS_PULL="{{ .Values.internalRegistry.allowAnonymousPull }}"
 
-if [[ "${RUNTIME}" == "podman" && "${ONBOARD_CLI}" == "nemoclaw" ]]; then
-  echo "ERROR: NemoClaw onboarding requires Docker. Set containerRuntime=docker or use onboardCli=openclaw." >&2
-  exit 1
+if [[ "${RUNTIME}" == "docker" ]]; then
+  CONTAINER_ENGINE="sudo docker"
+else
+  CONTAINER_ENGINE="podman"
 fi
+export RUNTIME CONTAINER_ENGINE
 
 SCRIPTS_DIR="/scripts"
 SECRETS_DIR="/secrets"

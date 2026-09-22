@@ -307,8 +307,14 @@ check "SSH reachable (up to 3 min)" \
 step "Verify VM health"
 
 check "openshell CLI installed"        guest_ssh "openshell --version"
-RUNTIME="$(helm get values "${TEST_SANDBOX}" -n "${NS}" -a -o json 2>/dev/null | jq -r '.containerRuntime // "docker"')"
+RUNTIME="$(helm get values "${TEST_SANDBOX}" -n "${NS}" -a -o json 2>/dev/null | jq -r '.containerRuntime // "podman"')"
 check "${RUNTIME} installed"           guest_ssh "${RUNTIME} --version"
+if [[ "${RUNTIME}" == "podman" ]]; then
+  check "docker absent" guest_ssh "! command -v docker"
+  check "rootless Podman socket" guest_ssh 'test -S /run/user/$(id -u)/podman/podman.sock'
+  check "Podman driver selected" guest_ssh "grep -q '^OPENSHELL_DRIVERS=podman' ~/.config/openshell/gateway.env"
+  check "Podman socket recorded" guest_ssh 'grep -q "^OPENSHELL_PODMAN_SOCKET=/run/user/$(id -u)/podman/podman.sock" ~/.config/openshell/gateway.env'
+fi
 check "nodejs installed"               guest_ssh "node --version"
 check "/etc/openshell exists"          guest_ssh "test -d /etc/openshell"
 check "gateway setup service exists"   guest_ssh "systemctl cat openshell-gateway-setup.service >/dev/null 2>&1"

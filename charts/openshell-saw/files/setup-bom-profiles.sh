@@ -146,6 +146,7 @@ guest_ssh "
     --oidc-gateway \${OPENSHELL_GATEWAY:-openshell} \
     --mtls-gateway openshell-local \
     --nemoclaw-cli-image \"\${NEMOCLAW_CLI_IMAGE:-}\" \
+    --container-runtime "\${RUNTIME}" \
     --dashboard-route '${DASHBOARD_ROUTE_HOST}'
 " 2>&1
 

@@ -1,41 +1,55 @@
 #!/usr/bin/env bash
 # Phase: upgrade OpenShell binaries on the VM, patch OIDC, restart gateway.
-# Expects: GATEWAY_IMAGE, SUPERVISOR_IMAGE, OPENSHELL_PIP_VERSION, PIP_INDEX_URL,
-#          RUNTIME, SECRETS_DIR, WORK_DIR, NS, ALLOW_ANONYMOUS_PULL,
+# Expects: GATEWAY_IMAGE, SUPERVISOR_IMAGE, CLI_IMAGE, OPENSHELL_PIP_VERSION,
+#          PIP_INDEX_URL, RUNTIME, CONTAINER_ENGINE, SECRETS_DIR, WORK_DIR,
+#          NS, ALLOW_ANONYMOUS_PULL,
 #          guest_ssh/guest_scp (functions)
 
 if [[ -n "${GATEWAY_IMAGE}" && -n "${SUPERVISOR_IMAGE}" && -n "${OPENSHELL_PIP_VERSION}" ]]; then
   echo "Upgrading OpenShell binaries (gateway=${GATEWAY_IMAGE}, supervisor=${SUPERVISOR_IMAGE}, cli=${OPENSHELL_PIP_VERSION})..."
   guest_ssh "
-    ${RUNTIME} pull '${GATEWAY_IMAGE}' && \
-    CID=\$(${RUNTIME} create '${GATEWAY_IMAGE}') && \
-    ${RUNTIME} cp \${CID}:/usr/local/bin/openshell-gateway /tmp/openshell-gateway && \
-    ${RUNTIME} rm \${CID} && \
+    ${CONTAINER_ENGINE} pull '${GATEWAY_IMAGE}' && \
+    CID=\$(${CONTAINER_ENGINE} create '${GATEWAY_IMAGE}') && \
+    ${CONTAINER_ENGINE} cp \${CID}:/usr/local/bin/openshell-gateway /tmp/openshell-gateway && \
+    ${CONTAINER_ENGINE} rm \${CID} && \
     sudo mv /tmp/openshell-gateway /usr/local/bin/openshell-gateway && \
     sudo chmod 755 /usr/local/bin/openshell-gateway && \
     echo 'gateway upgraded'
   " || echo "WARN: gateway binary upgrade failed (continuing with existing version)"
   guest_ssh "
-    ${RUNTIME} pull '${SUPERVISOR_IMAGE}' && \
-    CID=\$(${RUNTIME} create '${SUPERVISOR_IMAGE}') && \
-    ${RUNTIME} cp \${CID}:/openshell-sandbox /tmp/openshell-supervisor && \
-    ${RUNTIME} rm \${CID} && \
+    ${CONTAINER_ENGINE} pull '${SUPERVISOR_IMAGE}' && \
+    CID=\$(${CONTAINER_ENGINE} create '${SUPERVISOR_IMAGE}') && \
+    ${CONTAINER_ENGINE} cp \${CID}:/openshell-sandbox /tmp/openshell-supervisor && \
+    ${CONTAINER_ENGINE} rm \${CID} && \
     sudo mv /tmp/openshell-supervisor /usr/local/bin/openshell-supervisor && \
     sudo chmod 755 /usr/local/bin/openshell-supervisor && \
     echo 'supervisor upgraded'
   " || echo "WARN: supervisor binary upgrade failed (continuing with existing version)"
-  PIP_EXTRA=""
-  [[ -n "${PIP_INDEX_URL}" ]] && PIP_EXTRA="--extra-index-url ${PIP_INDEX_URL}"
-  guest_ssh "
-    pip3 install openshell==${OPENSHELL_PIP_VERSION} ${PIP_EXTRA} \
-    && echo 'openshell CLI upgraded'
-  " || echo "WARN: openshell CLI upgrade failed (continuing with existing version)"
+  if [[ -n "${CLI_IMAGE}" ]]; then
+    guest_ssh "
+      ${CONTAINER_ENGINE} pull '${CLI_IMAGE}' && \
+      CID=\$(${CONTAINER_ENGINE} create '${CLI_IMAGE}') && \
+      ${CONTAINER_ENGINE} cp \${CID}:/usr/local/bin/openshell /tmp/openshell && \
+      ${CONTAINER_ENGINE} rm \${CID} && \
+      sudo mv /tmp/openshell /usr/local/bin/openshell && \
+      sudo chmod 755 /usr/local/bin/openshell && \
+      echo 'openshell CLI upgraded from image'
+    " || echo "WARN: openshell CLI image upgrade failed (continuing with existing version)"
+  else
+    PIP_EXTRA=""
+    [[ -n "${PIP_INDEX_URL}" ]] && PIP_EXTRA="--extra-index-url ${PIP_INDEX_URL}"
+    guest_ssh "
+      pip3 install openshell==${OPENSHELL_PIP_VERSION} ${PIP_EXTRA} \
+      && echo 'openshell CLI upgraded'
+    " || echo "WARN: openshell CLI upgrade failed (continuing with existing version)"
+  fi
   # Patch the pip-installed openshell binary's version output so nemoclaw's
   # feature gate sees matching versions across all three components. The pip
   # binary uses '+' (PEP 440 local) while the native Go binaries use '-'
   # (semver pre-release); the mismatch causes componentBuildVersionsMatch()
   # to return false. We wrap the original binary with a script that fixes
   # --version output and delegates everything else.
+  if [[ -z "${CLI_IMAGE}" ]]; then
   NATIVE_VERSION="$(guest_ssh "openshell-gateway --version 2>/dev/null" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\S*' | head -1 || echo "${OPENSHELL_PIP_VERSION}" | sed 's/+/-/')"
   cat > "${WORK_DIR}/openshell-wrapper" <<WEOF
 #!/usr/bin/env bash
@@ -58,6 +72,7 @@ WEOF
     chmod 755 \${OS_BIN}
     echo 'openshell version wrapper installed'
   " || echo "WARN: openshell wrapper install failed (non-fatal)"
+  fi
   guest_ssh "openshell-gateway --version; openshell-supervisor --version; openshell --version" || true
 fi
 
@@ -66,18 +81,23 @@ guest_ssh "sudo dnf install -y lsof 2>&1 | tail -3" || echo "WARN: lsof install 
 
 # --- Trust cluster's service-serving CA (for the internal image registry) ---
 # Only needed when internalRegistry.allowAnonymousPull is enabled (see
-# values.yaml) — the sandbox VM's Docker daemon needs this to pull
+# values.yaml) — the sandbox VM's configured container runtime needs this to pull
 # internally-built images over TLS. Every namespace gets an
 # "openshift-service-ca.crt" ConfigMap containing the CA that signs
-# internal service serving certs. Requires a Docker restart to pick up
-# the refreshed system trust store.
+# internal service serving certs. Rootless Podman reads the refreshed trust
+# store on the next request; Docker needs its daemon restarted.
 if [[ "${ALLOW_ANONYMOUS_PULL:-false}" == "true" ]]; then
   echo "Installing cluster service-serving CA into VM trust store..."
   SERVICE_CA="$(kubectl get configmap openshift-service-ca.crt -n "${NS}" -o jsonpath='{.data.service-ca\.crt}' 2>/dev/null || true)"
   if [[ -n "${SERVICE_CA}" ]]; then
     echo "${SERVICE_CA}" > "${WORK_DIR}/service-ca.crt"
     guest_scp "${WORK_DIR}/service-ca.crt" "/tmp/openshift-service-ca.crt"
-    guest_ssh "sudo cp /tmp/openshift-service-ca.crt /etc/pki/ca-trust/source/anchors/openshift-service-ca.crt && sudo update-ca-trust extract && sudo systemctl restart docker" \
+    if [[ "${RUNTIME}" == "docker" ]]; then
+      RESTART_RUNTIME="sudo systemctl restart docker"
+    else
+      RESTART_RUNTIME="systemctl --user restart podman.socket"
+    fi
+    guest_ssh "sudo cp /tmp/openshift-service-ca.crt /etc/pki/ca-trust/source/anchors/openshift-service-ca.crt && sudo update-ca-trust extract && ${RESTART_RUNTIME}" \
       || echo "WARN: failed to install service-serving CA into VM trust store (non-fatal)"
   else
     echo "WARN: could not fetch cluster service-serving CA (non-fatal, continuing)"

@@ -1,11 +1,12 @@
 NS             ?= openshell-agents
 BUILD_NS       ?= openshell-agents
 QUAY_REPO      ?= quay.io/rh-ai-quickstart
-OPENSHELL_VERSION ?= 0.0.103
+OPENSHELL_VERSION ?= 0.0.116
 OPENSHELL_SAW_NAME ?=
 SANDBOX_IMAGE  ?=
 AGENT          ?= openclaw
-CONTAINER_RUNTIME ?= docker
+CONTAINER_RUNTIME ?= podman
+ONBOARD_CLI       ?= openclaw
 IMAGE_NAME      = $(if $(filter docker,$(CONTAINER_RUNTIME)),openshell-gateway-docker,openshell-gateway)
 GOVERNANCE_ENABLED ?= true
 PROVIDER       ?=
@@ -129,7 +130,7 @@ generate-keys: ## Generate SSH keypair for sandbox provisioning
 
 # --- NemoClaw images ---
 
-build-nemoclaw: ## Build NemoClaw sandbox image and push to quay (set OTEL=1 to include diagnostics-otel)
+build-nemoclaw: ## (Optional) Build a custom NemoClaw sandbox image for Docker --from experiments
 	-@oc delete is nemoclaw-sandbox -n $(BUILD_NS) 2>/dev/null
 	helm upgrade --install nemoclaw-imagestream $(HELM_DIR)nemoclaw-imagestream \
 		--namespace $(BUILD_NS) --create-namespace \
@@ -231,7 +232,7 @@ copy-images: ## Mirror pre-built images from quay to the internal registry
 		echo "Mirroring images from $(QUAY_REPO) to internal registry..."; \
 		REGISTRY=$$(oc get route default-route -n openshift-image-registry -o jsonpath='{.spec.host}' 2>/dev/null); \
 		if [ -z "$$REGISTRY" ]; then echo "Error: Image registry route not available after waiting."; exit 1; fi; \
-		for image in openshell-gateway openshell-gateway-docker nemoclaw-sandbox nemoclaw-cli; do \
+		for image in openshell-gateway openshell-gateway-docker nemoclaw-cli; do \
 			echo "  Mirroring $${image}:$(OPENSHELL_VERSION)..."; \
 			if oc image mirror $(QUAY_REPO)/$${image}:$(OPENSHELL_VERSION) $${REGISTRY}/$(BUILD_NS)/$${image}:$(OPENSHELL_VERSION) --insecure=true 2>&1 | tail -1; then \
 				oc tag $(BUILD_NS)/$${image}:$(OPENSHELL_VERSION) $(BUILD_NS)/$${image}:latest 2>/dev/null || true; \
@@ -353,7 +354,7 @@ ssh-secret: ## Create SSH key secrets for sandbox Jobs
 
 # --- Sandbox ---
 
-openshell-saw-create: .check-saw-name .check-ssh-key ssh-secret ## Provision a sandbox (PROVIDER=, MODEL=, API_KEY=, CONTAINER_RUNTIME=docker|podman)
+openshell-saw-create: .check-saw-name .check-ssh-key ssh-secret ## Provision a sandbox (PROVIDER=, MODEL=, API_KEY=, CONTAINER_RUNTIME=docker|podman, ONBOARD_CLI=openclaw|nemoclaw)
 	@NS=$(NS) OPENSHELL_SAW_NAME=$(OPENSHELL_SAW_NAME) SAW_CHART=$(SAW_CHART) \
 	SANDBOX_IMAGE=$(SANDBOX_IMAGE) SSH_PUBKEY="$(SSH_PUBKEY)" AGENT=$(AGENT) \
 	PROVIDER=$(PROVIDER) MODEL=$(MODEL) API_KEY=$(API_KEY) \
@@ -362,6 +363,8 @@ openshell-saw-create: .check-saw-name .check-ssh-key ssh-secret ## Provision a s
 	OIDC_TOKEN_DIR=$(OIDC_TOKEN_DIR) OWNER=$(OWNER) \
 	NAMESPACE_MODE=$(NAMESPACE_MODE) SCRIPTS_DIR=$(SCRIPTS_DIR) \
 	CONTAINER_RUNTIME=$(CONTAINER_RUNTIME) \
+	ONBOARD_CLI=$(ONBOARD_CLI) \
+	NEMOCLAW_CLI_IMAGE=$(NEMOCLAW_CLI_IMAGE) \
 	GOVERNANCE_ENABLED=$(GOVERNANCE_ENABLED) \
 	$(SCRIPTS_DIR)/openshell-saw-create.sh
 

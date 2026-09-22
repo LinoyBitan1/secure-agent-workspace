@@ -40,8 +40,7 @@
 │  │   ├── Create workspace (via OIDC gateway)                            │
 │  │   ├── Create providers (nvidia, brave, etc.)                         │
 │  │   └── Create sandboxes (nemoclaw, openclaw, generic)                 │
-│  │       ├── nemoclaw: onboard → fallback provider → sandbox create     │
-│  │       │             → openclaw gateway start                         │
+│  │       ├── nemoclaw: managed-image onboard → connect                 │
 │  │       ├── openclaw: sandbox create → wait Ready                      │
 │  │       │             → openclaw onboard (custom NVIDIA provider)      │
 │  │       │             → openclaw gateway start                         │
@@ -78,11 +77,11 @@
 │  │  └──────────┬──────────────────────────┘                       │  │
 │  │             │                                                  │  │
 │  │     ┌───────┴────────────────────────────────┐                 │  │
-│  │     │           Docker Containers            │                 │  │
+│  │     │     Rootless Podman Containers         │                 │  │
 │  │     │                                        │                 │  │
 │  │     │  ┌─────────────────────────────────┐   │                 │  │
 │  │     │  │  cuda-sandbox (nemoclaw)        │   │                 │  │
-│  │     │  │  Image: nemoclaw-sandbox:latest │   │                 │  │
+│  │     │  │  Image: NVIDIA-managed image     │   │                 │  │
 │  │     │  │  Workspace: cuda-dev            │   │                 │  │
 │  │     │  │  Provider: nvidia               │   │                 │  │
 │  │     │  │  OpenClaw Gateway (:18789)      │   │                 │  │
@@ -137,7 +136,7 @@ charts/saw-bom/profiles/
 
 | Type | Image | Use Case | Gateway | Entrypoint |
 |------|-------|----------|---------|------------|
-| nemoclaw | nemoclaw-sandbox:latest | NemoClaw-managed agent with inference | OpenClaw via sandbox exec | NemoClaw supervisor |
+| nemoclaw | NVIDIA-managed image selected by `nemoclaw onboard` | NemoClaw-managed agent with inference | `nemoclaw <name> connect` | NemoClaw supervisor |
 | openclaw | openclaw-openshell:latest | Standalone OpenClaw agent | OpenClaw via sandbox exec | CSB entrypoint (wrapped) |
 | generic | base | Plain sandbox for tools/scripts | None | OpenShell supervisor |
 

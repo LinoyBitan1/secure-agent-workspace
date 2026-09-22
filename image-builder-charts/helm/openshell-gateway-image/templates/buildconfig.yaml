@@ -29,7 +29,7 @@ spec:
       StateDirectory=openshell/gateway
       Environment=OPENSHELL_LOCAL_TLS_DIR=%h/.local/state/openshell/tls
       EnvironmentFile=-%E/openshell/gateway.env
-      ExecStartPre=/usr/local/bin/openshell-gateway generate-certs --output-dir ${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal
+      ExecStartPre=/usr/local/bin/openshell-gateway generate-certs --output-dir ${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal{{ if ne .Values.containerRuntime "docker" }} --server-san host.containers.internal{{ end }}
       ExecStart=/usr/local/bin/openshell-gateway
       Restart=on-failure
       RestartSec=5s
@@ -138,7 +138,7 @@ spec:
         {{- if eq .Values.containerRuntime "docker" }}
         RUNTIME_GW="$(docker network inspect bridge --format '{{ "{{" }}(index .IPAM.Config 0).Gateway{{ "}}" }}' 2>/dev/null || echo '172.17.0.1')"
         {{- else }}
-        RUNTIME_GW="$(podman network inspect podman --format '{{ "{{" }}(index .Subnets 0).Gateway{{ "}}" }}' 2>/dev/null || echo '10.88.0.1')"
+        RUNTIME_GW="host.containers.internal"
         PODMAN_SOCK="/run/user/${USER_UID}/podman/podman.sock"
         {{- end }}
         cat >> "${USER_HOME}/.config/openshell/gateway.env" <<RUNTIMEEOF

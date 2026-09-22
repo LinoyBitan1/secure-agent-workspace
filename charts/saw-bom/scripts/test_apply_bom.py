@@ -18,11 +18,14 @@ from apply_bom import (  # noqa: E402
     Provider,
     Sandbox,
     Workspace,
+    WorkspaceDeployer,
     check_provider_type_mismatch,
     find_provider,
+    image_pull_command,
     parse_profiles,
     resolve_configured_type,
     resolve_credential,
+    runtime_command,
 )
 
 
@@ -213,6 +216,90 @@ def test_resolve_configured_type_none_when_unset(monkeypatch):
     monkeypatch.delenv("PROV_NVIDIA_TYPE", raising=False)
     p = Provider(name="nvidia", type="nvidia")
     assert resolve_configured_type(p) is None
+
+
+# ---------------------------------------------------------------------------
+# Runtime and managed NemoClaw onboarding
+# ---------------------------------------------------------------------------
+
+class _RecordingShell:
+    dry_run = True
+
+    def __init__(self):
+        self.calls = []
+
+    def run(self, cmd, env=None, check=True):
+        self.calls.append((cmd, env or {}))
+        if cmd[:3] == ["openshell", "sandbox", "get"]:
+            return 1, "", "not found"
+        if cmd[:2] == ["which", "nemoclaw"]:
+            return 1, "", "not found"
+        return 0, "", ""
+
+
+def test_runtime_command_defaults_to_rootless_podman():
+    assert runtime_command("podman", "pull", "image:tag") == [
+        "podman", "pull", "image:tag"
+    ]
+
+
+def test_runtime_command_keeps_explicit_docker_compatibility():
+    assert runtime_command("docker", "pull", "image:tag") == [
+        "sudo", "docker", "pull", "image:tag"
+    ]
+
+
+def test_internal_registry_pull_disables_tls_only_for_podman():
+    image = "image-registry.openshift-image-registry.svc.cluster.local:5000/ns/image:tag"
+    assert image_pull_command("podman", image) == [
+        "podman", "pull", "--tls-verify=false", image
+    ]
+    assert image_pull_command("docker", image) == [
+        "sudo", "docker", "pull", image
+    ]
+
+
+def test_nemoclaw_onboarding_selects_podman_without_custom_image():
+    shell = _RecordingShell()
+    deployer = WorkspaceDeployer(shell, None)
+    sandbox = Sandbox(name="cuda-sandbox", type="nemoclaw", agent="openclaw")
+    provider = Provider(name="nvidia", type="nvidia", nemoclaw_provider="build")
+
+    assert deployer.onboard_nemoclaw(sandbox, provider, "secret") is True
+
+    command, env = shell.calls[-1]
+    assert command[:2] == ["nemoclaw", "onboard"]
+    assert "--from" not in command
+    assert env["NEMOCLAW_GATEWAY_RUNTIME"] == "podman"
+    assert "NEMOCLAW_IGNORE_RUNTIME_RESOURCES" not in env
+
+
+def test_nemoclaw_cli_install_pulls_with_selected_runtime():
+    shell = _RecordingShell()
+    deployer = WorkspaceDeployer(shell, None)
+
+    deployer.install_nemoclaw_cli(
+        "image-registry.openshift-image-registry.svc.cluster.local:5000/ns/nemoclaw-cli:latest"
+    )
+
+    assert [tuple(cmd) for cmd, _ in shell.calls if cmd[:2] == ["podman", "pull"]] == [
+        ("podman", "pull", "--tls-verify=false",
+         "image-registry.openshift-image-registry.svc.cluster.local:5000/ns/nemoclaw-cli:latest")
+    ]
+
+
+def test_generic_sandbox_pull_uses_selected_runtime():
+    shell = _RecordingShell()
+    deployer = WorkspaceDeployer(shell, None)
+    sandbox = Sandbox(
+        name="generic-sandbox",
+        image="image-registry.openshift-image-registry.svc.cluster.local:5000/ns/image:tag",
+    )
+
+    deployer.create_sandbox_generic(sandbox)
+
+    assert ([("podman", "pull", "--tls-verify=false", sandbox.image)]
+            == [tuple(cmd) for cmd, _ in shell.calls if cmd[:2] == ["podman", "pull"]])
 
 
 if __name__ == "__main__":

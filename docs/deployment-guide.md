@@ -23,7 +23,7 @@ Each sandbox provides an OpenShell gateway with OIDC authentication, governance 
                          |  |  Gateway :17670  |  |
                          |  |  Dashboard :8080 |  |
                          |  |  Agent :18789    |  |
-                         |  |  Docker sandboxes|  |
+                         |  | Rootless Podman |  |
                          |  +--------+---------+  |
                          |           |             |
                          |  +--------v---------+  |
@@ -61,10 +61,10 @@ All applications are defined in `values-prod.yaml` and deployed by the Validated
 
 The `openshell-gateway-image` BuildConfig creates a Fedora 44 qcow2 image with:
 
-- Docker CE (podman removed), Node.js, Python3, cloud-init, openssh, qemu-guest-agent
-- `cloud-user` with sudo access and Docker group membership
+- Fedora Podman, Node.js, Python3, cloud-init, openssh, qemu-guest-agent
+- `cloud-user` with sudo access, linger enabled, and a rootless `podman.socket`
 - Systemd user service for the OpenShell gateway (`openshell-gateway.service`)
-- First-boot setup service (`openshell-gateway-setup.service`) that starts Docker, enables the gateway, and configures mTLS certs
+- First-boot setup service (`openshell-gateway-setup.service`) that starts the user Podman socket, enables the gateway, and configures mTLS certs
 
 The image is pushed to an internal ImageStream (`openshell-gateway:latest`) and used as a DataSource for cloning VM disks.
 
@@ -119,7 +119,7 @@ A Kubernetes Job (`openshell-saw-setup`) runs after the VM boots. It:
 2. **Bootstraps golden image** — creates DataVolume/DataSource if missing, waits for CDI import
 3. **Creates cloud-init Secret** — substitutes the SSH public key into the template ConfigMap
 4. **Waits for VM** — DataVolume ready, VMI running, SSH reachable, cloud-init complete
-5. **Installs binaries** — pulls gateway and supervisor container images via Docker on the VM, extracts binaries, installs openshell CLI via pip
+5. **Installs binaries** — pulls gateway, supervisor, and CLI images through the selected VM runtime (rootless Podman by default) and extracts the binaries
 6. **Restarts gateway** with new binaries
 7. **Copies scripts** to VM — `run-create.sh`, `setup-nemoclaw.sh`, `configure-vertex-user.sh`, `setup-dashboard.sh`
 8. **Fetches OIDC token** from Keycloak for the sandbox owner
@@ -128,10 +128,10 @@ A Kubernetes Job (`openshell-saw-setup`) runs after the VM boots. It:
     - Configures inference provider with API credentials
     - Registers mTLS local gateway (`openshell-local`) and OIDC remote gateway
     - Runs `nemoclaw onboard` in externally-supervised mode
-    - Creates sandbox from the configured image
-    - Starts the agent web UI (openclaw) inside the sandbox on port 18789
+    - Lets NemoClaw resolve and create its NVIDIA-managed sandbox image
+    - Starts the managed agent lifecycle; connect with `nemoclaw <name> connect`
     - Injects SSH public key into the sandbox
-    - Starts the dashboard + OAuth2 proxy as Docker containers
+    - Starts the dashboard + OAuth2 proxy through the selected runtime
 
 ## Network Architecture
 
@@ -171,7 +171,8 @@ make check-prereqs          # Verify operators and CLI tools
 ```bash
 make generate-keys           # Create SSH keypair
 make ssh-secret              # Create Kubernetes secrets from keys
-make build-gateway-docker    # Build Docker golden VM image (or: make copy-images)
+make build-gateway-podman   # Build the default rootless-Podman golden VM image
+make build-gateway-docker   # Optional Docker fallback
 make keycloak                # Deploy Keycloak (if not via ArgoCD)
 ```
 

@@ -382,7 +382,7 @@ make delete-all
 │   └── pattern-secrets/              # ExternalSecrets for provider API keys + SSH
 ├── image-builder-charts/             # Build-time charts (imagestreams, bootc image)
 │   └── helm/
-│       ├── nemoclaw-imagestream/     # NemoClaw sandbox image BuildConfig
+│       ├── nemoclaw-imagestream/     # Optional custom NemoClaw sandbox image BuildConfig
 │       ├── nemoclaw-cli-imagestream/ # NemoClaw CLI image BuildConfig
 │       └── openshell-gateway-image/  # Bootc gateway VM image + golden image
 ├── scripts/                          # Runtime utilities and automation

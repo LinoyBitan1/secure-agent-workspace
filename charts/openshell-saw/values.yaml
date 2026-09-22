@@ -21,7 +21,7 @@ sshPublicKey: ""
 #        httpURL: "https://example.com/openshell-gateway.qcow2"
 #
 # VM disk source — clone from a golden image DataSource.
-# The golden image is built on the cluster via make build-gateway-image
+# The golden image is built on the cluster via make build-gateway-podman
 # and imported by the openshell-gateway-image helm chart.
 source:
   # Leave empty to auto-select from containerRuntime (openshell-gateway-docker for docker,
@@ -41,7 +41,9 @@ vm:
   memory: 8Gi
   diskSize: 40Gi
 
-# Sandbox container image. When empty, auto-detects from the internal registry.
+# Generic/OpenClaw sandbox container image. Leave empty for NemoClaw so
+# `nemoclaw onboard` selects NVIDIA's managed image; custom images are an
+# explicit Docker `--from` workflow.
 sandboxImage: ""
 
 # If you don't have push access to the quay.io registry referenced by a BOM
@@ -55,28 +57,30 @@ sandboxImage: ""
 # VM's systemd-resolved doesn't apply search-domain suffixing to
 # multi-label hostnames the way a pod's glibc resolver does, so the short
 # "...svc:5000" form used elsewhere in this chart won't resolve there).
-# The sandbox VM's Docker daemon is external to the cluster (no
+# The sandbox VM's container runtime is external to the cluster (no
 # ServiceAccount pull secret), so also enable anonymous pull below.
 internalRegistry:
   # Grants system:image-puller to system:unauthenticated, scoped to this
-  # namespace only, so the sandbox VM's Docker daemon can pull
+  # namespace only, so the sandbox VM's runtime can pull
   # internally-built images without credentials. Off by default since it's
   # only needed for the internal-registry fallback above.
   allowAnonymousPull: false
 
 # NemoClaw CLI container image. Used to install the nemoclaw CLI on the gateway VM.
+# Empty uses the namespace-local nemoclaw-cli:latest ImageStream, which is built
+# from the pinned NemoClaw revision in image-builder-charts/helm/nemoclaw-cli-imagestream.
 nemoclawCliImage: ""
 
 # Agent to run inside the sandbox: openclaw, hermes, or langchain-deepagents-code
 agent: openclaw
 
-# Onboarding CLI: openclaw (runs inside sandbox) or nemoclaw (runs on gateway VM, requires Docker)
-onboardCli: openclaw
+# Onboarding CLI: openclaw (legacy in-sandbox setup) or nemoclaw (gateway VM onboarding)
+onboardCli: nemoclaw
 
 # Container runtime inside the gateway VM: docker or podman
-# docker: uses openshell-gateway-docker golden image. Required for NemoClaw onboarding.
-# podman: uses openshell-gateway golden image. For openclaw, opencode, or any external sandbox image.
-containerRuntime: docker
+# docker: uses openshell-gateway-docker golden image (explicit fallback).
+# podman: uses openshell-gateway golden image and the cloud-user rootless socket.
+containerRuntime: podman
 
 # OpenShell gateway runtime configuration inside the sandbox VM.
 openshell:
@@ -85,14 +89,15 @@ openshell:
   # to restrict access to local VM context only.
   bindAddress: "0.0.0.0"
   # OpenShell binaries installed at provisioning time (not baked into golden image).
-  gatewayImage: "quay.io/opendatahub/odh-openshell-gateway:v0.0.103-rhaiv.0"
-  supervisorImage: "quay.io/opendatahub/odh-openshell-supervisor:v0.0.103-rhaiv.0"
-  version: "0.0.103+rhaiv.0"
+  gatewayImage: "quay.io/opendatahub/odh-openshell-gateway:v0.0.116-rhaiv.0"
+  supervisorImage: "quay.io/opendatahub/odh-openshell-supervisor:v0.0.116-rhaiv.0"
+  cliImage: "quay.io/opendatahub/odh-openshell-cli:v0.0.116-rhaiv.0"
+  version: "0.0.116+rhaiv.0"
   pipIndexUrl: "https://packages.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA1/cpu-ubi9-test/simple/"
 
-  # gatewayImage: "ghcr.io/nvidia/openshell/gateway:0.0.103"
-  # supervisorImage: "ghcr.io/nvidia/openshell/supervisor:0.0.103"
-  # version: "0.0.103"
+  # gatewayImage: "ghcr.io/nvidia/openshell/gateway:0.0.116"
+  # supervisorImage: "ghcr.io/nvidia/openshell/supervisor:0.0.116"
+  # version: "0.0.116"
   # pipIndexUrl: ""
 # Inference provider configuration.
 # Provider keys: gemini, brave, tavily (governed profiles required for each)
@@ -153,8 +158,8 @@ route:
   webui: true
 
 # OpenShell Dashboard — standalone Go BFF + React admin UI for OpenShell
-# (gateways, workspaces, sandboxes, providers). Runs via docker inside the
-# sandbox VM (this branch has no podman — see docs/jira/switch-podman-to-docker.md),
+# (gateways, workspaces, sandboxes, providers). Runs via the selected runtime
+# inside the sandbox VM,
 # fronted by oauth2-proxy for OIDC/PKCE auth against the
 # centralized Keycloak. Requires oidc.issuerUrl/oidc.token to be set — the
 # dashboard's gRPC client has no mTLS support, so it only works against an

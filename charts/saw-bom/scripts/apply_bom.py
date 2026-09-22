@@ -18,6 +18,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -282,6 +283,45 @@ def find_provider(ws, names):
 
 
 # ---------------------------------------------------------------------------
+# Container runtime commands
+# ---------------------------------------------------------------------------
+
+SUPPORTED_RUNTIMES = {"docker", "podman"}
+INTERNAL_REGISTRY_HOST = "image-registry.openshift-image-registry.svc.cluster.local:"
+
+
+def _validate_runtime(runtime):
+    runtime = (runtime or "podman").strip().lower()
+    if runtime not in SUPPORTED_RUNTIMES:
+        raise ValueError(f"unsupported container runtime: {runtime}")
+    return runtime
+
+
+def runtime_command(runtime, *args):
+    """Build a container-engine command for the selected gateway runtime."""
+    runtime = _validate_runtime(runtime)
+    prefix = ["podman"] if runtime == "podman" else ["sudo", "docker"]
+    return prefix + list(args)
+
+
+def image_pull_command(runtime, image):
+    """Build a runtime-specific image pull command.
+
+    Rootless Podman needs the OpenShift service registry's self-signed CA
+    bypass, while external registries retain normal TLS verification.
+    Docker keeps its existing daemon-based pull behavior.
+    """
+    runtime = _validate_runtime(runtime)
+    if runtime == "podman" and image.startswith(INTERNAL_REGISTRY_HOST):
+        return ["podman", "pull", "--tls-verify=false", image]
+    return runtime_command(runtime, "pull", image)
+
+
+def runtime_shell_command(runtime, *args):
+    return shlex.join(runtime_command(runtime, *args))
+
+
+# ---------------------------------------------------------------------------
 # Gateway setup
 # ---------------------------------------------------------------------------
 
@@ -360,9 +400,10 @@ class GatewaySetup:
 # ---------------------------------------------------------------------------
 
 class WorkspaceDeployer:
-    def __init__(self, shell, gateway_setup):
+    def __init__(self, shell, gateway_setup, runtime="podman"):
         self.sh = shell
         self.gw = gateway_setup
+        self.runtime = _validate_runtime(runtime)
 
     def create_workspace(self, ws):
         if ws.name == "default":
@@ -417,7 +458,8 @@ class WorkspaceDeployer:
                 return
         is_full_ref = sandbox.image and ("/" in sandbox.image or ":" in sandbox.image)
         if is_full_ref:
-            self.sh.run(["sudo", "docker", "pull", sandbox.image], check=False)
+            self.sh.run(image_pull_command(self.runtime, sandbox.image),
+                        check=False)
         args = ["openshell", "sandbox", "create", "--name", sandbox.name]
         if sandbox.image:
             args += ["--from", sandbox.image]
@@ -435,14 +477,14 @@ class WorkspaceDeployer:
                 time.sleep(10)
             self.sh.run([
                 "bash", "-c",
-                "CNAME=$(sudo docker ps -a "
+                f"CNAME=$({runtime_shell_command(self.runtime, 'ps', '-a')} "
                 f"--filter 'name=openshell.*{sandbox.name}' "
                 "--format '{{.Names}}' | head -1) && "
                 "echo \"Container: $CNAME\" && "
-                "echo \"Status: $(sudo docker inspect $CNAME "
+                f"echo \"Status: $({runtime_shell_command(self.runtime, 'inspect')} $CNAME "
                 "--format '{{.State.Status}} ExitCode={{.State.ExitCode}}')"
                 "\" && echo '--- logs ---' && "
-                "sudo docker logs $CNAME 2>&1 | tail -30"
+                f"{runtime_shell_command(self.runtime, 'logs')} $CNAME 2>&1 | tail -30"
             ], check=False)
 
     def chown_sandbox_home(self, sandbox_name):
@@ -450,18 +492,18 @@ class WorkspaceDeployer:
 
         The image bakes UID 65532. The supervisor rewrites passwd to
         whatever uid is free (1000, 998, …) and does not chown existing
-        files. openshell sandbox exec cannot chown (not root); docker
-        exec -u 0 can. After passwd rewrite, name 'sandbox' is the
-        runtime uid, so this works on any cluster.
+        files. openshell sandbox exec cannot chown (not root); the selected
+        container runtime's `exec -u 0` can. After passwd rewrite, name
+        'sandbox' is the runtime uid, so this works on any cluster.
         """
         log(f"Chowning /sandbox to sandbox user in '{sandbox_name}'")
         self.sh.run([
             "bash", "-c",
-            "CNAME=$(sudo docker ps -a "
+            f"CNAME=$({runtime_shell_command(self.runtime, 'ps', '-a')} "
             f"--filter 'name=openshell.*{sandbox_name}' "
             "--format '{{.Names}}' | head -1) && "
             "[ -n \"$CNAME\" ] && "
-            "sudo docker exec -u 0 \"$CNAME\" "
+            f"{runtime_shell_command(self.runtime, 'exec', '-u', '0')} \"$CNAME\" "
             "chown -R sandbox:sandbox /sandbox",
         ], check=False)
 
@@ -473,11 +515,15 @@ class WorkspaceDeployer:
             log("nemoclaw CLI already installed, skipping")
             return
         section("Installing nemoclaw CLI")
+        self.sh.run(image_pull_command(self.runtime, cli_image), check=False)
+        runtime_create = runtime_shell_command(self.runtime, "create")
+        runtime_cp = runtime_shell_command(self.runtime, "cp")
+        runtime_rm = runtime_shell_command(self.runtime, "rm")
         self.sh.run([
             "bash", "-c",
-            f"CID=$(docker create '{cli_image}' 2>/dev/null) && "
-            f"docker cp $CID:/opt/nemoclaw /tmp/nemoclaw-cli && "
-            f"docker rm $CID >/dev/null && "
+            f"CID=$({runtime_create} '{cli_image}' 2>/dev/null) && "
+            f"{runtime_cp} $CID:/opt/nemoclaw /tmp/nemoclaw-cli && "
+            f"{runtime_rm} $CID >/dev/null && "
             f"sudo mv /tmp/nemoclaw-cli /opt/nemoclaw && "
             f"printf '#!/usr/bin/env bash\\nexec node "
             f"/opt/nemoclaw/bin/nemoclaw.js \"$@\"\\n' "
@@ -507,7 +553,7 @@ class WorkspaceDeployer:
         env = {
             "NEMOCLAW_GATEWAY_MANAGEMENT": mgmt_path,
             "NEMOCLAW_GATEWAY_PORT": "17670",
-            "NEMOCLAW_IGNORE_RUNTIME_RESOURCES": "1",
+            "NEMOCLAW_GATEWAY_RUNTIME": self.runtime,
             "NEMOCLAW_OPENSHELL_GATEWAY_BIN":
                 "/usr/local/bin/openshell-gateway",
             "NEMOCLAW_OPENSHELL_SANDBOX_BIN":
@@ -745,6 +791,8 @@ def main():
     parser.add_argument("--oidc-gateway", default="")
     parser.add_argument("--mtls-gateway", default="openshell-local")
     parser.add_argument("--nemoclaw-cli-image", default="")
+    parser.add_argument("--container-runtime", choices=sorted(SUPPORTED_RUNTIMES),
+                        default="podman")
     parser.add_argument("--dashboard-route", default="")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -779,7 +827,7 @@ def main():
     gw.enable_providers_v2()
 
     # --- Phase 2: Deploy profiles ---
-    deployer = WorkspaceDeployer(sh, gw)
+    deployer = WorkspaceDeployer(sh, gw, runtime=args.container_runtime)
     for profile in profiles:
         banner(f"Phase 2: Profile '{profile.name}' "
                f"({len(profile.workspaces)} workspace(s))")
@@ -828,12 +876,11 @@ def main():
                 section(f"Sandbox '{sb.name}' (type={sb.type})")
 
                 if sb.type == "nemoclaw":
-                    # Nemoclaw flow (matches feat/fix-docker-golden-image):
-                    # 1. Install nemoclaw CLI
-                    # 2. nemoclaw onboard (configures provider)
-                    # 3. Fallback: openshell provider create
-                    # 4. openshell sandbox create
-                    # 5. Start openclaw gateway inside sandbox
+                    # NemoClaw owns the managed sandbox lifecycle.  In
+                    # particular, do not pre-pull a custom image, call
+                    # `openshell sandbox create --from`, or start a second
+                    # OpenClaw gateway here: that would bypass the managed
+                    # image/runtime path being validated.
                     if not nemoclaw_cli_installed:
                         cli_img = args.nemoclaw_cli_image or \
                             os.environ.get("NEMOCLAW_CLI_IMAGE", "")
@@ -841,37 +888,25 @@ def main():
                             deployer.install_nemoclaw_cli(cli_img)
                             nemoclaw_cli_installed = True
 
-                    is_full_ref = sb.image and ("/" in sb.image
-                                                or ":" in sb.image)
-                    if is_full_ref:
-                        deployer.sh.run(
-                            ["sudo", "docker", "pull", sb.image],
-                            check=False)
-
                     prov = find_provider(ws, sb.providers)
                     cred = resolve_credential(prov) if prov else None
                     mismatch = check_provider_type_mismatch(prov) if prov else None
                     if mismatch:
-                        log(f"ERROR: {mismatch} — skipping nemoclaw "
-                            f"onboard for '{sb.name}'.")
-                    elif prov and cred:
-                        nc_prov = prov.nemoclaw_provider or prov.type
-                        log(f"nemoclaw onboard --agent {sb.agent or 'openclaw'}"
-                            f" (provider={nc_prov})")
-                        ok = deployer.onboard_nemoclaw(sb, prov, cred)
-                        if not ok:
-                            log("nemoclaw onboard failed, "
-                                "configuring provider manually")
-                            deployer.create_provider(prov, cred, ws.name)
+                        raise SystemExit(mismatch)
+                    if not prov:
+                        raise SystemExit(
+                            f"NemoClaw sandbox '{sb.name}' has no provider")
+                    if not cred:
+                        raise SystemExit(
+                            f"No credential found for NemoClaw provider "
+                            f"'{prov.name}'")
 
-                    deployer.create_sandbox_generic(sb, ws.name)
-                    prov_id = prov.type if prov else "nvidia"
-                    model = sb.model or (prov.model if prov else "")
-                    deployer.start_openclaw_gateway(
-                        sb.name, args.dashboard_route or "",
-                        workspace_name=ws.name,
-                        provider_id=prov_id,
-                        model_id=model or "nvidia/nemotron-3-super-120b-a12b")
+                    nc_prov = prov.nemoclaw_provider or prov.type
+                    log(f"nemoclaw onboard --agent {sb.agent or 'openclaw'}"
+                        f" (provider={nc_prov}, runtime={args.container_runtime})")
+                    if not deployer.onboard_nemoclaw(sb, prov, cred):
+                        raise SystemExit(
+                            f"nemoclaw onboard failed for '{sb.name}'")
 
                 elif sb.type == "openclaw":
                     deployer.create_sandbox_generic(sb, ws.name)
