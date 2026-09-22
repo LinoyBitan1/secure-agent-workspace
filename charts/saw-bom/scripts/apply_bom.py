@@ -518,6 +518,12 @@ class WorkspaceDeployer:
         ], check=False)
 
     def onboard_nemoclaw(self, sandbox, provider, credential):
+        # Native NemoClaw onboarding performs protected gateway operations.
+        # The BOM setup leaves the mTLS alias selected for generic sandboxes,
+        # but this externally supervised gateway is registered with OIDC and
+        # must retain that identity for the onboarding probe.
+        if self.gw and self.gw.oidc_gw:
+            self.gw.select_oidc()
         state_dir = str(Path.home() / ".local" / "state" / "openshell")
         mgmt_path = str(Path.home() / "gateway-management.json")
         mgmt = {
@@ -552,6 +558,10 @@ class WorkspaceDeployer:
                 "/usr/local/bin/openshell-supervisor",
             "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE": "1",
             "NEMOCLAW_PROVIDER": nc_prov,
+            # The external supervisor already owns the listener and the OIDC
+            # registration carries the authenticated gateway metadata. Do not
+            # replace it with NemoClaw's default --local mTLS registration.
+            "NEMOCLAW_PRESERVE_GATEWAY_REGISTRATION": "1",
         }
         if sandbox.model or provider.model:
             env["NEMOCLAW_MODEL"] = sandbox.model or provider.model

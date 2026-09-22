@@ -20,6 +20,12 @@ spec:
       COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json nemoclaw/tsconfig.shared.json ./nemoclaw/
       RUN npm ci --ignore-scripts && cd nemoclaw && npm ci --ignore-scripts
       COPY . .
+      # The gateway VM is externally supervised and is registered with OIDC by
+      # the BOM setup. Preserve that registration during NemoClaw onboarding;
+      # the default external-gateway attach path would overwrite it with a
+      # local mTLS registration, losing the admin bearer credential needed by
+      # protected gateway observations.
+      RUN node -e 'const fs=require("node:fs");const p="src/lib/onboard/gateway-host-runtime.ts";let s=fs.readFileSync(p,"utf8");const a="const added = await deps.lifecycle.registerGateway({ ...request, endpoint: owner.endpoint });";const b=`const added = process.env.NEMOCLAW_PRESERVE_GATEWAY_REGISTRATION === "1" ? ({ ok: true, state: "completed" } as const) : await deps.lifecycle.registerGateway({ ...request, endpoint: owner.endpoint });`;if(!s.includes(a))throw new Error("NemoClaw gateway attach source changed; update the compatibility patch");fs.writeFileSync(p,s.replace(a,b));'
       RUN git rev-parse HEAD > .source-revision 2>/dev/null || echo "0000000000000000000000000000000000000000" > .source-revision
       RUN npm run build:cli
 

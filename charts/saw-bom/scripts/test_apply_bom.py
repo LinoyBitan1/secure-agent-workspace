@@ -254,6 +254,7 @@ def test_nemoclaw_onboard_selects_podman_runtime(monkeypatch):
         "secret",
     )
     assert shell.env["NEMOCLAW_GATEWAY_RUNTIME"] == "podman"
+    assert shell.env["NEMOCLAW_PRESERVE_GATEWAY_REGISTRATION"] == "1"
 
 
 def test_nemoclaw_onboard_exports_provider_type_and_alias_credentials(monkeypatch):
