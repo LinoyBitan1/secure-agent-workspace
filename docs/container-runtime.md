@@ -7,13 +7,15 @@ No golden image rebuild is required to switch — both images are pre-built and 
 
 | Runtime | Golden image | Use case |
 |---|---|---|
-| `podman` (default) | `openshell-gateway` | NemoClaw, openclaw, opencode, and external images |
+| `podman` (default) | `openshell-gateway` | NemoClaw fallback validation, openclaw, opencode, and external images |
 | `docker` (legacy) | `openshell-gateway-docker` | Docker-only compatibility and internal-registry workflows |
 
 ## Choosing a runtime
 
-The runtime is selected independently with `containerRuntime`. NemoClaw, openclaw,
-and opencode use the selected OpenShell driver; Podman is the default because it is
+The runtime is selected independently with `containerRuntime`. OpenClaw and opencode
+use the selected OpenShell driver directly. NemoClaw first attempts its native
+onboarding; with the currently validated release, Podman uses the OpenShell sandbox
+fallback when that Docker-only preflight fails. Podman is the default because it is
 rootless and included in Fedora.
 
 Set `containerRuntime` to match:
@@ -56,7 +58,7 @@ onboardCli: nemoclaw
 ## Building the golden images
 
 ```bash
-# Podman variant — default for NemoClaw, openclaw, and opencode
+# Podman variant — default for NemoClaw fallback validation, openclaw, and opencode
 make build-gateway-podman
 
 # Docker compatibility variant (optional)
@@ -69,7 +71,7 @@ Both can coexist in the same namespace.
 ## Deploying a sandbox
 
 ```bash
-# Podman runtime + NemoClaw (default)
+# Podman runtime + NemoClaw fallback validation (default)
 make openshell-saw-create \
   OPENSHELL_SAW_NAME=my-sandbox \
   CONTAINER_RUNTIME=podman \
