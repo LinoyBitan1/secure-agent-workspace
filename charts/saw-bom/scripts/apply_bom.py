@@ -326,6 +326,28 @@ class GatewaySetup:
         with open(token_path, "w", encoding="utf-8") as f:
             json.dump(token_data, f)
         token_path.chmod(0o600)
+        metadata_path = token_dir / "metadata.json"
+        metadata = {}
+        if metadata_path.is_file():
+            try:
+                with open(metadata_path, encoding="utf-8") as f:
+                    metadata = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                metadata = {}
+        metadata.update({
+            "name": gw_name,
+            "gateway_endpoint": metadata.get(
+                "gateway_endpoint", "https://127.0.0.1:17670"),
+            "is_remote": metadata.get("is_remote", False),
+            "gateway_port": metadata.get("gateway_port", 17670),
+            "auth_mode": "oidc",
+            "oidc_issuer": issuer,
+            "oidc_client_id": client_id,
+            "oidc_audience": client_id,
+        })
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f)
+        metadata_path.chmod(0o600)
         log(f"OIDC token written for gateway '{gw_name}'")
 
     def register_mtls_gateway(self):
