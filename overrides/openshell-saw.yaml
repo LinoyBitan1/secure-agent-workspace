@@ -7,7 +7,14 @@ job:
   waitForSecrets: true
   backoffLimit: 5
 
-nemoclawCliImage: "quay.io/rh-ee-lbitan/nemoclaw-cli:latest"
+# Use the locally built CLI ImageStream so the VM receives the compatibility
+# patch that makes NemoClaw honor NEMOCLAW_GATEWAY_PORT during preflight.
+# The setup chart installs the service CA and grants anonymous image-pull
+# access when internalRegistry.allowAnonymousPull is enabled below.
+nemoclawCliImage: "image-registry.openshift-image-registry.svc.cluster.local:5000/openshell-agents/nemoclaw-cli:latest"
+
+internalRegistry:
+  allowAnonymousPull: true
 
 dashboard:
   insecureSkipIssuerTlsVerify: true
