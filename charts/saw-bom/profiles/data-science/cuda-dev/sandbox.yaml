@@ -7,7 +7,7 @@ spec:
       type: nemoclaw
       enabled: true
       agent: openclaw
-      image: quay.io/rh-ai-quickstart/nemoclaw-sandbox:latest
+      image: quay.io/rh-ee-lbitan/nemoclaw-sandbox:latest
       providers:
         - nvidia
     - name: toolbox

@@ -536,9 +536,15 @@ class WorkspaceDeployer:
                 json.dump(mgmt, f)
 
         nc_prov = provider.nemoclaw_provider or provider.type
+        runtime = os.environ.get("CONTAINER_RUNTIME", "podman").strip().lower()
+        if runtime not in {"docker", "podman"}:
+            raise ValueError(f"unsupported container runtime: {runtime}")
         env = {
             "NEMOCLAW_GATEWAY_MANAGEMENT": mgmt_path,
             "NEMOCLAW_GATEWAY_PORT": "17670",
+            # NemoClaw's Linux onboarding defaults to Docker. Select the same
+            # runtime configured for the gateway VM explicitly.
+            "NEMOCLAW_GATEWAY_RUNTIME": runtime,
             "NEMOCLAW_IGNORE_RUNTIME_RESOURCES": "1",
             "NEMOCLAW_OPENSHELL_GATEWAY_BIN":
                 "/usr/local/bin/openshell-gateway",

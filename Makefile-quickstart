@@ -1,6 +1,6 @@
 NS             ?= openshell-agents
 BUILD_NS       ?= openshell-agents
-QUAY_REPO      ?= quay.io/rh-ai-quickstart
+QUAY_REPO      ?= quay.io/rh-ee-lbitan
 OPENSHELL_VERSION ?= 0.0.116
 OPENSHELL_SAW_NAME ?=
 SANDBOX_IMAGE  ?=

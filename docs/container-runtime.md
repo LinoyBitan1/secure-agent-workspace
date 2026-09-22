@@ -7,16 +7,14 @@ No golden image rebuild is required to switch — both images are pre-built and 
 
 | Runtime | Golden image | Use case |
 |---|---|---|
-| `podman` (default) | `openshell-gateway` | NemoClaw fallback validation, openclaw, opencode, and external images |
+| `podman` (default) | `openshell-gateway` | NemoClaw, openclaw, opencode, and external images |
 | `docker` (legacy) | `openshell-gateway-docker` | Docker-only compatibility and internal-registry workflows |
 
 ## Choosing a runtime
 
-The runtime is selected independently with `containerRuntime`. OpenClaw and opencode
-use the selected OpenShell driver directly. NemoClaw first attempts its native
-onboarding; with the currently validated release, Podman uses the OpenShell sandbox
-fallback when that Docker-only preflight fails. Podman is the default because it is
-rootless and included in Fedora.
+The runtime is selected independently with `containerRuntime`. OpenClaw, opencode,
+and NemoClaw use the selected OpenShell driver directly. Podman is the default
+because it is rootless and included in Fedora.
 
 Set `containerRuntime` to match:
 
@@ -58,7 +56,7 @@ onboardCli: nemoclaw
 ## Building the golden images
 
 ```bash
-# Podman variant — default for NemoClaw fallback validation, openclaw, and opencode
+# Podman variant — default for NemoClaw, openclaw, and opencode
 make build-gateway-podman
 
 # Docker compatibility variant (optional)
@@ -71,7 +69,7 @@ Both can coexist in the same namespace.
 ## Deploying a sandbox
 
 ```bash
-# Podman runtime + NemoClaw fallback validation (default)
+# Podman runtime + NemoClaw (default)
 make openshell-saw-create \
   OPENSHELL_SAW_NAME=my-sandbox \
   CONTAINER_RUNTIME=podman \
@@ -156,13 +154,13 @@ ssh \
 ## Known limitations
 
 **NemoClaw with Podman** is the APPENG-6276 validation target. The default deployment
-uses rootless Podman; if onboarding or connect reports a Docker-only preflight failure,
-capture that result as a validation blocker rather than switching the production default
-back silently.
+uses rootless Podman and sets `NEMOCLAW_GATEWAY_RUNTIME=podman` during onboarding so
+NemoClaw selects its native rootless Podman path. The setup flow retains a provider
+fallback for older NemoClaw releases that still enforce the Docker-only preflight.
 
 **The `inference.local` route** (NemoClaw's LLM routing inside the openclaw sandbox) requires the OpenShell gateway to be in Docker-driver mode (openshell ≤ 0.0.97). With the externally-supervised gateway (0.0.99+), `nemoclaw onboard` reaches step 4 then exits with `OpenShell inference route was not configured`. The provider fallback in `setup-nemoclaw.sh` handles this gracefully — inference still works via the gateway-level `inference` provider.
 
-**The `nemoclaw-sandbox` image** must be available in the cluster before the setup Job runs. Either build it with `make build-nemoclaw` or mirror it from `quay.io/rh-ai-quickstart/nemoclaw-sandbox:<version>` using an in-cluster skopeo job (see Bug #1 in `local-docs/deployment-summary.md`).
+**The `nemoclaw-sandbox` image** must be available in the cluster before the setup Job runs. Either build it with `make build-nemoclaw` or mirror it from the configured `QUAY_REPO` using an in-cluster skopeo job (see Bug #1 in `local-docs/deployment-summary.md`).
 
 ## Risks
 

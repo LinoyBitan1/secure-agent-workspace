@@ -40,7 +40,7 @@
 │  │   ├── Create workspace (via OIDC gateway)                            │
 │  │   ├── Create providers (nvidia, brave, etc.)                         │
 │  │   └── Create sandboxes (nemoclaw, openclaw, generic)                 │
-│  │       ├── nemoclaw: onboard → fallback provider → sandbox create     │
+│  │       ├── nemoclaw: onboard → sandbox create                         │
 │  │       │             → openclaw gateway start                         │
 │  │       ├── openclaw: sandbox create → wait Ready                      │
 │  │       │             → openclaw onboard (custom NVIDIA provider)      │

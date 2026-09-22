@@ -6,7 +6,7 @@
 # governance-policy chart, which creates the ConfigMap this
 # deployment mounts.
 enabled: true
-image: "quay.io/rh-ai-quickstart/governance-interceptor:latest"
+image: "quay.io/rh-ee-lbitan/governance-interceptor:latest"
 # gRPC listen port
 port: 18081
 # Interceptor-to-gateway connection (for hot-reload push)

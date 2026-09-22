@@ -6,14 +6,14 @@ spec:
     - name: notebook
       type: openclaw
       enabled: true
-      image: quay.io/rh-ai-quickstart/openclaw-openshell:latest
+      image: quay.io/rh-ee-lbitan/openclaw-openshell:latest
       providers:
         - nvidia
     - name: cuda-sandbox
       type: nemoclaw
       enabled: false
       agent: openclaw
-      image: quay.io/rh-ai-quickstart/nemoclaw-sandbox:latest
+      image: quay.io/rh-ee-lbitan/nemoclaw-sandbox:latest
       providers:
         - nvidia
     - name: toolbox

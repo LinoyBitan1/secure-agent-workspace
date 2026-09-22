@@ -14,7 +14,7 @@ sshPublicKey: ""
 #
 # 2. Registry: import a bootc/containerDisk image directly from a container registry.
 #      source:
-#        registryURL: "docker://quay.io/rh-ai-quickstart/openshell-gateway:latest"
+#        registryURL: "docker://quay.io/rh-ee-lbitan/openshell-gateway:latest"
 #
 # 3. HTTP: download a qcow2 disk image from a URL.
 #      source:
@@ -46,7 +46,7 @@ sandboxImage: ""
 
 # If you don't have push access to the quay.io registry referenced by a BOM
 # profile's sandbox image (e.g. the default openclaw profile points at
-# quay.io/rh-ai-quickstart/openclaw-openshell:latest), build it yourself
+# quay.io/rh-ee-lbitan/openclaw-openshell:latest), build it yourself
 # into this cluster's own internal registry instead:
 #   make build-openclaw-openshell-local
 # then point the BOM profile's sandbox image at:

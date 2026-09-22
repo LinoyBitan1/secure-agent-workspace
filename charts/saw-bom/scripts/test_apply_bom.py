@@ -235,6 +235,49 @@ def test_runtime_command_uses_podman_default(monkeypatch):
     ]
 
 
+def test_nemoclaw_onboard_selects_podman_runtime(monkeypatch):
+    class RecordingShell:
+        dry_run = True
+
+        def __init__(self):
+            self.env = None
+
+        def run(self, cmd, **kwargs):
+            self.env = kwargs.get("env")
+            return 0, "", ""
+
+    shell = RecordingShell()
+    deployer = WorkspaceDeployer(shell, gateway_setup=None)
+    assert deployer.onboard_nemoclaw(
+        Sandbox(name="cuda-sandbox"),
+        Provider(name="nvidia", type="nvidia", nemoclaw_provider="build"),
+        "secret",
+    )
+    assert shell.env["NEMOCLAW_GATEWAY_RUNTIME"] == "podman"
+
+
+def test_nemoclaw_onboard_preserves_docker_runtime_override(monkeypatch):
+    class RecordingShell:
+        dry_run = True
+
+        def __init__(self):
+            self.env = None
+
+        def run(self, cmd, **kwargs):
+            self.env = kwargs.get("env")
+            return 0, "", ""
+
+    monkeypatch.setenv("CONTAINER_RUNTIME", "docker")
+    shell = RecordingShell()
+    deployer = WorkspaceDeployer(shell, gateway_setup=None)
+    deployer.onboard_nemoclaw(
+        Sandbox(name="docker-sandbox"),
+        Provider(name="nvidia", type="nvidia", nemoclaw_provider="build"),
+        "secret",
+    )
+    assert shell.env["NEMOCLAW_GATEWAY_RUNTIME"] == "docker"
+
+
 def test_sandbox_fallback_keeps_workload_alive():
     class RecordingShell:
         dry_run = False
