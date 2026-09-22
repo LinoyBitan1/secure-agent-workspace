@@ -4,7 +4,7 @@
 set -euo pipefail
 
 BUILD_NS="${BUILD_NS:-openshell-agents}"
-QUAY_REPO="${QUAY_REPO:-quay.io/rh-ai-quickstart}"
+QUAY_REPO="${QUAY_REPO:-quay.io/rh-ee-lbitan}"
 VERSION="${OPENSHELL_VERSION:-0.0.116}"
 # The managed NemoClaw path needs the CLI image, not the repository's optional
 # custom sandbox image. Mirror nemoclaw-sandbox explicitly when testing Docker

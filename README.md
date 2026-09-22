@@ -180,7 +180,7 @@ cp values-secret.yaml.template ~/values-secret.yaml
 # Edit ~/values-secret.yaml — set at least one provider API key and SSH keys
 
 # 5. Copy pre-built images to the cluster (~5 min)
-# Mirrors images from quay.io/rh-ai-quickstart to the internal registry.
+# Mirrors images from quay.io/rh-ee-lbitan to the internal registry.
 # No build needed — images are pre-built by maintainers.
 make copy-images
 
