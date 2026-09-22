@@ -41,12 +41,7 @@ data:
           OPENSHELL_CONFIG_FILE=/etc/openshell/gateway.toml
           {{- end }}
           {{- if or .Values.oidc.token $oidcIssuer }}
-          # OIDC is the application authentication authority for the VM's
-          # externally-supervised gateway. Keep the client CA for TLS
-          # transport, but do not authorize NemoClaw using the generated
-          # openshell-user mTLS certificate; its onboarding management calls
-          # require the admin role carried by the OIDC token.
-          OPENSHELL_ENABLE_MTLS_AUTH=false
+          OPENSHELL_ENABLE_MTLS_AUTH=true
           {{- end }}
           {{- $routeHost := include "openshell-sandbox.routeHost" . }}
           {{- if $routeHost }}
