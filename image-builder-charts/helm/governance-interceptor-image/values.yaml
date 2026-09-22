@@ -1,7 +1,7 @@
 source:
   git:
     uri: "https://github.com/NVIDIA/OpenShell.git"
-    ref: "main"
+    ref: "v0.0.116"
 
 build:
   contextDir: "examples/governance-interceptor"

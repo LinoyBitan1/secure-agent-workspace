@@ -1,6 +1,15 @@
 display_name: NVIDIA Endpoints
 description: NVIDIA API inference endpoints
 provider_type: nvidia
+credentials:
+  - name: api_key
+    description: NVIDIA API key
+    env_vars: [NVIDIA_API_KEY]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+discovery:
+  credentials: [api_key]
 endpoints:
   - host: integrate.api.nvidia.com
     port: 443
