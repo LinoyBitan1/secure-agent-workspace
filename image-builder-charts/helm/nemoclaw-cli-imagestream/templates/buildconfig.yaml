@@ -33,6 +33,7 @@ spec:
       COPY --from=builder /opt/nemoclaw/agents/ ./agents/
       COPY --from=builder /opt/nemoclaw/scripts/ ./scripts/
       COPY --from=builder /opt/nemoclaw/nemoclaw-blueprint/ ./nemoclaw-blueprint/
+      COPY --from=builder /opt/nemoclaw/managed-inference/ ./managed-inference/
       RUN sed -i 's/max_openshell_version: "0.0.85"/max_openshell_version: "{{ .Values.build.maxOpenshellVersion | default "0.0.99" }}"/' ./nemoclaw-blueprint/blueprint.yaml
       COPY --from=builder /opt/nemoclaw/schemas/ ./schemas/
       COPY --from=builder /opt/nemoclaw/Dockerfile ./Dockerfile
