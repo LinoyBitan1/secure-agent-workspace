@@ -557,8 +557,14 @@ class WorkspaceDeployer:
             env["NEMOCLAW_MODEL"] = sandbox.model or provider.model
         if credential:
             env["NEMOCLAW_PROVIDER_KEY"] = credential
-            cred_key = PROVIDER_CRED_MAP.get(nc_prov, "")
-            if cred_key:
+            # The NemoClaw alias (for example, ``build``) can resolve to a
+            # provider whose profile declares a different credential name
+            # (for example, ``nvidia`` -> ``NVIDIA_API_KEY``).  Export both
+            # names so onboarding validates against the selected profile.
+            for cred_key in {
+                PROVIDER_CRED_MAP.get(provider.type, ""),
+                PROVIDER_CRED_MAP.get(nc_prov, ""),
+            } - {""}:
                 env[cred_key] = credential
         cmd = [
             "nemoclaw", "onboard",

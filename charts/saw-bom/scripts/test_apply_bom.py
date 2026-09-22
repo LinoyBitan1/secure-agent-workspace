@@ -256,6 +256,28 @@ def test_nemoclaw_onboard_selects_podman_runtime(monkeypatch):
     assert shell.env["NEMOCLAW_GATEWAY_RUNTIME"] == "podman"
 
 
+def test_nemoclaw_onboard_exports_provider_type_and_alias_credentials(monkeypatch):
+    class RecordingShell:
+        dry_run = True
+
+        def __init__(self):
+            self.env = None
+
+        def run(self, cmd, **kwargs):
+            self.env = kwargs.get("env")
+            return 0, "", ""
+
+    shell = RecordingShell()
+    deployer = WorkspaceDeployer(shell, gateway_setup=None)
+    sandbox = Sandbox(name="cuda-sandbox")
+    provider = Provider(name="nvidia", type="nvidia", nemoclaw_provider="build")
+
+    deployer.onboard_nemoclaw(sandbox, provider, "secret")
+
+    assert shell.env["NVIDIA_API_KEY"] == "secret"
+    assert shell.env["NVIDIA_INFERENCE_API_KEY"] == "secret"
+
+
 def test_nemoclaw_onboard_preserves_docker_runtime_override(monkeypatch):
     class RecordingShell:
         dry_run = True
