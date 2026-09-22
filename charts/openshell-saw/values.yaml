@@ -190,6 +190,8 @@ governance:
   # from the release namespace (http://governance-interceptor.<namespace>.svc.cluster.local:18081).
   endpoint: ""
   port: 18081
+  # Allow the in-cluster plaintext interceptor transport for lab validation.
+  allowInsecureTransport: true
   failurePolicy: "fail_closed"
   timeout: "500ms"
 
