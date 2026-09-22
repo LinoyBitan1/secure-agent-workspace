@@ -500,9 +500,12 @@ class WorkspaceDeployer:
             return
         rc, _, _ = self.sh.run(["which", "nemoclaw"], check=False)
         if rc == 0:
-            log("nemoclaw CLI already installed, skipping")
-            return
-        section("Installing nemoclaw CLI")
+            # The image tag may have been rebuilt since the VM was created.
+            # Always refresh an explicitly supplied image so setup does not
+            # silently keep an older CLI with incompatible onboarding logic.
+            log("nemoclaw CLI already installed, refreshing from image")
+        else:
+            section("Installing nemoclaw CLI")
         runtime = self.runtime_shell_command
         self.sh.run([
             "bash", "-c",

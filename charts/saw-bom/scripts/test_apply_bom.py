@@ -235,6 +235,31 @@ def test_runtime_command_uses_podman_default(monkeypatch):
     ]
 
 
+def test_nemoclaw_cli_image_refreshes_existing_install():
+    class RecordingShell:
+        dry_run = False
+
+        def __init__(self):
+            self.commands = []
+
+        def run(self, cmd, **kwargs):
+            self.commands.append(cmd)
+            if cmd[:2] == ["which", "nemoclaw"]:
+                return 0, "/usr/local/bin/nemoclaw\n", ""
+            return 0, "", ""
+
+    shell = RecordingShell()
+    WorkspaceDeployer(shell, gateway_setup=None).install_nemoclaw_cli(
+        "registry.example/nemoclaw-cli:latest"
+    )
+
+    assert any(
+        cmd[:2] == ["bash", "-c"]
+        and "registry.example/nemoclaw-cli:latest" in cmd[2]
+        for cmd in shell.commands
+    )
+
+
 def test_nemoclaw_onboard_selects_podman_runtime(monkeypatch):
     class RecordingShell:
         dry_run = True
