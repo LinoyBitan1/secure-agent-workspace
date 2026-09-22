@@ -7,29 +7,29 @@ No golden image rebuild is required to switch — both images are pre-built and 
 
 | Runtime | Golden image | Use case |
 |---|---|---|
-| `docker` (default) | `openshell-gateway-docker` | NemoClaw onboarding, internal-registry sandbox images |
-| `podman` | `openshell-gateway` | openclaw, opencode, and any external sandbox image (ghcr.io, quay.io) |
+| `podman` (default) | `openshell-gateway` | NemoClaw, openclaw, opencode, and external images |
+| `docker` (legacy) | `openshell-gateway-docker` | Docker-only compatibility and internal-registry workflows |
 
 ## Choosing a runtime
 
-The runtime is determined by `onboardCli`:
-
-- **NemoClaw** requires Docker. NemoClaw's preflight check rejects Podman at startup.
-- **openclaw / opencode** work with either runtime. Podman is the Fedora default — no extra packages.
+The runtime is selected independently with `containerRuntime`. NemoClaw, openclaw,
+and opencode use the selected OpenShell driver; Podman is the default because it is
+rootless and included in Fedora.
 
 Set `containerRuntime` to match:
 
 ```yaml
-# docker: required for NemoClaw
-containerRuntime: docker
-onboardCli: nemoclaw
-
-# podman: use for openclaw, opencode, or any external sandbox image
+# Default deployment: rootless Podman + NemoClaw
 containerRuntime: podman
-onboardCli: openclaw
+onboardCli: nemoclaw
 ```
 
-Mixing `containerRuntime: podman` with `onboardCli: nemoclaw` is rejected at setup time with an explicit error.
+Docker remains available as an explicit legacy override:
+
+```yaml
+containerRuntime: docker
+onboardCli: nemoclaw
+```
 
 ## What changes between runtimes
 
@@ -56,11 +56,11 @@ Mixing `containerRuntime: podman` with `onboardCli: nemoclaw` is rejected at set
 ## Building the golden images
 
 ```bash
-# Docker variant — required for NemoClaw
-make build-openshell-gateway CONTAINER_RUNTIME=docker
+# Podman variant — default for NemoClaw, openclaw, and opencode
+make build-gateway-podman
 
-# Podman variant — for openclaw/opencode
-make build-openshell-gateway CONTAINER_RUNTIME=podman
+# Docker compatibility variant (optional)
+make build-gateway-docker
 ```
 
 Each produces a separate ImageStream, DataVolume, and DataSource on the cluster.
@@ -69,16 +69,16 @@ Both can coexist in the same namespace.
 ## Deploying a sandbox
 
 ```bash
-# Docker runtime + NemoClaw
-make openshell-saw-create \
-  OPENSHELL_SAW_NAME=my-sandbox \
-  CONTAINER_RUNTIME=docker \
-  PROVIDER=build MODEL=nvidia/nemotron-3-super-120b-a12b API_KEY=<nvapi-key>
-
-# Podman runtime + openclaw
+# Podman runtime + NemoClaw (default)
 make openshell-saw-create \
   OPENSHELL_SAW_NAME=my-sandbox \
   CONTAINER_RUNTIME=podman \
+  PROVIDER=build MODEL=nvidia/nemotron-3-super-120b-a12b API_KEY=<nvapi-key>
+
+# Docker compatibility runtime + NemoClaw
+make openshell-saw-create \
+  OPENSHELL_SAW_NAME=my-sandbox \
+  CONTAINER_RUNTIME=docker \
   PROVIDER=build MODEL=nvidia/nemotron-3-super-120b-a12b API_KEY=<nvapi-key>
 ```
 
@@ -153,7 +153,10 @@ ssh \
 
 ## Known limitations
 
-**NemoClaw and Podman are incompatible.** NemoClaw's preflight check (`nemoclaw onboard`) requires Docker and will exit at step 1 with `Docker is not reachable` on a Podman image. This is expected. Use `onboardCli: openclaw` with `containerRuntime: podman`.
+**NemoClaw with Podman** is the APPENG-6276 validation target. The default deployment
+uses rootless Podman; if onboarding or connect reports a Docker-only preflight failure,
+capture that result as a validation blocker rather than switching the production default
+back silently.
 
 **The `inference.local` route** (NemoClaw's LLM routing inside the openclaw sandbox) requires the OpenShell gateway to be in Docker-driver mode (openshell ≤ 0.0.97). With the externally-supervised gateway (0.0.99+), `nemoclaw onboard` reaches step 4 then exits with `OpenShell inference route was not configured`. The provider fallback in `setup-nemoclaw.sh` handles this gracefully — inference still works via the gateway-level `inference` provider.
 

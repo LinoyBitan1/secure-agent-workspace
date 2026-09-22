@@ -1,11 +1,11 @@
 source:
   git:
     uri: "https://github.com/NVIDIA/NemoClaw.git"
-    ref: "fb01aff8ed67596dcdfe38cb6f5dccdcba301a33"
+    ref: "6f3cced4230ae9660c049cc11804daf37797c595" # v0.0.124
 
 build:
   nodeImage: "node:22-trixie-slim"
-  maxOpenshellVersion: "0.0.110"
+  maxOpenshellVersion: "0.0.116"
 
 output:
   imageStreamTag: "nemoclaw-cli:latest"

@@ -5,7 +5,7 @@ set -euo pipefail
 
 BUILD_NS="${BUILD_NS:-openshell-agents}"
 QUAY_REPO="${QUAY_REPO:-quay.io/rh-ai-quickstart}"
-VERSION="${OPENSHELL_VERSION:-v0.0.103}"
+VERSION="${OPENSHELL_VERSION:-v0.0.116}"
 IMAGES="${IMAGES:-openshell-gateway openshell-gateway-docker nemoclaw-sandbox nemoclaw-cli}"
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 

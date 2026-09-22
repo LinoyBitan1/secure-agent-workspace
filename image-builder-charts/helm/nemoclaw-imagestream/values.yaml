@@ -1,11 +1,12 @@
 source:
   git:
     uri: "https://github.com/NVIDIA/NemoClaw.git"
-    ref: "fb01aff8ed67596dcdfe38cb6f5dccdcba301a33"
+    ref: "6f3cced4230ae9660c049cc11804daf37797c595" # v0.0.124
 
 build:
   targetArch: "amd64"
-  baseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest"
+  # NemoClaw v0.0.124 amd64 base image.
+  baseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.124"
   model: "claude-sonnet-4-6"
   inferenceBaseUrl: "https://inference.local/v1"
   inferenceApi: "openai-completions"
