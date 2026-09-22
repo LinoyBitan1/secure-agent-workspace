@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Phase: upgrade OpenShell binaries on the VM, patch OIDC, restart gateway.
-# Expects: GATEWAY_IMAGE, SUPERVISOR_IMAGE, OPENSHELL_PIP_VERSION, PIP_INDEX_URL,
+# Expects: GATEWAY_IMAGE, SUPERVISOR_IMAGE, CLI_IMAGE, OPENSHELL_PIP_VERSION, PIP_INDEX_URL,
 #          RUNTIME, SECRETS_DIR, WORK_DIR, NS, ALLOW_ANONYMOUS_PULL,
 #          guest_ssh/guest_scp (functions)
 
@@ -24,12 +24,24 @@ if [[ -n "${GATEWAY_IMAGE}" && -n "${SUPERVISOR_IMAGE}" && -n "${OPENSHELL_PIP_V
     sudo chmod 755 /usr/local/bin/openshell-supervisor && \
     echo 'supervisor upgraded'
   " || echo "WARN: supervisor binary upgrade failed (continuing with existing version)"
-  PIP_EXTRA=""
-  [[ -n "${PIP_INDEX_URL}" ]] && PIP_EXTRA="--extra-index-url ${PIP_INDEX_URL}"
-  guest_ssh "
-    pip3 install openshell==${OPENSHELL_PIP_VERSION} ${PIP_EXTRA} \
-    && echo 'openshell CLI upgraded'
-  " || echo "WARN: openshell CLI upgrade failed (continuing with existing version)"
+  if [[ -n "${CLI_IMAGE}" ]]; then
+    guest_ssh "
+      ${RUNTIME} pull '${CLI_IMAGE}' && \
+      CID=\$(${RUNTIME} create '${CLI_IMAGE}') && \
+      ${RUNTIME} cp \${CID}:/usr/local/bin/openshell /tmp/openshell && \
+      ${RUNTIME} rm \${CID} && \
+      sudo mv /tmp/openshell /usr/local/bin/openshell && \
+      sudo chmod 755 /usr/local/bin/openshell && \
+      echo 'openshell CLI upgraded from image'
+    " || echo "WARN: openshell CLI image upgrade failed (continuing with existing version)"
+  else
+    PIP_EXTRA=""
+    [[ -n "${PIP_INDEX_URL}" ]] && PIP_EXTRA="--extra-index-url ${PIP_INDEX_URL}"
+    guest_ssh "
+      pip3 install openshell==${OPENSHELL_PIP_VERSION} ${PIP_EXTRA} \
+      && echo 'openshell CLI upgraded'
+    " || echo "WARN: openshell CLI upgrade failed (continuing with existing version)"
+  fi
   # Patch the pip-installed openshell binary's version output so nemoclaw's
   # feature gate sees matching versions across all three components. The pip
   # binary uses '+' (PEP 440 local) while the native Go binaries use '-'
