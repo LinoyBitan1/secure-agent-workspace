@@ -19,6 +19,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -361,6 +362,37 @@ class GatewaySetup:
             self.sh.run(["openshell", "gateway", "select", self.oidc_gw],
                          check=False)
 
+    def ensure_oidc_alias(self, gateway_name):
+        """Clone the configured OIDC registration under NemoClaw's name.
+
+        NemoClaw derives its gateway name from NEMOCLAW_GATEWAY_PORT
+        (``nemoclaw-17670`` here), while the golden image registers the same
+        endpoint as ``openshell``.  Keep the OIDC credentials but expose the
+        canonical name so NemoClaw's gateway-scoped commands do not fall back
+        to the mTLS registration.
+        """
+        if not self.oidc_gw or gateway_name == self.oidc_gw:
+            return
+        root = Path.home() / ".config" / "openshell" / "gateways"
+        source = root / self.oidc_gw
+        target = root / gateway_name
+        metadata_path = source / "metadata.json"
+        token_path = source / "oidc_token.json"
+        if not metadata_path.is_file() or not token_path.is_file():
+            raise FileNotFoundError(
+                f"OIDC gateway registration is incomplete for '{self.oidc_gw}'"
+            )
+        target.mkdir(parents=True, exist_ok=True)
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata["name"] = gateway_name
+        (target / "metadata.json").write_text(
+            json.dumps(metadata), encoding="utf-8"
+        )
+        (target / "metadata.json").chmod(metadata_path.stat().st_mode & 0o777)
+        shutil.copy2(token_path, target / "oidc_token.json")
+        (target / "oidc_token.json").chmod(token_path.stat().st_mode & 0o777)
+        self.sh.run(["openshell", "gateway", "select", gateway_name], check=False)
+
     def select_mtls(self):
         self.sh.run(["openshell", "gateway", "select", self.mtls_gw],
                      check=False)
@@ -525,8 +557,12 @@ class WorkspaceDeployer:
         # The BOM setup leaves the mTLS alias selected for generic sandboxes,
         # but this externally supervised gateway is registered with OIDC and
         # must retain that identity for the onboarding probe.
+        gateway_port = 17670
+        gateway_name = (
+            "nemoclaw" if gateway_port == 8080 else f"nemoclaw-{gateway_port}"
+        )
         if self.gw and self.gw.oidc_gw:
-            self.gw.select_oidc()
+            self.gw.ensure_oidc_alias(gateway_name)
         state_dir = str(Path.home() / ".local" / "state" / "openshell")
         mgmt_path = str(Path.home() / "gateway-management.json")
         mgmt = {
@@ -551,6 +587,7 @@ class WorkspaceDeployer:
         env = {
             "NEMOCLAW_GATEWAY_MANAGEMENT": mgmt_path,
             "NEMOCLAW_GATEWAY_PORT": "17670",
+            "OPENSHELL_GATEWAY": gateway_name,
             # NemoClaw's Linux onboarding defaults to Docker. Select the same
             # runtime configured for the gateway VM explicitly.
             "NEMOCLAW_GATEWAY_RUNTIME": runtime,

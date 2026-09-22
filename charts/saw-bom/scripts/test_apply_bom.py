@@ -6,6 +6,7 @@ Run with:
     pip install pytest pyyaml
     pytest charts/saw-bom/scripts/test_apply_bom.py -v
 """
+import json
 import os
 import sys
 
@@ -24,6 +25,7 @@ from apply_bom import (  # noqa: E402
     resolve_configured_type,
     resolve_credential,
     runtime_command,
+    GatewaySetup,
     WorkspaceDeployer,
 )
 
@@ -258,6 +260,41 @@ def test_nemoclaw_cli_image_refreshes_existing_install():
         and "registry.example/nemoclaw-cli:latest" in cmd[2]
         for cmd in shell.commands
     )
+
+
+def test_gateway_setup_clones_oidc_registration_for_nemoclaw_alias(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    source = tmp_path / ".config" / "openshell" / "gateways" / "openshell"
+    source.mkdir(parents=True)
+    (source / "metadata.json").write_text(json.dumps({
+        "name": "openshell",
+        "gateway_endpoint": "https://127.0.0.1:17670",
+        "auth_mode": "oidc",
+        "oidc_issuer": "https://issuer.example/realms/openshell",
+        "oidc_client_id": "openshell-cli",
+    }))
+    (source / "oidc_token.json").write_text('{"access_token":"redacted"}')
+
+    class RecordingShell:
+        dry_run = False
+
+        def __init__(self):
+            self.commands = []
+
+        def run(self, cmd, **kwargs):
+            self.commands.append(cmd)
+            return 0, "", ""
+
+    shell = RecordingShell()
+    GatewaySetup(shell, "openshell", "openshell-local").ensure_oidc_alias(
+        "nemoclaw-17670"
+    )
+
+    target = tmp_path / ".config" / "openshell" / "gateways" / "nemoclaw-17670"
+    metadata = json.loads((target / "metadata.json").read_text())
+    assert metadata["name"] == "nemoclaw-17670"
+    assert (target / "oidc_token.json").read_text() == '{"access_token":"redacted"}'
+    assert ["openshell", "gateway", "select", "nemoclaw-17670"] in shell.commands
 
 
 def test_nemoclaw_onboard_selects_podman_runtime(monkeypatch):
