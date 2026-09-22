@@ -18,7 +18,6 @@ import base64
 import json
 import os
 import re
-import shutil
 import shlex
 import subprocess
 import time
@@ -306,13 +305,10 @@ def find_provider(ws, names):
 # ---------------------------------------------------------------------------
 
 class GatewaySetup:
-    def __init__(self, shell, oidc_gw, mtls_gw, oidc_issuer="",
-                 oidc_token=""):
+    def __init__(self, shell, oidc_gw, mtls_gw):
         self.sh = shell
         self.oidc_gw = oidc_gw
         self.mtls_gw = mtls_gw
-        self.oidc_issuer = oidc_issuer
-        self.oidc_token = oidc_token
 
     def configure_oidc(self, token, issuer, client_id):
         if not token:
@@ -341,36 +337,6 @@ class GatewaySetup:
             "https://127.0.0.1:17670",
             "--name", self.mtls_gw, "--local"
         ])
-        # NemoClaw's externally-supervised onboarding observes the local
-        # gateway with `openshell gateway info`, which is admin-only in
-        # OpenShell 0.0.116.  The generated local mTLS certificate identifies
-        # itself as openshell-user, so retain mTLS for transport but use the
-        # already-issued admin OIDC token for application authorization.
-        # Writing the metadata avoids the OpenShell CLI 0.0.116 segfault seen
-        # when combining --local and --oidc-issuer for a loopback endpoint.
-        if self.oidc_gw and self.oidc_issuer and self.oidc_token:
-            source = (Path.home() / ".config" / "openshell" / "gateways" /
-                      self.oidc_gw / "oidc_token.json")
-            target_dir = (Path.home() / ".config" / "openshell" /
-                          "gateways" / self.mtls_gw)
-            target_dir.mkdir(parents=True, exist_ok=True)
-            target = target_dir / "oidc_token.json"
-            if source.is_file():
-                shutil.copyfile(source, target)
-                target.chmod(0o600)
-                metadata = {
-                    "name": self.mtls_gw,
-                    "gateway_endpoint": "https://127.0.0.1:17670",
-                    "is_remote": False,
-                    "gateway_port": 0,
-                    "auth_mode": "oidc",
-                    "oidc_issuer": self.oidc_issuer,
-                    "oidc_client_id": "openshell-cli",
-                }
-                with open(target_dir / "metadata.json", "w",
-                          encoding="utf-8") as f:
-                    json.dump(metadata, f, indent=2)
-                log("Local gateway management uses the admin OIDC token")
         self.sh.run(["openshell", "gateway", "select", self.mtls_gw])
 
     def grant_default_workspace_access(self):
@@ -844,13 +810,12 @@ def main():
 
     # --- Phase 1: Gateway setup ---
     banner("Phase 1: Gateway Setup")
+    gw = GatewaySetup(sh, oidc_gw, args.mtls_gateway)
+
     oidc_token = os.environ.get("OIDC_TOKEN", "")
-    oidc_issuer = os.environ.get("OIDC_ISSUER", "")
-    gw = GatewaySetup(sh, oidc_gw, args.mtls_gateway, oidc_issuer,
-                      oidc_token)
     gw.configure_oidc(
         oidc_token,
-        oidc_issuer,
+        os.environ.get("OIDC_ISSUER", ""),
         os.environ.get("OIDC_CLIENT_ID", "openshell-cli"),
     )
     gw.register_mtls_gateway()
