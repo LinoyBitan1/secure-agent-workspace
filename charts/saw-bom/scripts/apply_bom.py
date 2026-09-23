@@ -590,7 +590,6 @@ class WorkspaceDeployer:
                 "/usr/local/bin/openshell-gateway",
             "NEMOCLAW_OPENSHELL_SANDBOX_BIN":
                 "/usr/local/bin/openshell-supervisor",
-            "PATH": "/usr/local/bin:" + os.environ.get("PATH", ""),
             "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE": "1",
             "NEMOCLAW_PROVIDER": nc_prov,
             "NEMOCLAW_PRESERVE_GATEWAY_REGISTRATION": "1",
