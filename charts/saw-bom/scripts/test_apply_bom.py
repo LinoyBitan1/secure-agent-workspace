@@ -274,6 +274,9 @@ def test_nemoclaw_onboarding_selects_podman_without_custom_image():
     assert "--from" not in command
     assert env["NEMOCLAW_GATEWAY_RUNTIME"] == "podman"
     assert env["NEMOCLAW_IGNORE_RUNTIME_RESOURCES"] == "1"
+    assert env["NEMOCLAW_OPENSHELL_GATEWAY_BIN"].endswith(
+        "/.local/bin/openshell-gateway"
+    )
 
 
 def test_nemoclaw_cli_install_pulls_with_selected_runtime():

@@ -586,8 +586,9 @@ class WorkspaceDeployer:
             "OPENSHELL_GATEWAY": gateway_name,
             "NEMOCLAW_GATEWAY_RUNTIME": self.runtime,
             "NEMOCLAW_IGNORE_RUNTIME_RESOURCES": "1",
-            "NEMOCLAW_OPENSHELL_GATEWAY_BIN":
-                "/usr/local/bin/openshell-gateway",
+            "NEMOCLAW_OPENSHELL_GATEWAY_BIN": os.path.expanduser(
+                "~/.local/bin/openshell-gateway"
+            ),
             "NEMOCLAW_OPENSHELL_SANDBOX_BIN":
                 "/usr/local/bin/openshell-supervisor",
             "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE": "1",
