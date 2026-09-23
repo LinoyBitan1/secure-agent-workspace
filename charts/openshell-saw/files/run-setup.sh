@@ -34,15 +34,8 @@ OIDC_REALM="{{ .Values.oidc.realm }}"
 KEYCLOAK_NS="{{ .Values.dashboard.keycloakNamespace | default .Release.Namespace }}"
 KEYCLOAK_NAME="{{ .Values.dashboard.keycloakName | default "openshell-keycloak" }}"
 OWNER="{{ .Values.accessControl.owner | default "alice" }}"
-NEMOCLAW_CLI_IMAGE="{{ .Values.nemoclawCliImage | default (printf "image-registry.openshift-image-registry.svc.cluster.local:5000/%s/nemoclaw-cli:latest" .Release.Namespace) }}"
+NEMOCLAW_CLI_IMAGE="{{ .Values.nemoclawCliImage }}"
 ALLOW_ANONYMOUS_PULL="{{ .Values.internalRegistry.allowAnonymousPull }}"
-
-if [[ "${RUNTIME}" == "docker" ]]; then
-  CONTAINER_ENGINE="sudo docker"
-else
-  CONTAINER_ENGINE="podman"
-fi
-export RUNTIME CONTAINER_ENGINE
 
 SCRIPTS_DIR="/scripts"
 SECRETS_DIR="/secrets"
