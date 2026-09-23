@@ -7,12 +7,7 @@ job:
   waitForSecrets: true
   backoffLimit: 5
 
-# Use the namespace-local ImageStream built by the NemoClaw image-builder chart.
-# This keeps setup on the same patched CLI image that was validated in-cluster.
-nemoclawCliImage: ""
-
-internalRegistry:
-  allowAnonymousPull: true
+nemoclawCliImage: "quay.io/rh-ai-quickstart/nemoclaw-cli:latest"
 
 dashboard:
   insecureSkipIssuerTlsVerify: true
