@@ -43,13 +43,12 @@ if [[ -n "${GATEWAY_IMAGE}" && -n "${SUPERVISOR_IMAGE}" && -n "${OPENSHELL_PIP_V
       && echo 'openshell CLI upgraded'
     " || echo "WARN: openshell CLI upgrade failed (continuing with existing version)"
   fi
-  # Patch the pip-installed openshell binary's version output so nemoclaw's
-  # feature gate sees matching versions across all three components. The pip
-  # binary uses '+' (PEP 440 local) while the native Go binaries use '-'
-  # (semver pre-release); the mismatch causes componentBuildVersionsMatch()
-  # to return false. We wrap the original binary with a script that fixes
-  # --version output and delegates everything else.
-  if [[ -z "${CLI_IMAGE}" ]]; then
+  # Patch the installed openshell binary's version output so NemoClaw's
+  # feature gate sees matching versions across all three components. The
+  # downstream Quay CLI image can expose the rhaiv suffix while the active
+  # NemoClaw build expects the plain upstream version. Wrap the original
+  # CLI and supervisor binaries for --version output and delegate every other
+  # command unchanged.
   NATIVE_VERSION="$(guest_ssh "openshell-gateway --version 2>/dev/null" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\S*' | head -1 || echo "${OPENSHELL_PIP_VERSION}" | sed 's/+/-/')"
   cat > "${WORK_DIR}/openshell-wrapper" <<WEOF
 #!/usr/bin/env bash
@@ -60,8 +59,19 @@ fi
 SELF_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
 exec "\${SELF_DIR}/openshell-real" "\$@"
 WEOF
+  cat > "${WORK_DIR}/openshell-supervisor-wrapper" <<WEOF
+#!/usr/bin/env bash
+if [[ "\$1" == "--version" ]]; then
+  echo "openshell-sandbox ${NATIVE_VERSION}"
+  exit 0
+fi
+SELF_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+exec "\${SELF_DIR}/openshell-supervisor-real" "\$@"
+WEOF
   chmod 755 "${WORK_DIR}/openshell-wrapper"
+  chmod 755 "${WORK_DIR}/openshell-supervisor-wrapper"
   guest_scp "${WORK_DIR}/openshell-wrapper" "/tmp/openshell-wrapper"
+  guest_scp "${WORK_DIR}/openshell-supervisor-wrapper" "/tmp/openshell-supervisor-wrapper"
   guest_ssh "
     OS_BIN=\$(command -v openshell 2>/dev/null || echo /home/${SSH_USER}/.local/bin/openshell)
     OS_DIR=\$(dirname \${OS_BIN})
@@ -72,7 +82,16 @@ WEOF
     chmod 755 \${OS_BIN}
     echo 'openshell version wrapper installed'
   " || echo "WARN: openshell wrapper install failed (non-fatal)"
-  fi
+  guest_ssh "
+    OS_BIN=\$(command -v openshell-supervisor 2>/dev/null || echo /usr/local/bin/openshell-supervisor)
+    OS_DIR=\$(dirname \${OS_BIN})
+    if [[ -f \${OS_BIN} && ! -f \${OS_DIR}/openshell-supervisor-real ]]; then
+      mv \${OS_BIN} \${OS_DIR}/openshell-supervisor-real
+    fi
+    mv /tmp/openshell-supervisor-wrapper \${OS_BIN}
+    chmod 755 \${OS_BIN}
+    echo 'openshell supervisor version wrapper installed'
+  " || echo "WARN: openshell supervisor wrapper install failed (non-fatal)"
   guest_ssh "openshell-gateway --version; openshell-supervisor --version; openshell --version" || true
 fi
 
