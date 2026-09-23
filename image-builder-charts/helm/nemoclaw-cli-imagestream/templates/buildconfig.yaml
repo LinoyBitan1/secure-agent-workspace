@@ -17,8 +17,9 @@ spec:
           NPM_CONFIG_UPDATE_NOTIFIER=false
       WORKDIR /opt/nemoclaw
       COPY package.json package-lock.json ./
+      RUN npm ci --ignore-scripts
       COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json nemoclaw/tsconfig.shared.json ./nemoclaw/
-      RUN npm ci --ignore-scripts && cd nemoclaw && npm ci --ignore-scripts
+      RUN cd nemoclaw && npm ci --ignore-scripts
       COPY . .
       # Preserve the externally supervised OIDC gateway registration during
       # onboarding instead of replacing it with a local mTLS registration.
