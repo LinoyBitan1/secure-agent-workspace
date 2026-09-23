@@ -86,10 +86,10 @@ WEOF
     OS_BIN=\$(command -v openshell-supervisor 2>/dev/null || echo /usr/local/bin/openshell-supervisor)
     OS_DIR=\$(dirname \${OS_BIN})
     if [[ -f \${OS_BIN} && ! -f \${OS_DIR}/openshell-supervisor-real ]]; then
-      mv \${OS_BIN} \${OS_DIR}/openshell-supervisor-real
+      sudo mv \${OS_BIN} \${OS_DIR}/openshell-supervisor-real
     fi
-    mv /tmp/openshell-supervisor-wrapper \${OS_BIN}
-    chmod 755 \${OS_BIN}
+    sudo mv /tmp/openshell-supervisor-wrapper \${OS_BIN}
+    sudo chmod 755 \${OS_BIN}
     echo 'openshell supervisor version wrapper installed'
   " || echo "WARN: openshell supervisor wrapper install failed (non-fatal)"
   guest_ssh "openshell-gateway --version; openshell-supervisor --version; openshell --version" || true
