@@ -20,6 +20,11 @@ spec:
       COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json nemoclaw/tsconfig.shared.json ./nemoclaw/
       RUN npm ci --ignore-scripts && cd nemoclaw && npm ci --ignore-scripts
       COPY . .
+      # v0.0.127 preserves a Docker-compatible fallback for stock onboarding,
+      # but the native Podman provider explicitly cannot build legacy
+      # Dockerfiles. Keep Podman stock onboarding fail-closed on managed image
+      # selection so a catalog outage cannot enter that incompatible branch.
+      RUN node -e 'const fs=require("node:fs");const p="src/lib/onboard/managed-workload/onboard-orchestration.ts";let s=fs.readFileSync(p,"utf8");const a="input.managedWorkloadRebuild !== null;";const b="input.managedWorkloadRebuild !== null || (input.stockManagedRuntime && input.computePlan.driverName === \"podman\");";if(!s.includes(a))throw new Error("NemoClaw managed-runtime policy source changed; update the compatibility patch");fs.writeFileSync(p,s.replace(a,b));'
       # The gateway VM is externally supervised and is registered with OIDC by
       # the BOM setup. Preserve that registration during NemoClaw onboarding;
       # the default external-gateway attach path would overwrite it with a
@@ -35,6 +40,7 @@ spec:
       RUN node -e 'const fs=require("node:fs");const p="src/lib/onboard/providers.ts";let s=fs.readFileSync(p,"utf8");const a="credentialEnv: \"NVIDIA_INFERENCE_API_KEY\"";const b="credentialEnv: process.env.NEMOCLAW_BUILD_CREDENTIAL_ENV || \"NVIDIA_INFERENCE_API_KEY\"";if(!s.includes(a))throw new Error("NemoClaw build credential source changed; update the compatibility patch");fs.writeFileSync(p,s.replace(a,b));'
       RUN git rev-parse HEAD > .source-revision 2>/dev/null || echo "0000000000000000000000000000000000000000" > .source-revision
       RUN npm run build:cli
+      RUN node -e 'const fs=require("node:fs");const p="dist/lib/onboard/managed-workload/onboard-orchestration.js";const s=fs.readFileSync(p,"utf8");if(!s.includes("input.stockManagedRuntime && input.computePlan.driverName === \"podman\""))throw new Error("compiled NemoClaw bundle does not keep Podman stock onboarding managed-only");'
       # The runtime executes root dist/, so enforce the external-registration
       # compatibility change in the compiled artifact as well as in source.
       RUN node -e 'const fs=require("node:fs");const p="dist/lib/onboard/gateway-host-runtime.js";let s=fs.readFileSync(p,"utf8");const marker="NEMOCLAW_PRESERVE_GATEWAY_REGISTRATION";const a="const added = await deps.lifecycle.registerGateway({ ...request, endpoint: owner.endpoint });";const b="const added = process.env.NEMOCLAW_PRESERVE_GATEWAY_REGISTRATION === \"1\" ? ({ ok: true, state: \"completed\" }) : await deps.lifecycle.registerGateway({ ...request, endpoint: owner.endpoint });";if(!s.includes(marker)){if(!s.includes(a))throw new Error("compiled NemoClaw gateway attach shape changed; update the compatibility patch");fs.writeFileSync(p,s.replace(a,b));}if(!s.includes(marker))throw new Error("compiled NemoClaw bundle does not preserve external gateway registration");'
