@@ -6,6 +6,7 @@ Run with:
     pip install pytest pyyaml
     pytest charts/saw-bom/scripts/test_apply_bom.py -v
 """
+import json
 import os
 import sys
 
@@ -19,6 +20,7 @@ from apply_bom import (  # noqa: E402
     Sandbox,
     Workspace,
     WorkspaceDeployer,
+    GatewaySetup,
     check_provider_type_mismatch,
     find_provider,
     image_pull_command,
@@ -271,7 +273,7 @@ def test_nemoclaw_onboarding_selects_podman_without_custom_image():
     assert command[:2] == ["nemoclaw", "onboard"]
     assert "--from" not in command
     assert env["NEMOCLAW_GATEWAY_RUNTIME"] == "podman"
-    assert "NEMOCLAW_IGNORE_RUNTIME_RESOURCES" not in env
+    assert env["NEMOCLAW_IGNORE_RUNTIME_RESOURCES"] == "1"
 
 
 def test_nemoclaw_cli_install_pulls_with_selected_runtime():
@@ -282,10 +284,11 @@ def test_nemoclaw_cli_install_pulls_with_selected_runtime():
         "image-registry.openshift-image-registry.svc.cluster.local:5000/ns/nemoclaw-cli:latest"
     )
 
-    assert [tuple(cmd) for cmd, _ in shell.calls if cmd[:2] == ["podman", "pull"]] == [
-        ("podman", "pull", "--tls-verify=false",
-         "image-registry.openshift-image-registry.svc.cluster.local:5000/ns/nemoclaw-cli:latest")
-    ]
+    assert any(
+        cmd[:2] == ["bash", "-c"]
+        and "image-registry.openshift-image-registry.svc.cluster.local:5000/ns/nemoclaw-cli:latest" in cmd[2]
+        for cmd, _ in shell.calls
+    )
 
 
 def test_generic_sandbox_pull_uses_selected_runtime():
@@ -300,6 +303,87 @@ def test_generic_sandbox_pull_uses_selected_runtime():
 
     assert ([("podman", "pull", "--tls-verify=false", sandbox.image)]
             == [tuple(cmd) for cmd, _ in shell.calls if cmd[:2] == ["podman", "pull"]])
+
+
+def test_nemoclaw_cli_image_refreshes_existing_install():
+    class RecordingShell:
+        dry_run = False
+
+        def __init__(self):
+            self.commands = []
+
+        def run(self, cmd, **kwargs):
+            self.commands.append(cmd)
+            if cmd[:2] == ["which", "nemoclaw"]:
+                return 0, "/usr/local/bin/nemoclaw\n", ""
+            return 0, "", ""
+
+    shell = RecordingShell()
+    WorkspaceDeployer(shell, None).install_nemoclaw_cli(
+        "registry.example/nemoclaw-cli:latest"
+    )
+
+    assert any(
+        cmd[:2] == ["bash", "-c"]
+        and "registry.example/nemoclaw-cli:latest" in cmd[2]
+        for cmd in shell.commands
+    )
+
+
+def test_gateway_setup_clones_oidc_registration_for_nemoclaw_alias(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    source = tmp_path / ".config" / "openshell" / "gateways" / "openshell"
+    source.mkdir(parents=True)
+    (source / "metadata.json").write_text(json.dumps({
+        "name": "openshell",
+        "gateway_endpoint": "https://127.0.0.1:17670",
+        "auth_mode": "oidc",
+    }))
+    (source / "oidc_token.json").write_text('{"access_token":"redacted"}')
+
+    class RecordingShell:
+        dry_run = False
+
+        def __init__(self):
+            self.commands = []
+
+        def run(self, cmd, **kwargs):
+            self.commands.append(cmd)
+            return 0, "", ""
+
+    shell = RecordingShell()
+    GatewaySetup(shell, "openshell", "openshell-local").ensure_oidc_alias(
+        "nemoclaw-17670"
+    )
+
+    target = tmp_path / ".config" / "openshell" / "gateways" / "nemoclaw-17670"
+    metadata = json.loads((target / "metadata.json").read_text())
+    assert metadata["name"] == "nemoclaw-17670"
+    assert (target / "oidc_token.json").read_text() == '{"access_token":"redacted"}'
+    assert ["openshell", "gateway", "select", "nemoclaw-17670"] in shell.commands
+
+
+def test_nemoclaw_onboard_exports_provider_type_and_alias_credentials():
+    class RecordingShell:
+        dry_run = True
+
+        def __init__(self):
+            self.env = None
+
+        def run(self, cmd, **kwargs):
+            self.env = kwargs.get("env")
+            return 0, "", ""
+
+    shell = RecordingShell()
+    WorkspaceDeployer(shell, None).onboard_nemoclaw(
+        Sandbox(name="cuda-sandbox"),
+        Provider(name="nvidia", type="nvidia", nemoclaw_provider="build"),
+        "secret",
+    )
+
+    assert shell.env["NEMOCLAW_PRESERVE_GATEWAY_REGISTRATION"] == "1"
+    assert shell.env["NVIDIA_API_KEY"] == "secret"
+    assert shell.env["NVIDIA_INFERENCE_API_KEY"] == "secret"
 
 
 if __name__ == "__main__":

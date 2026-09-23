@@ -19,6 +19,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -382,6 +383,31 @@ class GatewaySetup:
             self.sh.run(["openshell", "gateway", "select", self.oidc_gw],
                          check=False)
 
+    def ensure_oidc_alias(self, gateway_name):
+        """Clone the OIDC registration under NemoClaw's canonical name."""
+        if not self.oidc_gw or gateway_name == self.oidc_gw:
+            return
+        root = Path.home() / ".config" / "openshell" / "gateways"
+        source = root / self.oidc_gw
+        target = root / gateway_name
+        metadata_path = source / "metadata.json"
+        token_path = source / "oidc_token.json"
+        if not metadata_path.is_file() or not token_path.is_file():
+            raise FileNotFoundError(
+                f"OIDC gateway registration is incomplete for '{self.oidc_gw}'"
+            )
+        target.mkdir(parents=True, exist_ok=True)
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata["name"] = gateway_name
+        (target / "metadata.json").write_text(
+            json.dumps(metadata), encoding="utf-8"
+        )
+        (target / "metadata.json").chmod(metadata_path.stat().st_mode & 0o777)
+        shutil.copy2(token_path, target / "oidc_token.json")
+        (target / "oidc_token.json").chmod(token_path.stat().st_mode & 0o777)
+        self.sh.run(["openshell", "gateway", "select", gateway_name],
+                    check=False)
+
     def select_mtls(self):
         self.sh.run(["openshell", "gateway", "select", self.mtls_gw],
                      check=False)
@@ -512,10 +538,9 @@ class WorkspaceDeployer:
             return
         rc, _, _ = self.sh.run(["which", "nemoclaw"], check=False)
         if rc == 0:
-            log("nemoclaw CLI already installed, skipping")
-            return
-        section("Installing nemoclaw CLI")
-        self.sh.run(image_pull_command(self.runtime, cli_image), check=False)
+            log("nemoclaw CLI already installed, refreshing from image")
+        else:
+            section("Installing nemoclaw CLI")
         runtime_create = runtime_shell_command(self.runtime, "create")
         runtime_cp = runtime_shell_command(self.runtime, "cp")
         runtime_rm = runtime_shell_command(self.runtime, "rm")
@@ -533,6 +558,10 @@ class WorkspaceDeployer:
         ], check=False)
 
     def onboard_nemoclaw(self, sandbox, provider, credential):
+        gateway_port = 17670
+        gateway_name = f"nemoclaw-{gateway_port}"
+        if self.gw and self.gw.oidc_gw:
+            self.gw.ensure_oidc_alias(gateway_name)
         state_dir = str(Path.home() / ".local" / "state" / "openshell")
         mgmt_path = str(Path.home() / "gateway-management.json")
         mgmt = {
@@ -554,20 +583,25 @@ class WorkspaceDeployer:
         env = {
             "NEMOCLAW_GATEWAY_MANAGEMENT": mgmt_path,
             "NEMOCLAW_GATEWAY_PORT": "17670",
+            "OPENSHELL_GATEWAY": gateway_name,
             "NEMOCLAW_GATEWAY_RUNTIME": self.runtime,
+            "NEMOCLAW_IGNORE_RUNTIME_RESOURCES": "1",
             "NEMOCLAW_OPENSHELL_GATEWAY_BIN":
                 "/usr/local/bin/openshell-gateway",
             "NEMOCLAW_OPENSHELL_SANDBOX_BIN":
                 "/usr/local/bin/openshell-supervisor",
             "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE": "1",
             "NEMOCLAW_PROVIDER": nc_prov,
+            "NEMOCLAW_PRESERVE_GATEWAY_REGISTRATION": "1",
         }
         if sandbox.model or provider.model:
             env["NEMOCLAW_MODEL"] = sandbox.model or provider.model
         if credential:
             env["NEMOCLAW_PROVIDER_KEY"] = credential
-            cred_key = PROVIDER_CRED_MAP.get(nc_prov, "")
-            if cred_key:
+            for cred_key in {
+                PROVIDER_CRED_MAP.get(provider.type, ""),
+                PROVIDER_CRED_MAP.get(nc_prov, ""),
+            } - {""}:
                 env[cred_key] = credential
         cmd = [
             "nemoclaw", "onboard",
