@@ -545,7 +545,11 @@ class WorkspaceDeployer:
             f"CID=$({runtime('create')} '{cli_image}') && "
             f"{runtime('cp')} $CID:/opt/nemoclaw /tmp/nemoclaw-cli && "
             f"{runtime('rm')} $CID >/dev/null && "
-            f"sudo mv /tmp/nemoclaw-cli /opt/nemoclaw && "
+            # Replace the managed package; moving into an existing directory
+            # would leave the refreshed bundle nested under the stale one.
+            f"sudo mv /tmp/nemoclaw-cli /opt/nemoclaw.new && "
+            f"sudo rm -rf /opt/nemoclaw && "
+            f"sudo mv /opt/nemoclaw.new /opt/nemoclaw && "
             f"printf '#!/usr/bin/env bash\\nexec node "
             f"/opt/nemoclaw/bin/nemoclaw.js \"$@\"\\n' "
             f"| sudo tee /usr/local/bin/nemoclaw >/dev/null && "
