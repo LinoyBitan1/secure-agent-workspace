@@ -63,6 +63,11 @@ WEOF
   guest_ssh "
     OS_BIN=\$(command -v openshell 2>/dev/null || echo /home/${SSH_USER}/.local/bin/openshell)
     OS_DIR=\$(dirname \${OS_BIN})
+    if [[ \"\${OS_DIR}\" != /usr/local/bin && -f /home/${SSH_USER}/.local/bin/openshell ]]; then
+      rm -f /home/${SSH_USER}/.local/bin/openshell
+      OS_BIN=/usr/local/bin/openshell
+      OS_DIR=/usr/local/bin
+    fi
     if [[ -f \${OS_BIN} && ! -f \${OS_DIR}/openshell-real ]]; then
       mv \${OS_BIN} \${OS_DIR}/openshell-real
     fi
