@@ -34,8 +34,17 @@ OIDC_REALM="{{ .Values.oidc.realm }}"
 KEYCLOAK_NS="{{ .Values.dashboard.keycloakNamespace | default .Release.Namespace }}"
 KEYCLOAK_NAME="{{ .Values.dashboard.keycloakName | default "openshell-keycloak" }}"
 OWNER="{{ .Values.accessControl.owner | default "alice" }}"
-NEMOCLAW_CLI_IMAGE="{{ .Values.nemoclawCliImage | default (printf "image-registry.openshift-image-registry.svc.cluster.local:5000/%s/nemoclaw-cli:latest" .Release.Namespace) }}"
+NEMOCLAW_CLI_IMAGE="{{ .Values.nemoclawCliImage }}"
 ALLOW_ANONYMOUS_PULL="{{ .Values.internalRegistry.allowAnonymousPull }}"
+
+if [[ -z "${NEMOCLAW_CLI_IMAGE}" ]]; then
+  REGISTRY_ROUTE_HOST="$(kubectl get route default-route -n openshift-image-registry -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+  if [[ -n "${REGISTRY_ROUTE_HOST}" ]]; then
+    NEMOCLAW_CLI_IMAGE="${REGISTRY_ROUTE_HOST}/${NS}/nemoclaw-cli:latest"
+  else
+    NEMOCLAW_CLI_IMAGE="image-registry.openshift-image-registry.svc.cluster.local:5000/${NS}/nemoclaw-cli:latest"
+  fi
+fi
 
 if [[ "${RUNTIME}" == "docker" ]]; then
   CONTAINER_ENGINE="sudo docker"

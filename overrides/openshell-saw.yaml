@@ -11,5 +11,8 @@ job:
 # This keeps setup on the same patched CLI image that was validated in-cluster.
 nemoclawCliImage: ""
 
+internalRegistry:
+  allowAnonymousPull: true
+
 dashboard:
   insecureSkipIssuerTlsVerify: true
