@@ -17,19 +17,25 @@ spec:
           NPM_CONFIG_UPDATE_NOTIFIER=false
       WORKDIR /opt/nemoclaw
       COPY package.json package-lock.json ./
-      RUN npm ci --ignore-scripts
       COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json nemoclaw/tsconfig.shared.json ./nemoclaw/
-      RUN cd nemoclaw && npm ci --ignore-scripts
+      RUN npm ci --ignore-scripts && cd nemoclaw && npm ci --ignore-scripts
       COPY . .
-      # Preserve the externally supervised OIDC gateway registration during
-      # onboarding instead of replacing it with a local mTLS registration.
+      # The gateway VM is externally supervised and is registered with OIDC by
+      # the BOM setup. Preserve that registration during NemoClaw onboarding;
+      # the default external-gateway attach path would overwrite it with a
+      # local mTLS registration, losing the admin bearer credential needed by
+      # protected gateway observations.
       RUN node -e 'const fs=require("node:fs");const p="src/lib/onboard/gateway-host-runtime.ts";let s=fs.readFileSync(p,"utf8");const a="const added = await deps.lifecycle.registerGateway({ ...request, endpoint: owner.endpoint });";const b=`const added = process.env.NEMOCLAW_PRESERVE_GATEWAY_REGISTRATION === "1" ? ({ ok: true, state: "completed" } as const) : await deps.lifecycle.registerGateway({ ...request, endpoint: owner.endpoint });`;if(!s.includes(a))throw new Error("NemoClaw gateway attach source changed; update the compatibility patch");fs.writeFileSync(p,s.replace(a,b));'
-      # v0.0.127 reads the default gateway port before the external gateway
-      # environment is applied. Honor the configured external port at load.
+      # v0.0.127 initializes preflight with the default gateway before it
+      # applies the external lifecycle binding. Honor the configured port at
+      # module load so preflight probes the externally supervised alias.
       RUN node -e 'const fs=require("node:fs");const p="src/lib/onboard.ts";let s=fs.readFileSync(p,"utf8");const a="let GATEWAY_PORT = DEFAULT_GATEWAY_PORT;";const b="let GATEWAY_PORT = envInt(\"NEMOCLAW_GATEWAY_PORT\", DEFAULT_GATEWAY_PORT);";if(!s.includes(a))throw new Error("NemoClaw gateway port source changed; update the compatibility patch");fs.writeFileSync(p,s.replace(a,b));'
       RUN git rev-parse HEAD > .source-revision 2>/dev/null || echo "0000000000000000000000000000000000000000" > .source-revision
       RUN npm run build:cli
-      # Fail the image build if the generated bundle dropped the port patch.
+      # Keep the compatibility change in the shipped bundle as well as the
+      # TypeScript source. This assertion prevents a successful build from
+      # silently publishing a CLI whose generated preflight code still uses
+      # the default 8080 gateway.
       RUN node -e 'const fs=require("node:fs");const p="dist/lib/onboard.js";let s=fs.readFileSync(p,"utf8");const a="let GATEWAY_PORT = DEFAULT_GATEWAY_PORT;";const b="let GATEWAY_PORT = envInt(\"NEMOCLAW_GATEWAY_PORT\", DEFAULT_GATEWAY_PORT);";if(s.includes(a)){s=s.replace(a,b);fs.writeFileSync(p,s);}if(!s.includes(b))throw new Error("compiled NemoClaw bundle does not honor NEMOCLAW_GATEWAY_PORT");'
 
       FROM {{ .Values.build.nodeImage }}
