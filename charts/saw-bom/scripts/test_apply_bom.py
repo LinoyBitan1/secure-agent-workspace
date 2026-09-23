@@ -289,6 +289,7 @@ def test_nemoclaw_cli_install_pulls_with_selected_runtime():
     assert any(
         cmd[:2] == ["bash", "-c"]
         and "image-registry.openshift-image-registry.svc.cluster.local:5000/ns/nemoclaw-cli:latest" in cmd[2]
+        and "rm -rf /tmp/nemoclaw-cli" in cmd[2]
         and "sudo rm -rf /opt/nemoclaw" in cmd[2]
         for cmd, _ in shell.calls
     )

@@ -543,6 +543,7 @@ class WorkspaceDeployer:
             "bash", "-c",
             f"{runtime('pull')} '{cli_image}' && "
             f"CID=$({runtime('create')} '{cli_image}') && "
+            f"rm -rf /tmp/nemoclaw-cli && sudo rm -rf /opt/nemoclaw.new && "
             f"{runtime('cp')} $CID:/opt/nemoclaw /tmp/nemoclaw-cli && "
             f"{runtime('rm')} $CID >/dev/null && "
             # Replace the managed package; moving into an existing directory
