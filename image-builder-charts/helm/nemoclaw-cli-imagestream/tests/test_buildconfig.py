@@ -15,3 +15,6 @@ def test_cli_image_patches_gateway_binding_before_preflight():
     assert 'NEMOCLAW_PRESERVE_GATEWAY_REGISTRATION' in template
     assert 'dist/lib/onboard/gateway-host-runtime.js' in template
     assert 'compiled NemoClaw bundle does not preserve external gateway registration' in template
+    assert 'NEMOCLAW_BUILD_CREDENTIAL_ENV' in template
+    assert 'dist/lib/onboard/providers.js' in template
+    assert 'compiled NemoClaw bundle does not honor NEMOCLAW_BUILD_CREDENTIAL_ENV' in template

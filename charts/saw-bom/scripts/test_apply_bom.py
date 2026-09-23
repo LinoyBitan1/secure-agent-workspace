@@ -274,6 +274,7 @@ def test_nemoclaw_onboarding_selects_podman_without_custom_image():
     assert "--from" not in command
     assert env["NEMOCLAW_GATEWAY_RUNTIME"] == "podman"
     assert env["NEMOCLAW_IGNORE_RUNTIME_RESOURCES"] == "1"
+    assert env["NEMOCLAW_BUILD_CREDENTIAL_ENV"] == "NVIDIA_API_KEY"
     assert env["NEMOCLAW_OPENSHELL_GATEWAY_BIN"] == "/usr/local/bin/openshell-gateway"
     assert env["PATH"].startswith("/usr/local/bin:")
 

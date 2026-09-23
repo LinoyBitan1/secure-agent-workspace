@@ -603,6 +603,9 @@ class WorkspaceDeployer:
                 "/usr/local/bin/openshell-supervisor",
             "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE": "1",
             "NEMOCLAW_PROVIDER": nc_prov,
+            # The Red Hat OpenShell nvidia profile declares NVIDIA_API_KEY;
+            # the custom NemoClaw image maps its build route to this key.
+            "NEMOCLAW_BUILD_CREDENTIAL_ENV": "NVIDIA_API_KEY",
             # The external supervisor already owns the listener and the OIDC
             # registration carries the authenticated gateway metadata. Do not
             # replace it with NemoClaw's default --local mTLS registration.

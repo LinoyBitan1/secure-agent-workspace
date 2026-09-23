@@ -30,6 +30,9 @@ spec:
       # applies the external lifecycle binding. Honor the configured port at
       # module load so preflight probes the externally supervised alias.
       RUN node -e 'const fs=require("node:fs");const p="src/lib/onboard.ts";let s=fs.readFileSync(p,"utf8");const a="let GATEWAY_PORT = DEFAULT_GATEWAY_PORT;";const b="let GATEWAY_PORT = envInt(\"NEMOCLAW_GATEWAY_PORT\", DEFAULT_GATEWAY_PORT);";if(!s.includes(a))throw new Error("NemoClaw gateway port source changed; update the compatibility patch");fs.writeFileSync(p,s.replace(a,b));'
+      # Red Hat OpenShell's nvidia profile declares NVIDIA_API_KEY, while
+      # upstream NemoClaw's build route uses NVIDIA_INFERENCE_API_KEY.
+      RUN node -e 'const fs=require("node:fs");const p="src/lib/onboard/providers.ts";let s=fs.readFileSync(p,"utf8");const a="credentialEnv: \"NVIDIA_INFERENCE_API_KEY\"";const b="credentialEnv: process.env.NEMOCLAW_BUILD_CREDENTIAL_ENV || \"NVIDIA_INFERENCE_API_KEY\"";if(!s.includes(a))throw new Error("NemoClaw build credential source changed; update the compatibility patch");fs.writeFileSync(p,s.replace(a,b));'
       RUN git rev-parse HEAD > .source-revision 2>/dev/null || echo "0000000000000000000000000000000000000000" > .source-revision
       RUN npm run build:cli
       # The runtime executes root dist/, so enforce the external-registration
@@ -40,6 +43,7 @@ spec:
       # silently publishing a CLI whose generated preflight code still uses
       # the default 8080 gateway.
       RUN node -e 'const fs=require("node:fs");const p="dist/lib/onboard.js";let s=fs.readFileSync(p,"utf8");const a="let GATEWAY_PORT = DEFAULT_GATEWAY_PORT;";const b="let GATEWAY_PORT = envInt(\"NEMOCLAW_GATEWAY_PORT\", DEFAULT_GATEWAY_PORT);";if(s.includes(a)){s=s.replace(a,b);fs.writeFileSync(p,s);}if(!s.includes(b))throw new Error("compiled NemoClaw bundle does not honor NEMOCLAW_GATEWAY_PORT");'
+      RUN node -e 'const fs=require("node:fs");const p="dist/lib/onboard/providers.js";const s=fs.readFileSync(p,"utf8");if(!s.includes("credentialEnv: process.env.NEMOCLAW_BUILD_CREDENTIAL_ENV || \"NVIDIA_INFERENCE_API_KEY\""))throw new Error("compiled NemoClaw bundle does not honor NEMOCLAW_BUILD_CREDENTIAL_ENV");'
 
       FROM {{ .Values.build.nodeImage }}
       WORKDIR /opt/nemoclaw
