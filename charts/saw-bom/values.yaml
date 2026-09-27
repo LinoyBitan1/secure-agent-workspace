@@ -1,3 +1,15 @@
 # Active profiles to deploy on this SAW instance.
 profiles:
   - data-science
+
+# Governance profiles the interceptor enrols (charts/governance-policy/profiles).
+# Every harness tool's governanceProfile must be in this list; the render fails
+# otherwise, and the guest re-checks before it mutates a sandbox.
+# tests/charts/test_saw_bom_chart.py keeps this in sync with that directory.
+governanceProfiles:
+  - brave
+  - gemini
+  - github
+  - nvidia
+  - slack
+  - web-search
