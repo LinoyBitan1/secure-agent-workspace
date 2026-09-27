@@ -17,8 +17,8 @@ def creds(ab, profiles, secrets_dir):
     return ab.resolve_credentials(profiles, secrets_dir)
 
 
-def make_applier(ab, config, creds, **overrides):
-    return ab.ProfileApplier(ab.Shell(), {**config, **overrides}, creds)
+def make_applier(ab, config, creds, harness=None, **overrides):
+    return ab.ProfileApplier(ab.Shell(), {**config, **overrides}, creds, harness=harness)
 
 
 def cli_ops(fake_env):
@@ -369,3 +369,29 @@ def test_key_never_appears_in_argv_or_logs(ab, fake_env, config, profiles, creds
     key = (fake_env.admin_cert().parent / "tls.key").read_text()
     body = "".join(l for l in key.splitlines() if not l.startswith("-----"))
     assert body[:40] not in capsys.readouterr().err
+
+
+def test_full_apply_stages_the_pinned_harness_into_notebook(
+        ab, fake_env, config, profiles, creds, shipped_harness_files):
+    """A full apply run stages the harness before the gateway launches.
+
+    The fake `openshell` never reads stdin and models no filesystem (decision
+    9c), so `verify` cannot see the staged bytes and fails closed here --
+    exactly the behaviour that makes a silent empty-file failure loud. Real
+    success is confirmed on hardware (P6 step 2b), not offline.
+    """
+    bundles = ab.parse_harness_files(shipped_harness_files)
+    bundle = bundles["ds-default"]
+    notebook = next(sb for _, ws in ab.enabled_workspaces(profiles)
+                    for sb in ws.sandboxes if sb.name == "notebook")
+    notebook.harness_ref = {"name": "ds-default", "digest": bundle.digest}
+
+    applier = make_applier(ab, config, creds,
+                           harness={"bundles": bundles, "enrolled": {"web-search"}})
+    with pytest.raises(ab.InstallerError, match="harness verification failed"):
+        applier.apply(profiles)
+
+    scripts = [c[-1] for c in fake_env.openshell_calls() if c[:3] == ["sandbox", "exec", "-n"]]
+    joined = "\n".join(scripts)
+    assert "rm -rf /sandbox/.openclaw/skills /sandbox/.openclaw/tools" in joined
+    assert "base64 -d" in joined

@@ -1450,8 +1450,119 @@ class Ledger:
             if (obj["kind"], obj.get("workspace", ""), obj["name"]) != (kind, workspace, name)]
 
 
+class HarnessAdapter:
+    """Applies a HarnessBundle into a running OpenClaw sandbox.
+
+    Wipe-then-write: every reconcile removes the managed subdirectories and
+    restages the bundle, so revoking a skill needs no separate code path and
+    local drift in a managed path is overwritten (the ticket's drift policy).
+    """
+
+    # /sandbox/.openclaw also holds OpenClaw's sqlite state (state/), so the
+    # managed root itself is never a wipe target.
+    WIPEABLE = ("skills", "tools")
+    REVISION_FILE = ".saw-harness-revision"
+
+    def __init__(self, shell):
+        self.sh = shell
+
+    def wipe_target(self, managed_root, subdir):
+        if subdir not in self.WIPEABLE:
+            raise ValueError(f"refusing to wipe {subdir!r} under {managed_root!r}; "
+                             f"only {self.WIPEABLE} are managed")
+        return f"{managed_root.rstrip('/')}/{subdir}"
+
+    def _exec(self, sandbox, workspace, script, input_text=None, **kw):
+        return self.sh.run(["openshell", "sandbox", "exec", "-n", sandbox,
+                            *ws_args(workspace), "--no-tty", "--",
+                            "sh", "-c", script],
+                           input_text=input_text, **kw)
+
+    def managed_files(self, bundle):
+        """Bundle files that are staged, keyed by their path under managedRoot.
+
+        harness.yaml is the bundle manifest, not harness content, so it stays
+        out of the sandbox.
+        """
+        return {rel: b64 for rel, b64 in bundle.files.items()
+                if rel.split("/", 1)[0] in self.WIPEABLE}
+
+    def current_revision(self, sandbox, workspace, bundle):
+        path = f"{bundle.managed_root.rstrip('/')}/{self.REVISION_FILE}"
+        result = self._exec(sandbox, workspace, f"cat {path} 2>/dev/null || true",
+                            check=False, quiet=True)
+        return (result.out or "").strip()
+
+    def reconcile(self, sandbox, workspace, bundle):
+        """Return True if the sandbox was changed.
+
+        Always verifies first, and stages only when needed. A matching
+        revision marker is not proof: a file edited or recreated inside the
+        sandbox leaves the marker intact, and a skip-first reconcile would
+        never look. Verifying first makes the "managed paths are overwritten
+        each reconcile" drift policy real and self-healing.
+        """
+        revision = f"{bundle.name}@{bundle.digest}"
+        if (self.current_revision(sandbox, workspace, bundle) == revision
+                and not self.verify(sandbox, workspace, bundle)):
+            log(f"Harness '{bundle.name}' in sandbox '{sandbox}' is up to date "
+                f"({bundle.digest}); skipping")
+            return False
+        self.apply(sandbox, workspace, bundle)
+        failures = self.verify(sandbox, workspace, bundle)
+        if failures:
+            raise InstallerError(
+                f"harness verification failed for sandbox '{sandbox}': "
+                + "; ".join(failures))
+        return True
+
+    def apply(self, sandbox, workspace, bundle):
+        root = bundle.managed_root.rstrip("/")
+        targets = " ".join(self.wipe_target(root, s) for s in self.WIPEABLE)
+        log(f"Applying harness '{bundle.name}' ({bundle.digest}) to sandbox '{sandbox}'")
+        self._exec(sandbox, workspace, f"rm -rf {targets} && mkdir -p {targets}")
+        for rel, b64 in sorted(self.managed_files(bundle).items()):
+            dest = f"{root}/{rel}"
+            # Content arrives on stdin, so it never lands in argv or a log.
+            self._exec(sandbox, workspace,
+                       f"mkdir -p \"$(dirname {dest})\" && base64 -d > {dest} "
+                       f"&& chmod 0444 {dest}",
+                       input_text=b64, quiet=True)
+        self._exec(sandbox, workspace,
+                   f"printf %s '{bundle.name}@{bundle.digest}' > {root}/{self.REVISION_FILE}")
+
+    def compare(self, want, got):
+        """want/got map relpath -> sha256 hex. Content, not just names."""
+        return ([f"missing: {n}" for n in sorted(set(want) - set(got))]
+                + [f"unexpected: {n}" for n in sorted(set(got) - set(want))]
+                + [f"content differs: {n}" for n in sorted(set(want) & set(got))
+                   if want[n] != got[n]])
+
+    def verify(self, sandbox, workspace, bundle):
+        """Hash the managed tree inside the sandbox and compare it to the bundle.
+
+        Content hashes, not a name set: the offline fakes cannot prove that
+        base64-over-stdin reaches the sandbox intact, so an empty or truncated
+        file must fail here rather than pass as "present".
+        """
+        root = bundle.managed_root.rstrip("/")
+        want = {rel: hashlib.sha256(base64.b64decode(b64)).hexdigest()
+                for rel, b64 in self.managed_files(bundle).items()}
+        listed = self._exec(
+            sandbox, workspace,
+            f"cd {root} 2>/dev/null && find skills tools -type f -exec sha256sum {{}} + "
+            "2>/dev/null | sed 's#\\./##' | sort || true",
+            check=False, quiet=True)
+        got = {}
+        for line in (listed.out or "").splitlines():
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                got[parts[1].strip()] = parts[0].strip()
+        return self.compare(want, got)
+
+
 class ProfileApplier:
-    def __init__(self, shell, cfg, creds, provider_profile_docs=None):
+    def __init__(self, shell, cfg, creds, provider_profile_docs=None, harness=None):
         self.sh = shell
         self.cfg = cfg
         self.creds = creds
@@ -1464,6 +1575,8 @@ class ProfileApplier:
         self.prune_mode = prune.get("mode", "off")
         self.prune_sandboxes = bool(prune.get("sandboxes", False))
         self.ledger = Ledger(prune["ledgerPath"], shell.dry_run) if prune.get("ledgerPath") else None
+        self.harness = harness or {"bundles": {}, "enrolled": set()}
+        self.adapter = HarnessAdapter(shell)
         for workspace in creds.values():
             for value in workspace.values():
                 shell.add_secret(value)
@@ -1780,6 +1893,7 @@ class ProfileApplier:
                      f"{oc_env} openclaw models auth activate {profile_id} --agent main", check=False)
         self.cli(*exec_cmd, "sh", "-c", f"{oc_env} openclaw config set gateway.auth.token '{token}'",
                  check=False)
+        self.reconcile_harness(ws, sb)
         route = self.cfg.get("sandboxDashboardRoute")
         if route:
             self.cli(*exec_cmd, "sh", "-c",
@@ -1790,6 +1904,34 @@ class ProfileApplier:
                  "--allow-unconfigured --bind lan --port 18789 > /tmp/openclaw-gateway.log 2>&1 &",
                  check=False)
         self.install_keepalive(ws, sb)
+
+    def reconcile_harness(self, ws, sb):
+        """Stage the pinned harness bundle before the gateway starts, so the
+        gateway comes up already seeing the managed skills and tools.
+
+        Runs before `openclaw gateway run` on purpose: nothing has to restart
+        the gateway afterwards, so the auth token is never rotated on a
+        content change.
+        """
+        ref = sb.harness_ref or {}
+        if not ref:
+            return
+        bundle = self.harness["bundles"].get(ref.get("name"))
+        if bundle is None:
+            raise InstallerError(f"sandbox '{sb.name}' references unknown harness "
+                                 f"bundle '{ref.get('name')}'")
+        if ref.get("digest") != bundle.digest:
+            raise InstallerError(
+                f"harnessRef digest mismatch for sandbox '{sb.name}': "
+                f"sandbox.yaml says {ref.get('digest')}, the bundle hashes to "
+                f"{bundle.digest}")
+        for tool in bundle.tools:
+            if tool.governance_profile not in self.harness["enrolled"]:
+                raise InstallerError(
+                    f"harness tool '{tool.name}' governanceProfile "
+                    f"'{tool.governance_profile}' is not enrolled; refusing to "
+                    f"mutate sandbox '{sb.name}'")
+        self.adapter.reconcile(sb.name, ws.name, bundle)
 
     def install_keepalive(self, ws, sb):
         """A system unit that keeps an exec session open so the sandbox stays
@@ -2072,6 +2214,12 @@ class ProfileApplier:
                                         if p.name in sb.providers)
                     failures.append(f"{sb.type} sandbox '{sb.name}' in '{ws.name}' has no usable "
                                     f"provider: skipped {skipped}; the gateway has no profile for that type")
+                    ref = sb.harness_ref or {}
+                    if ref:
+                        bundle = self.harness["bundles"].get(ref.get("name"))
+                        if bundle is not None:
+                            failures += [f"harness in sandbox '{sb.name}': {f}"
+                                        for f in self.adapter.verify(sb.name, ws.name, bundle)]
                 if sb.providers:
                     attached = self.cli("sandbox", "provider", "list", sb.name, *ws_args(ws.name),
                                         check=False, quiet=True).out
@@ -2178,7 +2326,7 @@ class Status:
     def read(self):
         return read_json(self.path, {})
 
-    def set(self, phase, bom=None, message="", signature=None, pruned=None, would_prune=None):
+    def set(self, phase, bom=None, message="", signature=None, pruned=None, would_prune=None, extra=None):
         log(f"{self.step}: {phase}{' - ' + message if message else ''}")
         if self.dry_run:
             return
@@ -2187,6 +2335,7 @@ class Status:
             "phase": phase, "bom": bom, "message": message,
             "installerVersion": INSTALLER_VERSION,
             "updatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            **(extra or {}),
         }
         if signature:
             section["signature"] = signature
@@ -2421,7 +2570,8 @@ def cmd_apply(args):
         if ledger_path.is_file():
             report = json.loads(ledger_path.read_text(encoding="utf-8")).get("lastPrune") or {}
         status.set("Done", bom_name, pruned=report.get("pruned"),
-                   would_prune=report.get("wouldPrune"))
+                   would_prune=report.get("wouldPrune"),
+                   extra={"appliedRevision": harness["revisions"]})
         return 0
     except InstallerError as exc:
         log(f"ERROR: {exc}")
@@ -2438,7 +2588,8 @@ def apply_plan(data, dry_run):
     cfg = data["config"]
     profiles = profiles_from_plan(data)
     shell = Shell(dry_run=dry_run)
-    applier = ProfileApplier(shell, cfg, data["credentials"], data.get("providerProfiles"))
+    applier = ProfileApplier(shell, cfg, data["credentials"], data.get("providerProfiles"),
+                             harness_from_plan(data))
     if not list(enabled_workspaces(profiles)):
         log("No enabled workspaces in the SAW-BOM profiles; only the gateway entry is configured")
         applier.register_gateway()
