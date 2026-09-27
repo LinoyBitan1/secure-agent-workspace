@@ -9,6 +9,9 @@ spec:
       image: quay.io/rh-ai-quickstart/openclaw-openshell:latest
       providers:
         - nvidia
+      harnessRef:
+        name: ds-default
+        digest: sha256:9bf096867817a62c4793a0aff80b07b081ffd1fb48ebc6907d4296cba9e181d9
     - name: cuda-sandbox
       type: nemoclaw
       enabled: false

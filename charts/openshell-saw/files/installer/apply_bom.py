@@ -1503,12 +1503,16 @@ class HarnessAdapter:
         each reconcile" drift policy real and self-healing.
         """
         revision = f"{bundle.name}@{bundle.digest}"
-        if (self.current_revision(sandbox, workspace, bundle) == revision
+        if not self.sh.dry_run and (
+                self.current_revision(sandbox, workspace, bundle) == revision
                 and not self.verify(sandbox, workspace, bundle)):
             log(f"Harness '{bundle.name}' in sandbox '{sandbox}' is up to date "
                 f"({bundle.digest}); skipping")
             return False
         self.apply(sandbox, workspace, bundle)
+        if self.sh.dry_run:
+            # Nothing ran for real; there is nothing to verify.
+            return True
         failures = self.verify(sandbox, workspace, bundle)
         if failures:
             raise InstallerError(
@@ -1931,7 +1935,13 @@ class ProfileApplier:
                     f"harness tool '{tool.name}' governanceProfile "
                     f"'{tool.governance_profile}' is not enrolled; refusing to "
                     f"mutate sandbox '{sb.name}'")
-        self.adapter.reconcile(sb.name, ws.name, bundle)
+        try:
+            self.adapter.reconcile(sb.name, ws.name, bundle)
+        except InstallerError as exc:
+            # Staging is best effort, like the rest of this method: a denied
+            # or broken exec should not abort the whole apply. verify() (via
+            # ProfileApplier.verify) is what turns this into a failed run.
+            log(f"WARN: {exc}")
 
     def install_keepalive(self, ws, sb):
         """A system unit that keeps an exec session open so the sandbox stays
