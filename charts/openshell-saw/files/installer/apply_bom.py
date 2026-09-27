@@ -345,6 +345,7 @@ class Sandbox:
     image: str = ""
     providers: list = field(default_factory=list)
     model: str = ""
+    harness_ref: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -442,19 +443,36 @@ def parse_harness_files(files):
 
 
 def read_profile_files(directory):
-    """Read the flattened saw-bom ConfigMap: profiles__<profile>__<ws>__<file>."""
+    """Read the flattened saw-bom ConfigMap.
+
+    Returns (profile files as text, harness files as bytes, harness index).
+    Profile keys are profiles__<profile>__<ws>__<file>.yaml; harness keys are
+    harness__<bundle>__<relpath> and hold base64 (see the digest contract in
+    templates/configmap-bom.yaml).
+    """
     directory = Path(directory)
     if not directory.is_dir():
-        return {}
-    files = {}
+        return {}, {}, {}
+    files, harness, index = {}, {}, {}
     for entry in sorted(directory.iterdir()):
         if entry.name.startswith(".") or not entry.is_file():
             continue  # kubelet/ISO housekeeping entries
-        if not (entry.name.startswith("profiles__") and entry.name.endswith(".yaml")):
+        if entry.name.startswith("profiles__") and entry.name.endswith(".yaml"):
+            files[entry.name] = entry.read_text(encoding="utf-8")
+        elif entry.name.startswith("harness__"):
+            try:
+                harness[entry.name] = base64.b64decode(
+                    entry.read_text(encoding="utf-8"), validate=True)
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise InstallerError(
+                    f"harness file {entry.name} is not valid base64 ({exc}); "
+                    "the chart must b64enc every harness key") from None
+        elif entry.name == "harness-index.yaml":
+            index = _yaml(entry.read_text(encoding="utf-8"), entry.name)
+        else:
             # A wrong key layout must not look like "no profiles".
             raise InstallerError(f"unexpected file in the profiles ConfigMap: {entry.name}")
-        files[entry.name] = entry.read_text(encoding="utf-8")
-    return files
+    return files, harness, index
 
 
 def _yaml(text, where):
@@ -520,7 +538,8 @@ def parse_profiles(files):
                         agent=s.get("agent", "openclaw"),
                         image=s.get("image", ""),
                         providers=list(s.get("providers") or []),
-                        model=s.get("model", "")))
+                        model=s.get("model", ""),
+                        harness_ref=dict(s.get("harnessRef") or {})))
             profile.workspaces.append(ws)
         profiles.append(profile)
     return profiles
@@ -531,6 +550,45 @@ def enabled_workspaces(profiles):
         for ws in profile.workspaces:
             if ws.enabled:
                 yield profile, ws
+
+
+def validate_harness(profiles, bundles, enrolled):
+    """Check every sandbox harnessRef against the delivered bundles.
+
+    Returns {sandbox name: "<bundle>@<digest>"} for the status report. Raises
+    before anything is mutated: an unknown bundle, an unpinned or mismatched
+    digest, or a tool whose governanceProfile is not enrolled.
+    """
+    revisions = {}
+    for _, ws in enabled_workspaces(profiles):
+        for sb in ws.sandboxes:
+            ref = sb.harness_ref or {}
+            if not (sb.enabled and ref):
+                continue
+            if sb.type != "openclaw":
+                raise InstallerError(
+                    f"sandbox '{sb.name}' has a harnessRef but type '{sb.type}'; "
+                    "only openclaw sandboxes have a harness adapter")
+            bundle = bundles.get(ref.get("name"))
+            if bundle is None:
+                raise InstallerError(f"sandbox '{sb.name}' references unknown "
+                                     f"harness bundle '{ref.get('name')}'")
+            want = ref.get("digest") or ""
+            if not want:
+                raise InstallerError(f"sandbox '{sb.name}' harnessRef has no digest; "
+                                     "refusing to apply an unpinned bundle")
+            if want != bundle.digest:
+                raise InstallerError(
+                    f"harnessRef digest mismatch for sandbox '{sb.name}': "
+                    f"sandbox.yaml says {want}, the bundle hashes to {bundle.digest}")
+            for tool in bundle.tools:
+                if tool.governance_profile not in enrolled:
+                    raise InstallerError(
+                        f"harness tool '{tool.name}' governanceProfile "
+                        f"'{tool.governance_profile}' is not enrolled; refusing "
+                        f"to mutate sandbox '{sb.name}'")
+            revisions[sb.name] = f"{bundle.name}@{bundle.digest}"
+    return revisions
 
 
 def validate_profiles(profiles):
@@ -1514,11 +1572,17 @@ class Inputs:
         """Load and validate everything. Nothing is changed."""
         bom = load_bom(self.bom)
         cfg = load_config(self.config)
-        profiles = parse_profiles(read_profile_files(self.profiles))
+        profile_files, harness_files, index = read_profile_files(self.profiles)
+        profiles = parse_profiles(profile_files)
         validate_profiles(profiles)
         check_profiles_against_bom(profiles, bom)
         creds = resolve_credentials(profiles, self.secrets)
-        return bom, cfg, profiles, creds
+        bundles = parse_harness_files(harness_files)
+        enrolled = set(index.get("enrolledGovernanceProfiles") or [])
+        revisions = validate_harness(profiles, bundles, enrolled)
+        harness = {"bundles": bundles, "enrolled": sorted(enrolled),
+                   "revisions": revisions}
+        return bom, cfg, profiles, creds, harness
 
 
 class Status:
@@ -1557,12 +1621,15 @@ class Status:
 
 
 def cmd_validate(args):
-    bom, cfg, profiles, creds = Inputs(args.inputs).load()
+    bom, cfg, profiles, creds, harness = Inputs(args.inputs).load()
     workspaces = [ws.name for _, ws in enabled_workspaces(profiles)]
     log(f"BOM {bom['metadata']['name']}: " + ", ".join(
         f"{c} {e['version']}" for c, e in bom["spec"]["openshell"].items()))
     log(f"VM {cfg['vmName']}: {len(workspaces)} workspace(s) {workspaces}, "
         f"{sum(len(v) for v in creds.values())} credential(s) resolved")
+    if harness["bundles"]:
+        log(f"harness: {len(harness['bundles'])} bundle(s), revisions "
+            f"{harness['revisions']}")
     log("inputs are valid")
     return 0
 
@@ -1641,10 +1708,28 @@ def provider_profiles(installer_dir):
     return found
 
 
-def plan_for_user(cfg, profiles, creds, dashboard_script, provider_profile_docs=None):
+def plan_for_user(cfg, profiles, creds, dashboard_script,
+                  provider_profile_docs=None, harness=None):
+    harness = harness or {}
     return {"config": cfg, "profiles": [asdict(p) for p in profiles],
             "credentials": creds, "dashboardScript": str(dashboard_script),
-            "providerProfiles": provider_profile_docs or {}}
+            "providerProfiles": provider_profile_docs or {},
+            "harness": {"bundles": {k: asdict(v) for k, v
+                                    in (harness.get("bundles") or {}).items()},
+                        "enrolled": list(harness.get("enrolled") or [])}}
+
+
+def harness_from_plan(data):
+    raw = data.get("harness") or {}
+    bundles = {}
+    for name, b in (raw.get("bundles") or {}).items():
+        bundles[name] = HarnessBundle(
+            name=b["name"], agent=b["agent"], managed_root=b["managed_root"],
+            digest=b["digest"],
+            skills=[HarnessSkill(**s) for s in b["skills"]],
+            tools=[HarnessTool(**t) for t in b["tools"]],
+            files=b["files"])
+    return {"bundles": bundles, "enrolled": set(raw.get("enrolled") or [])}
 
 
 def profiles_from_plan(data):
@@ -1673,7 +1758,7 @@ def cmd_apply(args):
     bom_name = None
     try:
         status.set("Running")
-        bom, cfg, profiles, creds = inputs.load()
+        bom, cfg, profiles, creds, harness = inputs.load()
         bom_name = bom["metadata"]["name"]
         install = status.read().get("install", {})
         if not args.dry_run and (install.get("phase") != "Done" or install.get("bom") != bom_name):
@@ -1687,7 +1772,7 @@ def cmd_apply(args):
             # runtime user could not read /run/saw anyway).
             apply_plan(json.loads(json.dumps(plan_for_user(
                 cfg, profiles, creds, inputs.dashboard_script,
-                provider_profiles(inputs.installer)))), True)
+                provider_profiles(inputs.installer), harness))), True)
             return 0
         else:
             # A root-owned, world-readable copy the runtime user can execute.
@@ -1705,7 +1790,7 @@ def cmd_apply(args):
         _, wrap = runtime_user(cfg, args.as_current_user)
         argv = [sys.executable, str(script), "apply-profiles"]
         plan = json.dumps(plan_for_user(cfg, profiles, creds, dash_copy,
-                                        provider_profiles(inputs.installer)))
+                                        provider_profiles(inputs.installer), harness))
         result = subprocess.run(wrap(argv), input=plan, text=True, check=False)
         if result.returncode != 0:
             raise InstallerError("applying profiles failed; see the log above")

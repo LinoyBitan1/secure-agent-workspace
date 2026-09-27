@@ -418,11 +418,13 @@ def render_bom_chart():
     return cm
 
 
-def test_saw_bom_chart_ships_profiles_only():
+def test_saw_bom_chart_ships_data_only_no_executables():
     cm = render_bom_chart()
     assert cm["metadata"]["name"] == "saw-bom-profiles"
     assert "apply_bom.py" not in cm["data"]
-    assert all(re.fullmatch(r"profiles__[^_]+(?:-[^_]+)*__[a-z0-9-]+__(workspace|providers|sandbox)\.yaml", k)
+    profile_re = r"profiles__[^_]+(?:-[^_]+)*__[a-z0-9-]+__(workspace|providers|sandbox)\.yaml"
+    harness_re = r"harness__[^_]+(?:-[^_]+)*__.+|harness-index\.yaml"
+    assert all(re.fullmatch(profile_re, k) or re.fullmatch(harness_re, k)
                for k in cm["data"]), list(cm["data"])
 
 
