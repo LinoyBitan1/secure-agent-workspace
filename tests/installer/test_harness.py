@@ -1,6 +1,7 @@
 """Harness bundle contract: digest, parsing, packaging invariants."""
 
 import base64
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -177,3 +178,147 @@ def test_plan_round_trips_the_harness(ab, shipped_harness_files):
     assert back["bundles"]["ds-default"].digest == bundles["ds-default"].digest
     assert back["bundles"]["ds-default"].tools[0].governance_profile == "web-search"
     assert back["enrolled"] == {"web-search"}
+
+
+def _staged(bundle, **override):
+    """The managed tree as a correct apply would leave it: relpath -> sha256."""
+    files = {rel: hashlib.sha256(base64.b64decode(b64)).hexdigest()
+             for rel, b64 in bundle.files.items()
+             if rel.split("/", 1)[0] in ("skills", "tools")}
+    files.update(override)
+    return files
+
+
+def _adapter(ab, calls, bundle, live=None, revision="", heals=True):
+    """Adapter over a command-aware, minimally stateful fake shell.
+
+    A constant fake is wrong here: `verify` and `current_revision` issue
+    different commands, and one canned stdout makes verify fail for the wrong
+    reason. `heals=True` models the wipe-then-write: after `rm -rf` the tree
+    is exactly the bundle, so a restage converges. `heals=False` leaves the
+    tree untouched, which is how a real failed apply looks.
+    """
+    state = dict(_staged(bundle) if live is None else live)
+
+    def run(cmd, **k):
+        script = str(cmd[-1])
+        calls.append((list(map(str, cmd)), k.get("input_text")))
+        if script.startswith("rm -rf") and heals:
+            state.clear()
+            state.update(_staged(bundle))
+        if "sha256sum" in script:
+            return ab.Result(0, "\n".join(f"{h}  {rel}"
+                                          for rel, h in sorted(state.items())), "")
+        if script.startswith("cat ") and ".saw-harness-revision" in script:
+            return ab.Result(0, revision, "")
+        return ab.Result(0, "", "")
+
+    sh = ab.Shell()
+    sh.run = run
+    return ab.HarnessAdapter(sh)
+
+
+def test_wipe_target_refuses_managed_root_itself(ab):
+    with pytest.raises(ValueError, match="refusing to wipe"):
+        ab.HarnessAdapter(ab.Shell(dry_run=True)).wipe_target("/sandbox/.openclaw", "")
+
+
+def test_wipe_target_refuses_an_unmanaged_subdir(ab):
+    with pytest.raises(ValueError, match="refusing to wipe"):
+        ab.HarnessAdapter(ab.Shell(dry_run=True)).wipe_target("/sandbox/.openclaw", "state")
+
+
+def test_wipe_targets_are_only_skills_and_tools(ab):
+    a = ab.HarnessAdapter(ab.Shell(dry_run=True))
+    assert a.wipe_target("/sandbox/.openclaw/", "skills") == "/sandbox/.openclaw/skills"
+    assert a.wipe_target("/sandbox/.openclaw", "tools") == "/sandbox/.openclaw/tools"
+
+
+def test_apply_wipes_then_stages_then_writes_the_revision(ab, shipped_harness_files):
+    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
+    calls = []
+    _adapter(ab, calls, bundle).apply("notebook", "default", bundle)
+    joined = "\n".join(" ".join(c) for c, _ in calls)
+    assert "rm -rf /sandbox/.openclaw/skills /sandbox/.openclaw/tools" in joined
+    assert "/sandbox/.openclaw/skills/pattern-author/SKILL.md" in joined
+    assert "/sandbox/.openclaw/tools/web-search.yaml" in joined
+    # harness.yaml is bundle metadata, not harness content: it is not staged.
+    assert "/sandbox/.openclaw/harness.yaml" not in joined
+    assert ".saw-harness-revision" in joined
+    assert f"ds-default@{bundle.digest}" in joined
+    # Every staged file arrives base64 on stdin, never in argv.
+    assert any(text for _, text in calls)
+
+
+def test_apply_never_touches_the_state_directory(ab, shipped_harness_files):
+    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
+    calls = []
+    _adapter(ab, calls, bundle).apply("notebook", "default", bundle)
+    for cmd, _ in calls:
+        assert "/sandbox/.openclaw/state" not in " ".join(cmd)
+
+
+def test_current_revision_reads_the_marker(ab, shipped_harness_files):
+    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
+    rev = f"ds-default@{bundle.digest}"
+    assert _adapter(ab, [], bundle, revision=rev).current_revision(
+        "notebook", "default", bundle) == rev
+
+
+def test_reconcile_skips_when_the_revision_matches_and_nothing_drifted(
+        ab, shipped_harness_files, capsys):
+    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
+    calls = []
+    a = _adapter(ab, calls, bundle, revision=f"ds-default@{bundle.digest}")
+    assert a.reconcile("notebook", "default", bundle) is False
+    assert "rm -rf" not in "\n".join(" ".join(c) for c, _ in calls)
+    assert "up to date" in capsys.readouterr().out.lower()
+
+
+def test_reconcile_applies_when_the_revision_differs(ab, shipped_harness_files):
+    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
+    calls = []
+    a = _adapter(ab, calls, bundle, revision="ds-default@sha256:OLD")
+    assert a.reconcile("notebook", "default", bundle) is True
+    assert "rm -rf" in "\n".join(" ".join(c) for c, _ in calls)
+
+
+def test_reconcile_restages_on_drift_even_when_the_revision_matches(
+        ab, shipped_harness_files):
+    """Skip-on-match alone would never look, so drift would go undetected."""
+    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
+    calls = []
+    a = _adapter(ab, calls, bundle, revision=f"ds-default@{bundle.digest}",
+                 live=_staged(bundle, **{"skills/rogue": "00"}))
+    assert a.reconcile("notebook", "default", bundle) is True
+    assert "rm -rf" in "\n".join(" ".join(c) for c, _ in calls)
+
+
+def test_reconcile_raises_when_the_sandbox_still_drifts_after_apply(
+        ab, shipped_harness_files):
+    """heals=False: the wipe does not take, so the leftover survives apply."""
+    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
+    a = _adapter(ab, [], bundle, revision="ds-default@sha256:OLD",
+                 live=_staged(bundle, **{"skills/rogue": "00"}), heals=False)
+    with pytest.raises(ab.InstallerError, match="unexpected: skills/rogue"):
+        a.reconcile("notebook", "default", bundle)
+
+
+def test_compare_is_content_aware_not_just_name_aware(ab):
+    a = ab.HarnessAdapter(ab.Shell(dry_run=True))
+    assert a.compare({"a": "h1"}, {"a": "h1"}) == []
+    assert a.compare({"a": "h1"}, {"a": "h1", "revoked": "h2"}) == ["unexpected: revoked"]
+    assert a.compare({"a": "h1", "b": "h2"}, {"a": "h1"}) == ["missing: b"]
+    # The hole a name-set comparison leaves: an empty or truncated file.
+    assert a.compare({"a": "h1"}, {"a": "h2"}) == ["content differs: a"]
+
+
+def test_verify_catches_an_empty_staged_file(ab, shipped_harness_files):
+    """Regression for the unverified base64-over-stdin transport: if the CLI
+    does not forward stdin, files land empty and a name-only check passes."""
+    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
+    live = _staged(bundle, **{
+        "skills/pattern-author/SKILL.md": hashlib.sha256(b"").hexdigest()})
+    a = _adapter(ab, [], bundle, live=live, heals=False)
+    assert a.verify("notebook", "default", bundle) == [
+        "content differs: skills/pattern-author/SKILL.md"]
