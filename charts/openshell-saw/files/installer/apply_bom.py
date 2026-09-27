@@ -30,6 +30,7 @@ OIDC login and never configures the CLI for OAuth.
 """
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -359,6 +360,85 @@ class Workspace:
 class Profile:
     name: str
     workspaces: list = field(default_factory=list)
+
+
+@dataclass
+class HarnessSkill:
+    name: str
+    path: str = ""
+
+
+@dataclass
+class HarnessTool:
+    name: str
+    path: str = ""
+    governance_profile: str = ""
+
+
+@dataclass
+class HarnessBundle:
+    name: str
+    agent: str = "openclaw"
+    managed_root: str = "/sandbox/.openclaw"
+    digest: str = ""
+    skills: list = field(default_factory=list)
+    tools: list = field(default_factory=list)
+    files: dict = field(default_factory=dict)   # relpath -> base64 text
+
+
+def tree_digest(files):
+    """Shared contract: sha256 over sorted "<relpath>\\0<sha256_hex>\\n" lines.
+
+    `files` maps a POSIX relative path to file bytes. Helm computes the same
+    value at render time; templates/configmap-bom.yaml must agree.
+    """
+    digest = hashlib.sha256()
+    for rel in sorted(files):
+        digest.update(f"{rel}\x00{hashlib.sha256(files[rel]).hexdigest()}\n".encode())
+    return "sha256:" + digest.hexdigest()
+
+
+def _harness_required(item, key, bundle):
+    if key not in item:
+        raise InstallerError(f"harness bundle {bundle!r}: entry {item!r} is "
+                             f"missing the required key {key!r}")
+    return item[key]
+
+
+def parse_harness_files(files):
+    """Build bundles from flat ConfigMap keys harness__<bundle>__<relpath>.
+
+    The digest is computed, never authored here: the pin lives in
+    sandbox.yaml harnessRef, outside the hashed tree.
+    """
+    trees = {}
+    for key, raw in files.items():
+        parts = key.split("__")
+        if len(parts) < 3 or parts[0] != "harness":
+            raise InstallerError(f"unexpected harness file name: {key}")
+        trees.setdefault(parts[1], {})["/".join(parts[2:])] = raw
+    bundles = {}
+    for name in sorted(trees):
+        tree = trees[name]
+        if "harness.yaml" not in tree:
+            raise InstallerError(f"harness bundle {name!r} has no harness.yaml")
+        doc = _yaml(tree["harness.yaml"].decode("utf-8"), f"harness/{name}/harness.yaml")
+        spec = doc.get("spec") or {}
+        bundles[name] = HarnessBundle(
+            name=(doc.get("metadata") or {}).get("name", name),
+            agent=spec.get("agent", "openclaw"),
+            managed_root=spec.get("managedRoot", "/sandbox/.openclaw"),
+            digest=tree_digest(tree),
+            skills=[HarnessSkill(name=_harness_required(s, "name", name),
+                                 path=s.get("path", ""))
+                    for s in (spec.get("skills") or [])],
+            tools=[HarnessTool(name=_harness_required(t, "name", name),
+                               path=t.get("path", ""),
+                               governance_profile=t.get("governanceProfile", ""))
+                   for t in (spec.get("tools") or [])],
+            files={rel: base64.b64encode(raw).decode() for rel, raw in tree.items()},
+        )
+    return bundles
 
 
 def read_profile_files(directory):

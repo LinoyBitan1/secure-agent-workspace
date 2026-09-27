@@ -1,0 +1,8 @@
+apiVersion: saw.redhat.com/v1alpha1
+kind: HarnessTool
+metadata:
+  name: web-search
+spec:
+  transport: mcp
+  endpoint: https://search.internal/v1
+  governanceProfile: web-search
