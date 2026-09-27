@@ -1,0 +1,14 @@
+apiVersion: saw.redhat.com/v1alpha1
+kind: HarnessBundle
+metadata:
+  name: ds-default
+spec:
+  agent: openclaw
+  managedRoot: /sandbox/.openclaw
+  skills:
+    - name: pattern-author
+      path: skills/pattern-author
+  tools:
+    - name: web-search
+      path: tools/web-search.yaml
+      governanceProfile: web-search

@@ -68,6 +68,25 @@ def shipped_profile_files():
     return profile_files()
 
 
+HARNESS = ROOT / "charts" / "saw-bom" / "harness"
+
+
+def harness_files():
+    """Flatten charts/saw-bom/harness exactly like templates/configmap-bom.yaml,
+    but as raw bytes (the ConfigMap value is the base64 of these bytes)."""
+    files = {}
+    for path in sorted(HARNESS.rglob("*")):
+        if path.is_file():
+            rel = str(path.relative_to(HARNESS)).replace("/", "__")
+            files[f"harness__{rel}"] = path.read_bytes()
+    return files
+
+
+@pytest.fixture
+def shipped_harness_files():
+    return harness_files()
+
+
 @pytest.fixture
 def fake_env(tmp_path, monkeypatch):
     """Put fake executables first on PATH and give them a state directory."""
