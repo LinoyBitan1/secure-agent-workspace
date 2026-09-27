@@ -5,8 +5,11 @@ State lives in openshell.json; every call is appended to openshell.log.
 deny.json lists operations (e.g. "workspace create") that fail with a
 permission error, to test error paths.
 """
+import base64
+import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -168,6 +171,39 @@ elif op == "sandbox exec":
     for needle, text in outputs.items():
         if needle in " ".join(args):
             print(text, file=sys.stderr)
+    # Minimal virtual filesystem for the HarnessAdapter's staging scripts only
+    # (matched by exact shape). This proves the adapter's own logic offline;
+    # it says nothing about whether the real CLI forwards stdin (decision 9c
+    # in the harness plan) -- that is confirmed on real hardware.
+    fs = state.setdefault("sandbox_fs", {}).setdefault(f"{ws}/{opt('-n')}", {})
+    script = args[-1]
+    stdin_data = sys.stdin.read()
+
+    def fs_write(path, raw):
+        fs[path] = base64.b64encode(raw).decode()
+
+    m = re.match(r"^rm -rf (.+) && mkdir -p .+$", script)
+    if m:
+        prefixes = [d.rstrip("/") + "/" for d in m.group(1).split()]
+        for path in [p for p in fs if any(p.startswith(pre) for pre in prefixes)]:
+            del fs[path]
+    m = re.match(r'^mkdir -p "\$\(dirname (.+)\)" && base64 -d > (.+) && chmod 0444 .+$', script)
+    if m:
+        fs_write(m.group(2), base64.b64decode(stdin_data))
+    m = re.match(r"^printf %s '(.+)' > (.+)$", script)
+    if m:
+        fs_write(m.group(2), m.group(1).encode())
+    m = re.match(r"^cat (.+) 2>/dev/null \|\| true$", script)
+    if m:
+        if m.group(1) in fs:
+            sys.stdout.write(base64.b64decode(fs[m.group(1)]).decode())
+    m = re.match(r"^cd (.+) 2>/dev/null && find skills tools .*sha256sum.*$", script)
+    if m:
+        root = m.group(1).rstrip("/") + "/"
+        lines = [f"{hashlib.sha256(base64.b64decode(fs[p])).hexdigest()}  {p[len(root):]}"
+                for p in fs if p.startswith(root) and p[len(root):].split("/", 1)[0] in ("skills", "tools")]
+        for line in sorted(lines):
+            print(line)
 elif op == "sandbox provider" and head[2] == "attach":
     sb = state["sandboxes"].get(f"{ws}/{head[3]}")
     if not sb:

@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import harness_files
+
 
 @pytest.fixture
 def profiles(ab, shipped_profile_files):
@@ -17,8 +19,16 @@ def creds(ab, profiles, secrets_dir):
     return ab.resolve_credentials(profiles, secrets_dir)
 
 
+def _shipped_harness(ab):
+    """Matches the digest pinned on the real 'notebook' sandbox in the shipped
+    profile, so tests that don't care about the harness still get a working
+    default instead of an 'unknown bundle' error."""
+    return {"bundles": ab.parse_harness_files(harness_files()), "enrolled": {"web-search"}}
+
+
 def make_applier(ab, config, creds, harness=None, **overrides):
-    return ab.ProfileApplier(ab.Shell(), {**config, **overrides}, creds, harness=harness)
+    return ab.ProfileApplier(ab.Shell(), {**config, **overrides}, creds,
+                             harness=harness if harness is not None else _shipped_harness(ab))
 
 
 def cli_ops(fake_env):
@@ -194,7 +204,7 @@ def test_workspace_name_match_is_exact(ab, fake_env, config, creds, profiles):
 
 
 def test_dry_run_calls_nothing(ab, fake_env, config, profiles, creds):
-    applier = ab.ProfileApplier(ab.Shell(dry_run=True), config, creds)
+    applier = ab.ProfileApplier(ab.Shell(dry_run=True), config, creds, harness=_shipped_harness(ab))
     applier.apply(profiles)
     assert fake_env.openshell_calls() == []
 
@@ -252,7 +262,7 @@ SHIPPED_PROFILES = Path(__file__).resolve().parents[2] / "charts" / "openshell-s
 
 def applier_with_shipped_profiles(ab, config, creds):
     docs = {p.stem: p.read_text() for p in SHIPPED_PROFILES.glob("*.yaml")}
-    return ab.ProfileApplier(ab.Shell(), config, creds, docs)
+    return ab.ProfileApplier(ab.Shell(), config, creds, docs, harness=_shipped_harness(ab))
 
 
 def test_missing_profile_is_imported_from_the_chart_then_provider_created(ab, fake_env, config, profiles, creds):
@@ -288,7 +298,8 @@ def test_no_import_when_the_gateway_has_the_profile(ab, fake_env, config, profil
 
 def test_failed_profile_import_stops_the_apply(ab, fake_env, config, profiles, creds):
     fake_env.without_profiles("brave")
-    applier = ab.ProfileApplier(ab.Shell(), config, creds, {"brave": "display_name: no id\n"})
+    applier = ab.ProfileApplier(ab.Shell(), config, creds, {"brave": "display_name: no id\n"},
+                                harness=_shipped_harness(ab))
     with pytest.raises(ab.InstallerError, match="could not import the 'brave' provider profile"):
         applier.apply(profiles)
 
@@ -301,13 +312,21 @@ def test_provider_profiles_are_read_from_the_installer_disk(ab, tmp_path):
 
 def test_verify_fails_when_openclaw_cannot_run_in_the_sandbox(ab, fake_env, config, profiles, creds):
     """Live: the sandbox was Ready but `openclaw` was denied by the sandbox
-    filesystem policy; the best-effort setup steps hid it and verify passed."""
+    filesystem policy; the best-effort setup steps hid it and verify passed.
+
+    Every sandbox exec into 'notebook' is denied, so harness staging is also
+    best-effort-skipped (decision: reconcile_harness does not abort the whole
+    apply on an exec-level failure) and verify reports it too."""
     fake_env.exec_fails_in("notebook")
     applier = make_applier(ab, config, creds)
     applier.apply(profiles)
     failures = applier.verify(profiles)
-    assert failures == ["openclaw cannot run in sandbox 'notebook': "
-                        "sh: line 1: /usr/local/sbin/openclaw: Permission denied"]
+    assert failures == [
+        "openclaw cannot run in sandbox 'notebook': "
+        "sh: line 1: /usr/local/sbin/openclaw: Permission denied",
+        "harness in sandbox 'notebook': missing: skills/pattern-author/SKILL.md",
+        "harness in sandbox 'notebook': missing: tools/web-search.yaml",
+    ]
 
 
 def test_verify_runs_openclaw_in_agent_sandboxes_only(ab, fake_env, config, profiles, creds):
@@ -389,27 +408,18 @@ def test_key_never_appears_in_argv_or_logs(ab, fake_env, config, profiles, creds
     assert body[:40] not in capsys.readouterr().err
 
 
-def test_full_apply_stages_the_pinned_harness_into_notebook(
-        ab, fake_env, config, profiles, creds, shipped_harness_files):
-    """A full apply run stages the harness before the gateway launches.
-
-    The fake `openshell` never reads stdin and models no filesystem (decision
-    9c), so `verify` cannot see the staged bytes and fails closed here --
-    exactly the behaviour that makes a silent empty-file failure loud. Real
-    success is confirmed on hardware (P6 step 2b), not offline.
+def test_full_apply_stages_the_pinned_harness_into_notebook(ab, fake_env, config, profiles, creds):
+    """A full apply run stages the harness before the gateway launches, and
+    verify sees the staged bytes through the fake's virtual filesystem for
+    sandbox exec. This proves the adapter's own logic end to end; it does not
+    prove the real CLI forwards stdin (decision 9c) -- that is confirmed on
+    hardware (P6 step 2b).
     """
-    bundles = ab.parse_harness_files(shipped_harness_files)
-    bundle = bundles["ds-default"]
-    notebook = next(sb for _, ws in ab.enabled_workspaces(profiles)
-                    for sb in ws.sandboxes if sb.name == "notebook")
-    notebook.harness_ref = {"name": "ds-default", "digest": bundle.digest}
-
-    applier = make_applier(ab, config, creds,
-                           harness={"bundles": bundles, "enrolled": {"web-search"}})
-    with pytest.raises(ab.InstallerError, match="harness verification failed"):
-        applier.apply(profiles)
+    applier = make_applier(ab, config, creds)
+    applier.apply(profiles)
 
     scripts = [c[-1] for c in fake_env.openshell_calls() if c[:3] == ["sandbox", "exec", "-n"]]
     joined = "\n".join(scripts)
     assert "rm -rf /sandbox/.openclaw/skills /sandbox/.openclaw/tools" in joined
     assert "base64 -d" in joined
+    assert applier.verify(profiles) == []
