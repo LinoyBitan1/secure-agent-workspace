@@ -5,6 +5,8 @@ fake `podman`, `openshell`, `nemoclaw` and `sudo` executables placed first on
 PATH. No cluster, VM, network or credentials are used.
 """
 
+import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -85,6 +87,19 @@ def harness_files():
 @pytest.fixture
 def shipped_harness_files():
     return harness_files()
+
+
+def tree_digest_of_shipped_bundle():
+    """Independent reimplementation of the tree_digest contract, kept apart
+    from the `ab` fixture (the module under test) so a bug in tree_digest
+    cannot make this fixture agree with itself."""
+    root = HARNESS / "ds-default"
+    files = {str(p.relative_to(root)): p.read_bytes()
+             for p in sorted(root.rglob("*")) if p.is_file()}
+    digest = hashlib.sha256()
+    for rel in sorted(files):
+        digest.update(f"{rel}\x00{hashlib.sha256(files[rel]).hexdigest()}\n".encode())
+    return "sha256:" + digest.hexdigest()
 
 
 @pytest.fixture
@@ -223,5 +238,11 @@ def inputs_dir(tmp_path, bom, config, shipped_profile_files, secrets_dir):
     profiles.mkdir()
     for key, text in shipped_profile_files.items():
         (profiles / key).write_text(text)
+    for key, raw in harness_files().items():
+        (profiles / key).write_text(base64.b64encode(raw).decode())
+    (profiles / "harness-index.yaml").write_text(yaml.safe_dump({
+        "bundles": {"ds-default": tree_digest_of_shipped_bundle()},
+        "enrolledGovernanceProfiles": sorted(
+            p.stem for p in (ROOT / "charts" / "governance-policy" / "profiles").glob("*.yaml"))}))
     secrets_dir.rename(root / "secrets")
     return root
