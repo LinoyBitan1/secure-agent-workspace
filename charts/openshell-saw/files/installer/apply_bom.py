@@ -2157,12 +2157,12 @@ class ProfileApplier:
                                         if p.name in sb.providers)
                     failures.append(f"{sb.type} sandbox '{sb.name}' in '{ws.name}' has no usable "
                                     f"provider: skipped {skipped}; the gateway has no profile for that type")
-                    ref = sb.harness_ref or {}
-                    if ref:
-                        bundle = self.harness["bundles"].get(ref.get("name"))
-                        if bundle is not None:
-                            failures += [f"harness in sandbox '{sb.name}': {f}"
-                                        for f in self.adapter.verify(sb.name, ws.name, bundle)]
+                ref = sb.harness_ref or {}
+                if ref:
+                    bundle = self.harness["bundles"].get(ref.get("name"))
+                    if bundle is not None:
+                        failures += [f"harness in sandbox '{sb.name}': {f}"
+                                     for f in self.adapter.verify(sb.name, ws.name, bundle)]
                 if sb.providers:
                     attached = self.cli("sandbox", "provider", "list", sb.name, *ws_args(ws.name),
                                         check=False, quiet=True).out

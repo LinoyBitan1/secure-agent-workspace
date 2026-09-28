@@ -11,5 +11,6 @@ governanceProfiles:
   - gemini
   - github
   - nvidia
+  - openai
   - slack
   - web-search
