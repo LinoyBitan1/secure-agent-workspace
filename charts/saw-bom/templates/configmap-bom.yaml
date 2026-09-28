@@ -9,7 +9,19 @@
 {{- end }}
 {{- /* Harness bundles: charts/saw-bom/harness/<bundle>/<relpath>. Content is
      base64 per key -- a `|` block scalar normalises trailing whitespace, which
-     would change the tree digest between Git and the guest. */ -}}
+     would change the tree digest between Git and the guest.
+     Only bundles referenced by a selected profile's sandbox harnessRef are
+     shipped, so the ConfigMap stays scoped to `.Values.profiles`. */ -}}
+{{- $wanted := dict }}
+{{- range $profile := .Values.profiles }}
+{{- range $path, $_ := $.Files.Glob (printf "profiles/%s/**/sandbox.yaml" $profile) }}
+{{- range $sb := ((($.Files.Get $path | fromYaml).spec).sandboxes | default list) }}
+{{- if $sb.harnessRef }}
+{{- $_ := set $wanted ($sb.harnessRef.name | default "") true }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- $harness := dict }}
 {{- $digestLines := dict }}
 {{- $payload := 0 }}
@@ -25,6 +37,7 @@
 {{- end }}
 {{- end }}
 {{- $bundle := index $parts 1 }}
+{{- if hasKey $wanted $bundle }}
 {{- $rel := join "/" (slice $parts 2) }}
 {{- $key := printf "harness__%s" (join "__" (slice $parts 1)) }}
 {{- /* KubeVirt renders this ConfigMap as an iso9660 disk; Joliet caps
@@ -36,6 +49,7 @@
 {{- $payload = add $payload (len (b64enc $content)) }}
 {{- $_ := set $digestLines $bundle (printf "%s%s\x00%s\n" (default "" (get $digestLines $bundle)) $rel (sha256sum $content)) }}
 {{- end }}
+{{- end }}
 {{- $digests := dict }}
 {{- range $bundle, $text := $digestLines }}
 {{- $_ := set $digests $bundle (printf "sha256:%s" (sha256sum $text)) }}
@@ -43,12 +57,15 @@
 {{- if gt $payload 921600 }}
 {{- fail (printf "harness payload is %d bytes (>900KiB); the ConfigMap limit is 1MiB" $payload) }}
 {{- end }}
-{{- /* Every bundled tool must name an enrolled governance profile. */ -}}
+{{- /* Every shipped bundle's tools must name an enrolled governance profile. */ -}}
 {{- range $path, $_ := $.Files.Glob "harness/*/harness.yaml" }}
+{{- $bundle := index (splitList "/" $path) 1 }}
+{{- if hasKey $wanted $bundle }}
 {{- $doc := $.Files.Get $path | fromYaml }}
 {{- range $tool := (($doc.spec).tools | default list) }}
 {{- if not (has ($tool.governanceProfile | default "") $.Values.governanceProfiles) }}
 {{- fail (printf "harness tool %q names governanceProfile %q, which is not enrolled (saw-bom values.governanceProfiles)" $tool.name ($tool.governanceProfile | default "")) }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
