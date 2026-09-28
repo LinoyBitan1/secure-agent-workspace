@@ -184,6 +184,14 @@ class FakeWorld:
         """`sandbox exec` into these sandboxes fails like a policy denial."""
         (self.state / "exec-fail.json").write_text(json.dumps(list(sandboxes)))
 
+    def mark_unreadable(self, sandbox, *paths):
+        """Managed paths the shell lists but cannot hash (fail closed)."""
+        current = {}
+        if (self.state / "unreadable.json").exists():
+            current = json.loads((self.state / "unreadable.json").read_text())
+        current[sandbox] = sorted(set(current.get(sandbox, [])) | set(paths))
+        (self.state / "unreadable.json").write_text(json.dumps(current))
+
     def without_profiles(self, *types):
         """Gateway without these provider profiles (e.g. governance off)."""
         (self.state / "no-profiles.json").write_text(json.dumps(list(types)))

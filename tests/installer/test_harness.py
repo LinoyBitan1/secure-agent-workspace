@@ -189,14 +189,16 @@ def _staged(bundle, **override):
     return files
 
 
-def _adapter(ab, calls, bundle, live=None, revision="", heals=True):
+def _adapter(ab, calls, bundle, live=None, revision="", heals=True, locked=()):
     """Adapter over a command-aware, minimally stateful fake shell.
 
     A constant fake is wrong here: `verify` and `current_revision` issue
     different commands, and one canned stdout makes verify fail for the wrong
     reason. `heals=True` models the wipe-then-write: after `rm -rf` the tree
     is exactly the bundle, so a restage converges. `heals=False` leaves the
-    tree untouched, which is how a real failed apply looks.
+    tree untouched, which is how a real failed apply looks. `locked` models
+    files the shell can list but not read (e.g. host-root-owned): hashing
+    reports them instead of silently dropping them.
     """
     state = dict(_staged(bundle) if live is None else live)
 
@@ -207,8 +209,9 @@ def _adapter(ab, calls, bundle, live=None, revision="", heals=True):
             state.clear()
             state.update(_staged(bundle))
         if "sha256sum" in script:
-            return ab.Result(0, "\n".join(f"{h}  {rel}"
-                                          for rel, h in sorted(state.items())), "")
+            return ab.Result(0, "\n".join(
+                f"UNREADABLE {rel}" if rel in locked else f"OK {h} {rel}"
+                for rel, h in sorted(state.items(), key=lambda kv: kv[0])), "")
         if script.startswith("cat ") and ".saw-harness-revision" in script:
             return ab.Result(0, revision, "")
         return ab.Result(0, "", "")
@@ -322,3 +325,14 @@ def test_verify_catches_an_empty_staged_file(ab, shipped_harness_files):
     a = _adapter(ab, [], bundle, live=live, heals=False)
     assert a.verify("notebook", "default", bundle) == [
         "content differs: skills/pattern-author/SKILL.md"]
+
+
+def test_verify_reports_files_it_can_list_but_not_read(ab, shipped_harness_files):
+    """Fail closed, not silent: a managed file the shell lists but cannot hash
+    (found live: host-root-owned +i file, readable by ls/stat, EACCES on open)
+    must fail verify instead of dropping out of a batched hash listing."""
+    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
+    a = _adapter(ab, [], bundle, heals=False,
+                 locked=("skills/pattern-author/SKILL.md",))
+    assert a.verify("notebook", "default", bundle) == [
+        "unreadable: skills/pattern-author/SKILL.md"]

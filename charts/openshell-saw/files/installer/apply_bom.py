@@ -1195,22 +1195,32 @@ class HarnessAdapter:
 
         Content hashes, not a name set: the offline fakes cannot prove that
         base64-over-stdin reaches the sandbox intact, so an empty or truncated
-        file must fail here rather than pass as "present".
+        file must fail here rather than pass as "present". Each file is hashed
+        on its own so an unreadable file is reported (fail closed) instead of
+        silently dropping out of a batched hash listing.
         """
         root = bundle.managed_root.rstrip("/")
         want = {rel: hashlib.sha256(base64.b64decode(b64)).hexdigest()
                 for rel, b64 in self.managed_files(bundle).items()}
         listed = self._exec(
             sandbox, workspace,
-            f"cd {root} 2>/dev/null && find skills tools -type f -exec sha256sum {{}} + "
-            "2>/dev/null | sed 's#\\./##' | sort || true",
+            f"cd {root} 2>/dev/null || exit 0; "
+            "find skills tools -type f 2>/dev/null | sort | "
+            "while IFS= read -r f; do "
+            "if h=$(sha256sum \"$f\" 2>/dev/null); then "
+            "echo \"OK ${h%% *} $f\"; else echo \"UNREADABLE $f\"; fi; done; true",
             check=False, quiet=True)
-        got = {}
+        got, failures, unreadable = {}, [], set()
         for line in (listed.out or "").splitlines():
-            parts = line.split(None, 1)
-            if len(parts) == 2:
-                got[parts[1].strip()] = parts[0].strip()
-        return self.compare(want, got)
+            if line.startswith("OK "):
+                _, h, path = line.split(" ", 2)
+                got[path.strip()] = h.strip()
+            elif line.startswith("UNREADABLE "):
+                rel = line[len("UNREADABLE "):].strip()
+                unreadable.add(rel)
+                failures.append(f"unreadable: {rel}")
+        want_readable = {k: v for k, v in want.items() if k not in unreadable}
+        return failures + self.compare(want_readable, got)
 
 
 class ProfileApplier:
