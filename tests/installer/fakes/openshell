@@ -289,11 +289,23 @@ elif op == "sandbox exec":
     if m:
         if m.group(1) in fs:
             sys.stdout.write(base64.b64decode(fs[m.group(1)]).decode())
-    m = re.match(r"^cd (.+) 2>/dev/null && find skills tools .*sha256sum.*$", script)
+    m = re.match(r"^cd (.+) 2>/dev/null \|\| exit 0; find skills tools ", script)
     if m:
         root = m.group(1).rstrip("/") + "/"
-        lines = [f"{hashlib.sha256(base64.b64decode(fs[p])).hexdigest()}  {p[len(root):]}"
-                for p in fs if p.startswith(root) and p[len(root):].split("/", 1)[0] in ("skills", "tools")]
+        unreadable = (json.loads((state_dir / "unreadable.json").read_text())
+                      if (state_dir / "unreadable.json").exists() else {})
+        locked = set(unreadable.get(opt("-n"), []))
+        lines = []
+        for p in fs:
+            if not p.startswith(root):
+                continue
+            rel = p[len(root):]
+            if rel.split("/", 1)[0] not in ("skills", "tools"):
+                continue
+            if rel in locked:
+                lines.append(f"UNREADABLE {rel}")
+            else:
+                lines.append(f"OK {hashlib.sha256(base64.b64decode(fs[p])).hexdigest()} {rel}")
         for line in sorted(lines):
             print(line)
 elif op == "sandbox provider" and head[2] == "attach":
