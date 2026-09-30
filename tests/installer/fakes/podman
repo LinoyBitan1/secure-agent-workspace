@@ -114,16 +114,26 @@ elif cmd == "export":
 elif cmd == "image" and args[1] == "exists":
     sys.exit(0 if args[-1] in images and "pulled" in images[args[-1]] else 1)
 elif cmd == "ps":
-    # Only the label filters the installer uses: sandbox name and workspace.
+    # Only the label filters the installer uses: sandbox name, workspace and
+    # isolation role. Like 0.1.x, each sandbox is two containers with the
+    # same sandbox labels: its supervisor (listed first, no user mounts) and
+    # the workload (openshell.ai/isolation-role=sandbox).
     labels = dict(a.split("=", 1)[1].split("=", 1) for a in args if a.startswith("label="))
     for key in sandboxes():
         workspace, sandbox = key.split("/", 1)
         if labels.get("openshell.ai/sandbox-name", sandbox) == sandbox and \
                 labels.get("openshell.ai/sandbox-workspace", workspace) == workspace:
-            print(container_name(key))
+            role = labels.get("openshell.ai/isolation-role")
+            if role in (None, "supervisor"):
+                print(f"openshell-supervisor-{workspace}-{sandbox}")
+            if role in (None, "sandbox"):
+                print(container_name(key))
 elif cmd == "inspect":
     # `.Mounts` of a sandbox container, in the shape podman 5.8 prints: an
     # image mount's Source is the image reference given at create.
+    if args[-1].startswith("openshell-supervisor-"):
+        print("[]")     # the supervisor container has none of the user's mounts
+        sys.exit(0)
     sb = next((v for k, v in sandboxes().items() if container_name(k) == args[-1]), None)
     if sb is None:
         print(f"Error: no such object: {args[-1]}", file=sys.stderr)

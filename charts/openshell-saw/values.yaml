@@ -186,8 +186,9 @@ dashboard:
 # gateway keeps resource admission on and bind mounts off, so a caller can
 # only attach a podman volume labelled openshell.ai/sandbox-attachable for
 # its own workspace (the installer labels each harness volume that way);
-# image and host-path mounts stay refused. Set false when no profile uses a
-# harness.
+# image and host-path mounts stay refused. Set false only when no profile
+# uses a harness: the driver stops sandboxes created with driver config once
+# it is off, and the installer refuses a harnessRef without it.
 allowDriverConfig: true
 
 governance:

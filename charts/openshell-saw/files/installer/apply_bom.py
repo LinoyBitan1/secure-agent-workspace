@@ -535,6 +535,9 @@ HARNESS_MOUNT = "/sandbox/harness"
 HARNESS_MARKER = ".saw-harness-revision"  # written into the volume with the bundle
 HARNESS_VOLUME_PREFIX = "saw-harness-"
 HARNESS_VOLUME_LABEL = "saw.redhat.com/harness-volume"
+# The podman driver's workload container (its supervisor has the same
+# sandbox labels but not the user's mounts): isolation.rs WORKLOAD_FILTER.
+WORKLOAD_ROLE_LABEL = "openshell.ai/isolation-role=sandbox"
 # The labels OpenShell 0.1.x resource admission requires on a mounted volume.
 ATTACHABLE_LABEL = "openshell.ai/sandbox-attachable"
 ATTACHABLE_WORKSPACE_LABEL = "openshell.ai/sandbox-attachable-workspace"
@@ -945,6 +948,22 @@ def check_harness_index(bundles, index):
     for name in sorted(set(bundles) - set(listed)):
         if listed or index:
             raise InstallerError(f"harness bundle '{name}' is missing from harness-index.yaml")
+
+
+def check_driver_config_allowed(toml_path):
+    """A harness is mounted through caller driver config, which OpenShell
+    0.1.x refuses unless gateway.toml allows it (openshell-saw
+    allowDriverConfig). Checked before anything changes, instead of failing
+    at sandbox create. A missing file is left to install to report."""
+    try:
+        text = Path(toml_path).read_text(encoding="utf-8")
+    except OSError:
+        return
+    if not re.search(r"^\s*allow_driver_config\s*=\s*true\s*(#.*)?$", text, re.M):
+        raise InstallerError(
+            "a sandbox has a harnessRef, but gateway.toml does not set allow_driver_config = "
+            "true, so OpenShell would refuse to mount it; set allowDriverConfig in the "
+            "openshell-saw chart")
 
 
 def validate_harness(profiles, bundles):
@@ -2088,6 +2107,9 @@ class ProfileApplier:
           - the container carries the labels openshell.ai/sandbox-name and
             openshell.ai/sandbox-workspace, so it is found without guessing
             its generated name (openshell-<ws>--<sandbox>-<uuid>);
+          - 0.1.x runs each sandbox as two containers with those labels, the
+            workload and its supervisor; only the workload
+            (openshell.ai/isolation-role=sandbox) has the user's mounts;
           - `.Mounts` lists a named volume as {"Type": "volume", "Name":
             <volume>, ...} (checked live on 0.0.116; same labels in 0.1.2,
             driver_utils.rs).
@@ -2095,10 +2117,15 @@ class ProfileApplier:
         names = self._podman("ps", "-a",
                              "--filter", f"label=openshell.ai/sandbox-name={sb.name}",
                              "--filter", f"label=openshell.ai/sandbox-workspace={ws.name}",
+                             "--filter", f"label={WORKLOAD_ROLE_LABEL}",
                              "--format", "{{.Names}}", check=False, quiet=True)
-        name = (names.out or "").strip().splitlines()[:1]
-        if not names.ok or not name:
+        found = (names.out or "").split()
+        if not names.ok or not found:
             return False
+        if len(found) > 1:
+            raise InstallerError(f"more than one workload container for sandbox '{sb.name}' in "
+                                 f"workspace '{ws.name}': {', '.join(found)}")
+        name = found
         got = self._podman("inspect", "--format", "{{json .Mounts}}", name[0],
                            check=False, quiet=True)
         try:
@@ -2119,6 +2146,8 @@ class ProfileApplier:
         cannot be found is left to the gateway."""
         seen = self.sandbox_harness_mount(ws, sb)
         if seen is False:
+            log(f"WARN: no workload container found for sandbox '{sb.name}'; "
+                "not checking its harness mount")
             return True
         want = self.desired_harness_mount(ws, sb)
         return seen == (("volume", want) if want else None)
@@ -2189,18 +2218,9 @@ class ProfileApplier:
             log(f"Harness {source} for sandbox '{sb.name}' in volume {volume} (dry run)")
             return None
         mountpoint = self.volumes.ensure(volume, ws.name)
-        if mountpoint is None:
-            # Created before the volume carried its admission labels, which
-            # cannot be added later: free it and create it again.
-            log(f"Harness volume {volume} lacks its admission labels; recreating it "
-                f"(and sandbox '{sb.name}', which mounts it)")
-            self.cli("sandbox", "delete", sb.name, *ws_args(ws.name), check=False)
-            if not self.volumes.remove(volume):
-                raise InstallerError(f"could not remove harness volume {volume} to relabel it")
-            mountpoint = self.volumes.ensure(volume, ws.name)
-            if mountpoint is None:
-                raise InstallerError(f"podman created volume {volume} without its labels")
-        tree, _ = self.volumes.current(mountpoint, source)
+        # None: the volume predates its admission labels, which cannot be
+        # added later; it is replaced below, after governance passed.
+        tree = self.volumes.current(mountpoint, source)[0] if mountpoint else None
         current = tree is not None
         if current:
             log(f"Harness volume {volume} already holds {source}")
@@ -2214,11 +2234,40 @@ class ProfileApplier:
             raise InstallerError(f"harness {source} is for agent '{info['agent']}', "
                                  f"sandbox '{sb.name}' runs openclaw")
         self.check_harness_governance(ws, sb, info)
+        if mountpoint is None:
+            log(f"Harness volume {volume} lacks its admission labels; recreating it "
+                f"(and sandbox '{sb.name}', which mounts it)")
+            self.delete_sandbox_and_wait(ws, sb)
+            self.remove_volume_and_wait(volume)
+            mountpoint = self.volumes.ensure(volume, ws.name)
+            if mountpoint is None:
+                raise InstallerError(f"podman created volume {volume} without its labels")
         if not current:
             self.volumes.fill(volume, mountpoint, source, tree)
             log(f"Harness volume {volume} filled from {source}")
         self.harness_info[(ws.name, sb.name)] = info
         return info
+
+    def delete_sandbox_and_wait(self, ws, sb, attempts=24, delay=5):
+        """Delete a sandbox and wait until the gateway no longer has it and
+        podman has removed its workload container: 0.1.x may accept the
+        delete with cleanup still pending, and its container keeps the
+        harness volume in use until it is gone."""
+        self.cli("sandbox", "delete", sb.name, *ws_args(ws.name), check=False)
+        if self.sh.dry_run:
+            return
+        for _ in range(attempts):
+            if self.sandbox_state(ws, sb) == "missing" and self.sandbox_harness_mount(ws, sb) is False:
+                return
+            time.sleep(delay)
+        raise InstallerError(f"sandbox '{sb.name}' in workspace '{ws.name}' was not removed")
+
+    def remove_volume_and_wait(self, volume, attempts=12, delay=5):
+        for _ in range(attempts):
+            if self.volumes.remove(volume):
+                return
+            time.sleep(delay)
+        raise InstallerError(f"could not remove harness volume {volume} to relabel it")
 
     def create_sandbox(self, ws, sb):
         self.prepare_harness(ws, sb)
@@ -2233,7 +2282,7 @@ class ProfileApplier:
             log(f"Sandbox '{sb.name}' " + (f"does not mount its harness volume {want}"
                                            if want else "still mounts a removed harness")
                 + "; recreating it")
-            self.cli("sandbox", "delete", sb.name, *ws_args(ws.name), check=False)
+            self.delete_sandbox_and_wait(ws, sb)
             state = "missing"
         if state == "broken":
             log(f"Sandbox '{sb.name}' is not running; recreating it")
@@ -2776,6 +2825,8 @@ class Inputs:
         bundles = parse_harness_files(harness_files)
         check_harness_index(bundles, index)
         revisions = validate_harness(profiles, bundles)
+        if revisions:
+            check_driver_config_allowed(self.installer / "gateway.toml")
         harness = {"bundles": bundles, "revisions": revisions}
         return bom, cfg, profiles, creds, harness
 
