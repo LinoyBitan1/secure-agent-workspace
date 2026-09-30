@@ -68,6 +68,13 @@ def test_openclaw_calls_the_native_endpoint_with_the_placeholder_key(
     """0.1.x removed https://inference.local: OpenClaw calls NVIDIA directly,
     with the placeholder the sandbox holds in NVIDIA_API_KEY (expanded inside
     the sandbox, never by the installer)."""
+
+
+def test_system_inference_skipped_without_default_workspace_model(ab, fake_env, config, profiles, creds):
+    for _, ws in ab.enabled_workspaces(profiles):
+        if ws.name == "default":
+            for p in ws.providers:
+                p.model = None
     make_applier(ab, config, creds).apply(profiles)
     onboard = next(c[-1] for c in fake_env.openshell_calls()
                    if c[:2] == ["sandbox", "exec"] and "onboard" in c[-1] and "notebook" in c)

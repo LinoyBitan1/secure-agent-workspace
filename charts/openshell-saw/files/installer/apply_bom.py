@@ -2249,15 +2249,18 @@ class ProfileApplier:
         if profile_id:
             log(f"Activating the new OpenClaw credential '{profile_id}'")
             self.cli(*exec_cmd, "sh", "-c",
-                     f"{oc_env} openclaw models auth activate {profile_id} --agent main", check=False)
-        self.cli(*exec_cmd, "sh", "-c", f"{oc_env} openclaw config set gateway.auth.token '{token}'",
+                     f"{oc_env} openclaw models auth activate {shlex.quote(profile_id)} --agent main",
+                     check=False)
+        self.cli(*exec_cmd, "sh", "-c",
+                 f"{oc_env} openclaw config set gateway.auth.token {shlex.quote(token)}",
                  check=False)
         self.configure_harness(ws, sb, exec_cmd, oc_env)
         route = self.cfg.get("sandboxDashboardRoute")
         if route:
+            origins = shlex.quote(json.dumps([f"https://{route}"]))
             self.cli(*exec_cmd, "sh", "-c",
-                     f"{oc_env} openclaw config set gateway.controlUi.allowedOrigins "
-                     f"'[\"https://{route}\"]'", check=False)
+                     f"{oc_env} openclaw config set gateway.controlUi.allowedOrigins {origins}",
+                     check=False)
         self.cli(*exec_cmd, "sh", "-c",
                  f"export OPENCLAW_GATEWAY_TOKEN={token} {oc_env} && nohup openclaw gateway run "
                  "--allow-unconfigured --bind lan --port 18789 > /tmp/openclaw-gateway.log 2>&1 &",
