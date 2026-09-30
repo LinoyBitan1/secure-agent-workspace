@@ -12,4 +12,4 @@ endpoints:
     rules:
       - allow:
           method: POST
-          path: /mcp
+          tool: mcp_echo
