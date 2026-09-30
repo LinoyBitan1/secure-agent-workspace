@@ -5,11 +5,6 @@
       "type": "stdio",
       "command": "node",
       "args": ["${PLUGIN_ROOT}/mcp/echo-server.mjs"]
-    },
-    "saw-env-echo": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["${PLUGIN_ROOT}/mcp/env-echo.mjs"]
     }
   }
 }
