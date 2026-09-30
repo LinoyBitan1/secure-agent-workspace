@@ -11,5 +11,5 @@ endpoints:
     enforcement: enforce
     rules:
       - allow:
-          method: POST
+          method: tools/call
           tool: mcp_echo
