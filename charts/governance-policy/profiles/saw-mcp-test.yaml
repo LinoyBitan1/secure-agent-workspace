@@ -13,3 +13,9 @@ endpoints:
       - allow:
           method: tools/call
           tool: mcp_echo
+  # Throwaway item-6 endpoint: in-cluster echo Service reachability probe.
+  - host: echo.mcp-test-echo.svc.cluster.local
+    port: 8080
+    protocol: rest
+    enforcement: enforce
+    access: read-only
