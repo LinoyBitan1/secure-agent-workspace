@@ -345,6 +345,21 @@ def test_gateway_config_is_schema_v2_for_openshell_01(default_docs):
     assert "OPENSHELL_DRIVERS" not in env
 
 
+def test_gateway_allows_caller_driver_config_for_harness_mounts(default_docs):
+    """0.1.x refuses --driver-config-json unless allow_driver_config is set;
+    resource admission and the bind-mount switch keep their safe defaults."""
+    _, toml = gateway_files(default_docs)
+    podman = toml["openshell"]["drivers"]["podman"]
+    assert podman["allow_driver_config"] is True
+    assert "resource_admission" not in podman
+    assert "enable_bind_mounts" not in podman
+
+
+def test_driver_config_can_be_turned_off():
+    _, toml = gateway_files(render("--set", "allowDriverConfig=false"))
+    assert "allow_driver_config" not in toml["openshell"]["drivers"]["podman"]
+
+
 def test_gateway_oidc_for_users_with_roles():
     docs = render("--set", "oidc.issuerUrl=https://kc.example.com/realms/openshell")
     env, toml = gateway_files(docs)

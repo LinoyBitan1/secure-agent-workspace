@@ -182,25 +182,11 @@ def test_plan_round_trips_the_harness(ab, shipped_harness_files):
     assert back["bundles"]["ds-default"].files == bundles["ds-default"].files
 
 
-def test_plan_round_trips_resolved_mcp_secrets(ab, shipped_harness_files):
-    """Secrets are resolved admin-side (Inputs.load), before the plan hands
-    off to the runtime-user subprocess -- the resolved values must survive
-    that JSON round trip, same as provider credentials do."""
-    import json
-    bundles = ab.parse_harness_files(shipped_harness_files)
-    mcp_secrets = {"ds-default": {"tavily": "tvly-TEST-KEY"}}
-    plan = json.loads(json.dumps(ab.plan_for_user(
-        {}, _pinned(ab, {"name": "ds-default"}), {}, "d.sh",
-        harness={"bundles": bundles, "mcpSecrets": mcp_secrets})))
-    back = ab.harness_from_plan(plan)
-    assert back["mcpSecrets"] == mcp_secrets
-
-
 # -- reading a harness image, and the inline volume tarball ---------------------
 #
-# An OCI harness image is FROM scratch with the bundle tree at its root; the
-# sandbox mounts the image itself. The installer only reads it (via `podman
-# export`) for the governance check, so these tests pin what it accepts.
+# An OCI harness image is FROM scratch with the bundle tree at its root. The
+# installer reads it (via `podman export`) and puts the tree, with its file
+# modes, into the sandbox's harness volume, so these tests pin what it accepts.
 
 def _tar(path, entries):
     """entries: (name, bytes | None for a dir | ("symlink", target))."""
@@ -266,8 +252,17 @@ def test_volume_tarball_is_root_owned_world_readable_and_round_trips(ab, tmp_pat
 
 
 def test_mount_json_matches_the_openshell_podman_driver_schema(ab):
-    assert json.loads(ab.harness_mounts_json("image", IMAGE)) == {"podman": {"mounts": [{
-        "type": "image", "source": IMAGE, "target": "/sandbox/harness", "read_only": True}]}}
+    """A volume mount (0.1.x resource admission refuses image mounts)."""
+    assert json.loads(ab.harness_mounts_json("saw-harness-x")) == {"podman": {"mounts": [{
+        "type": "volume", "source": "saw-harness-x", "target": "/sandbox/harness",
+        "read_only": True}]}}
+
+
+def test_volume_names_do_not_collide(ab):
+    """Names are DNS labels, so "<ws>-<sb>" alone is ambiguous."""
+    assert ab.harness_volume_name("a-b", "c") != ab.harness_volume_name("a", "b-c")
+    assert ab.harness_volume_name("a", "b") == ab.harness_volume_name("a", "b")
+    assert ab.harness_volume_name("a", "b").startswith("saw-harness-a-b-")
 
 
 # -- what OpenClaw is pointed at, and what governance must allow ---------------
@@ -331,48 +326,55 @@ def test_parse_profile_catalog_reads_ids_and_hosts(ab):
     assert ab.parse_profile_catalog(out) == {"web-search": {"api.tavily.com"}, "slack": set()}
 
 
-# -- stdio MCP server secrets: never in the bundle, resolved from a Secret ---
+# -- stdio MCP servers: keys come from providers, never from the bundle -------
 
-def _stdio_secret_tree(**decl_overrides):
-    decl = {"name": "tavily", "credentialSecret": "tavily",
-            "credentialSecretKey": "api_key", "credentialEnvVar": "TAVILY_API_KEY"}
-    decl.update(decl_overrides)
+def _stdio_tree(decl=None, conf=None):
+    decl = {"name": "tavily", **(decl or {})}
     manifest = yaml.safe_dump({"metadata": {"name": "demo"}, "spec": {"mcpServers": [decl]}})
-    mcp = '{"mcpServers": {"tavily": {"type": "stdio", "command": "node"}}}'
+    mcp = json.dumps({"mcpServers": {"tavily": conf or {"type": "stdio", "command": "node"}}})
     return {"harness.yaml": (manifest.encode(), False), "mcp.json": (mcp.encode(), False)}
 
 
-def test_a_stdio_server_with_a_credential_secret_is_declared(ab):
-    info = ab.describe_harness_tree(_stdio_secret_tree())
-    assert info["mcpSecrets"] == [{"server": "tavily", "envVar": "TAVILY_API_KEY",
-                                   "credentialSecret": "tavily", "credentialSecretKey": "api_key",
-                                   "command": "node", "args": [], "cwd": "", "env": {}}]
-    assert info["governance"] == []  # stdio needs no governance profile
+def test_a_stdio_server_without_a_profile_is_not_governed(ab):
+    assert ab.describe_harness_tree(_stdio_tree())["governance"] == []
 
 
-def test_a_stdio_secret_needs_a_well_formed_env_var(ab):
-    with pytest.raises(ab.InstallerError, match="credentialEnvVar must look like an env var"):
-        ab.describe_harness_tree(_stdio_secret_tree(credentialEnvVar="not an env var!"))
+def test_a_stdio_server_that_calls_a_service_is_governed_by_its_profile(ab):
+    info = ab.describe_harness_tree(_stdio_tree({"governanceProfile": "web-search"}))
+    assert info["governance"] == [{"kind": "MCP server", "name": "tavily",
+                                   "governanceProfile": "web-search", "hosts": []}]
 
 
-def test_a_stdio_secret_rejects_a_bad_secret_name(ab):
-    with pytest.raises(ab.InstallerError, match="invalid credentialSecret"):
-        ab.describe_harness_tree(_stdio_secret_tree(credentialSecret="Not Valid"))
+@pytest.mark.parametrize("key", ["credentialSecret", "credentialSecretKey", "credentialEnvVar"])
+def test_a_bundle_that_asks_for_a_secret_is_refused(ab, key):
+    """The key would sit in the sandbox, readable by the agent; a provider
+    gives the server a placeholder instead."""
+    with pytest.raises(ab.InstallerError, match=f"sets {key}.*governanceProfile"):
+        ab.describe_harness_tree(_stdio_tree({key: "x"}))
 
 
-def test_resolve_harness_mcp_secrets_reads_the_mounted_secret(ab, tmp_path):
-    (tmp_path / "tavily").mkdir()
-    (tmp_path / "tavily" / "api_key").write_text("tvly-TEST-KEY\n")
-    bundle = ab.HarnessBundle(name="demo", files={
-        rel: base64.b64encode(data).decode()
-        for rel, (data, _) in _stdio_secret_tree().items()})
-    out = ab.resolve_harness_mcp_secrets({"demo": bundle}, tmp_path)
-    assert out == {"demo": {"tavily": "tvly-TEST-KEY"}}
+def test_an_inline_stdio_server_cannot_run_a_bundled_file(ab):
+    """A ConfigMap keeps no file modes, so the file would not be executable."""
+    conf = {"type": "stdio", "command": "${PLUGIN_ROOT}/bin/server"}
+    with pytest.raises(ab.InstallerError, match="keeps no file modes"):
+        ab.describe_harness_tree(_stdio_tree(conf=conf), inline=True)
+    assert ab.describe_harness_tree(_stdio_tree(conf=conf))["governance"] == []
 
 
-def test_resolve_harness_mcp_secrets_fails_closed_when_missing(ab, tmp_path):
-    bundle = ab.HarnessBundle(name="demo", files={
-        rel: base64.b64encode(data).decode()
-        for rel, (data, _) in _stdio_secret_tree().items()})
-    with pytest.raises(ab.InstallerError, match="credential for MCP server 'tavily' not found"):
-        ab.resolve_harness_mcp_secrets({"demo": bundle}, tmp_path)
+# -- harness-index.yaml: the chart's digest, checked by the installer ---------
+
+def test_the_index_digest_must_match(ab, shipped_harness_files):
+    bundles = ab.parse_harness_files(shipped_harness_files)
+    ab.check_harness_index(bundles, {"bundles": {"ds-default": bundles["ds-default"].digest}})
+    with pytest.raises(ab.InstallerError, match="the chart computed sha256:bad"):
+        ab.check_harness_index(bundles, {"bundles": {"ds-default": "sha256:bad"}})
+
+
+def test_the_index_and_the_files_must_list_the_same_bundles(ab, shipped_harness_files):
+    bundles = ab.parse_harness_files(shipped_harness_files)
+    with pytest.raises(ab.InstallerError, match="lists bundle 'other'"):
+        ab.check_harness_index(bundles, {"bundles": {"ds-default": bundles["ds-default"].digest,
+                                                     "other": "sha256:x"}})
+    with pytest.raises(ab.InstallerError, match="missing from harness-index.yaml"):
+        ab.check_harness_index(bundles, {"bundles": {}})
+    ab.check_harness_index(bundles, {})  # no index shipped: nothing to compare
