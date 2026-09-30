@@ -5,10 +5,9 @@ built, where each piece lives, and what was checked. It builds on PR #53
 (harness bundles in SAW-BOM) and replaces its `sandbox exec` copier. For
 authoring and publishing a bundle, see [harness-bundles.md](harness-bundles.md).
 
-**Status:** mount mechanics checked live on OpenShell 0.0.116 and OpenClaw
-2026.9.5 with throwaway sandboxes. The OpenShell 0.1.x rules the design now
-follows (caller driver config, resource admission for volumes, no image
-mounts) come from the v0.1.2 source; a full run on a 0.1.2 cluster is in §11.
+**Status:** checked end to end on OpenShell 0.1.2-rhaiv.0 (SAW alice, podman
+driver, governance interceptor v0.1.2); see §11. The mount mechanics were
+first probed on OpenShell 0.0.116 and OpenClaw 2026.9.5.
 
 ## 1. Summary
 
@@ -391,7 +390,27 @@ mounts.
   at its new version, a new MCP server listed;
 - `openshell provider list-profiles -o json` returns ids and endpoint hosts.
 
-**From the OpenShell v0.1.2 source** (to confirm on a cluster):
+**Checked live on OpenShell 0.1.2-rhaiv.0** (alice, inline `ds-default`):
+
+- with `allow_driver_config = true`, `sandbox create --driver-config-json`
+  with the volume mount is accepted; an existing `notebook` without the mount
+  was recreated once;
+- the volume carries `openshell.ai/sandbox-attachable=true` and
+  `openshell.ai/sandbox-attachable-workspace=default`; the workload container
+  (`isolation-role=sandbox`) mounts it read-only at `/sandbox/harness`, the
+  supervisor container does not;
+- in the sandbox, `/sandbox/harness` is read-only and holds the marker;
+  OpenClaw lists the `pattern-author` skill, the `ds-default` bundle and the
+  `saw-echo` plugin;
+- a re-apply keeps the workload container and the volume (same ID and
+  creation time); a file edited in the volume on the VM is seen by the
+  sandbox, then repaired by the next apply in place, and the sandbox is still
+  `Ready` after the driver's 30-second admission re-check;
+- an agent turn through the running OpenClaw gateway called both bundle
+  tools: `saw-echo: hello-plugin` (native plugin) and `saw-mcp-echo:
+  hello-mcp` (stdio MCP server).
+
+**From the OpenShell v0.1.2 source** (the rules the design follows):
 
 - caller driver config needs `allow_driver_config`
   (`openshell-core/src/resource_admission.rs`, `check_driver_config`);
@@ -405,20 +424,20 @@ mounts.
 
 **Open:**
 
-1. A full run on a 0.1.2 cluster: first apply, a refill from a new digest, a
-   removed `harnessRef`, and relabelling a volume from before this change.
-2. An agent turn that calls a bundle MCP tool and a plugin tool.
-3. Pulling a public image from GHCR in the VM.
-4. A keyed stdio server end to end: a placeholder from its provider swapped
+1. On a cluster: an image-sourced bundle (a refill from a new digest), a
+   removed `harnessRef`, and relabelling a volume from before this change
+   (covered by the unit tests).
+2. Pulling a public image from GHCR in the VM.
+3. A keyed stdio server end to end: a placeholder from its provider swapped
    by the egress proxy. OpenShell gives every `sandbox exec` process the
    provider placeholders (`openshell-sandbox/src/boundary_exec.rs`); whether
    OpenClaw passes its environment on to a stdio server, or only an
    allowlist as the MCP SDK's stdio transport does by default, is not
    confirmed. The fallback is naming the variable in the server's `env`.
-5. Whether the governance interceptor's profiles accept `protocol: mcp` with
+4. Whether the governance interceptor's profiles accept `protocol: mcp` with
    `rules`, for remote MCP servers (the fallback is `rest` with `read-write`).
-6. Reaching an in-cluster MCP Service from inside a sandbox.
-7. Verifying the bundle image's cosign signature at pull time (after PR #54).
+5. Reaching an in-cluster MCP Service from inside a sandbox.
+6. Verifying the bundle image's cosign signature at pull time (after PR #54).
 
 ## 12. Files
 
