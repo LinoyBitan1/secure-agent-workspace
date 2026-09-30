@@ -24,7 +24,8 @@ SCRIPT = CHART / "files" / "installer" / "apply_bom.py"
 PROFILES = ROOT / "charts" / "saw-bom" / "profiles"
 FAKES = Path(__file__).resolve().parent / "fakes"
 GATEWAY_ENV = "OPENSHELL_SERVER_PORT=17670\nOPENSHELL_ENABLE_MTLS_AUTH=true\n"
-GATEWAY_TOML = '[openshell.drivers.podman]\nsupervisor_image = "quay.io/x/supervisor@sha256:abc"\n'
+GATEWAY_TOML = ('[openshell.drivers.podman]\nsupervisor_image = "quay.io/x/supervisor@sha256:abc"\n'
+                'allow_driver_config = true\n')
 
 
 def _load_module():

@@ -331,3 +331,44 @@ def test_openclaw_loads_the_bundle_from_the_mount(ab, fake_env, config, profiles
     scripts = "\n".join(c[-1] for c in fake_env.openshell_calls() if c[:2] == ["sandbox", "exec"])
     assert """openclaw config set plugins.load.paths '["/sandbox/harness", "/sandbox/harness/plugins"]'""" in scripts
     assert "base64 -d" not in scripts, "bundle files never go through exec"
+
+
+# -- 0.1.x specifics ------------------------------------------------------------------
+
+def test_the_supervisor_container_is_not_mistaken_for_the_workload(
+        ab, fake_env, config, profiles, creds):
+    """0.1.x runs a supervisor container with the same sandbox labels and
+    none of the user's mounts; reading it would recreate the sandbox on
+    every apply."""
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    use_ref(profiles, {"image": IMAGE_V1})
+    make_applier(ab, config, creds).apply(profiles)
+    make_applier(ab, config, creds).apply(profiles)
+    assert not notebook_deletes(fake_env)
+    ps = [op for op in podman_ops(fake_env) if op[:1] == ["ps"]]
+    assert ps and all("label=openshell.ai/isolation-role=sandbox" in op for op in ps)
+
+
+def test_relabelling_checks_governance_before_deleting_the_sandbox(
+        ab, fake_env, config, profiles, creds):
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    make_applier(ab, config, creds).apply(use_ref(profiles, {"image": IMAGE_V1}))
+    labels_file = fake_env.state / "volume-labels.json"
+    labels = json.loads(labels_file.read_text())
+    labels[volume_name(ab)] = {}
+    labels_file.write_text(json.dumps(labels))
+    bad = {**V1, "harness.yaml": manifest(plugins=[{"name": "old-tool", "governanceProfile": "nope"}])}
+    fake_env.set_images({IMAGE_V2: {"__tree__": bad}})
+    with pytest.raises(ab.InstallerError, match="'nope'"):
+        make_applier(ab, config, creds).apply(use_ref(profiles, {"image": IMAGE_V2}))
+    assert not notebook_deletes(fake_env), "a refused bundle must not cost the sandbox"
+
+
+def test_a_harness_needs_driver_config_allowed(ab, tmp_path):
+    toml = tmp_path / "gateway.toml"
+    toml.write_text('[openshell.drivers.podman]\nsupervisor_image = "x"\n')
+    with pytest.raises(ab.InstallerError, match="allow_driver_config"):
+        ab.check_driver_config_allowed(toml)
+    toml.write_text('[openshell.drivers.podman]\nallow_driver_config = true\n')
+    ab.check_driver_config_allowed(toml)
+    ab.check_driver_config_allowed(tmp_path / "missing.toml")

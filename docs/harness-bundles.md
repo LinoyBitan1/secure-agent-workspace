@@ -91,7 +91,12 @@ cannot read it.
    ```
 
 3. Have the server read the profile's env var (`BRAVE_API_KEY`) and call only
-   the profile's endpoints.
+   the profile's endpoints. OpenShell gives every process started in the
+   sandbox the placeholder; whether OpenClaw passes its whole environment to
+   a stdio server is not confirmed yet, so if the server does not see it,
+   name the variable in its `mcp.json` entry:
+   `"env": {"BRAVE_API_KEY": "${BRAVE_API_KEY}"}`. A provider attached to a
+   running sandbox reaches OpenClaw after its gateway restarts.
 
 The installer refuses a bundle whose governed server or plugin names a profile
 the gateway does not serve in that workspace, or one the sandbox has no
@@ -117,15 +122,18 @@ Both end up the same way: the installer puts the bundle, unchanged, into a
 podman volume that belongs to the sandbox (`saw-harness-<workspace>-<sandbox>-<hash>`),
 and the sandbox mounts that volume read-only at `/sandbox/harness`. **An
 update refills the volume in place; the running sandbox is kept** and sees
-the new files (OpenClaw picks up changed skills and plugins when the
-installer restarts its gateway at the end of the apply).
+the new files through the mount (checked live on 0.0.116: a removed plugin
+gone, a skill at its new version, a new MCP server listed).
 
 Why a volume and not an image mount: OpenShell 0.1.x refuses image and host
 path mounts while resource admission is on (the default), and admits a volume
 only when it carries the `openshell.ai/sandbox-attachable=true` and
 `openshell.ai/sandbox-attachable-workspace=<workspace>` labels, which the
 installer sets. The gateway also needs `allow_driver_config = true`
-(`allowDriverConfig` in the openshell-saw chart, on by default). With
+(`allowDriverConfig` in the openshell-saw chart, on by default); the
+installer stops before changing anything when a sandbox has a `harnessRef`
+and it is off. Turning it off later stops every sandbox created with a
+harness (the podman driver re-checks them), so recreate those first. With
 admission on and bind mounts off, a signed-in user of the workspace can
 attach nothing but the workspace's own labelled volumes; if one is attached
 writable and changed, the next apply finds the tree digest changed and

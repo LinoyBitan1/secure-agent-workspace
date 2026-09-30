@@ -218,8 +218,9 @@ gateway, it works the same with the governance interceptor and with APF.
   `openshell.ai/sandbox-attachable=true` and
   `openshell.ai/sandbox-attachable-workspace=<ws>`, plus
   `saw.redhat.com/harness-volume=true`. Labels cannot be added to an existing
-  volume, so one without them is replaced: its sandbox is deleted first, then
-  the volume, then both are created again;
+  volume, so one without them is replaced once the bundle has passed
+  governance: its sandbox is deleted first, then the volume, then both are
+  created again;
 - when the content differs: wipe (in Python; `podman unshare rm -rf` for
   anything not owned by the runtime user), then `podman volume import` a
   tarball from `write_harness_tar()`. The tarball holds the bundle files
@@ -242,7 +243,11 @@ openshell sandbox create --name <sb> … --driver-config-json \
 
 OpenShell 0.1.x accepts caller driver config only when the gateway sets
 `allow_driver_config = true` in `[openshell.drivers.podman]`; the openshell-saw
-chart does (`allowDriverConfig`, on by default). Resource admission stays on
+chart does (`allowDriverConfig`, on by default), and the installer refuses to
+start when a sandbox has a `harnessRef` and `gateway.toml` lacks it
+(`check_driver_config_allowed`). Turning it off later stops every sandbox
+created with caller driver config: the driver labels them
+`openshell.ai/caller-driver-config-used=true` and its reconcile re-checks. Resource admission stays on
 and `enable_bind_mounts` stays off, so image and host-path mounts are refused
 and a caller can attach only volumes labelled for its own workspace.
 
@@ -252,9 +257,14 @@ with the desired one: the sandbox's volume, or nothing when it has no
 `harnessRef`. `sandbox_harness_mount()` finds the container by its labels
 `openshell.ai/sandbox-name` and `openshell.ai/sandbox-workspace` and reads
 `podman inspect --format '{{json .Mounts}}'`, where a volume is
-`{"Type":"volume","Name":"<volume>"}`. When they differ (a sandbox created
+`{"Type":"volume","Name":"<volume>"}`. In 0.1.x each sandbox runs as two
+containers with those labels, the workload and its supervisor, and only the
+workload (`openshell.ai/isolation-role=sandbox`) has the user's mounts, so
+that label is filtered on too. When they differ (a sandbox created
 before its `harnessRef`, or one whose `harnessRef` was removed), the sandbox
-is deleted and created again.
+is deleted and created again. 0.1.x may accept a delete with clean-up still
+pending, so the installer waits until the sandbox and its workload container
+are gone (`delete_sandbox_and_wait`).
 
 ### 7.6 OpenClaw configuration (`configure_harness`)
 
@@ -315,7 +325,7 @@ A service with no provider profile (Tavily, for one) needs a profile with a
 |---|---|
 | First apply | Bundle read, governance checked, volume created and filled, sandbox created with the mount, OpenClaw configured |
 | Re-apply, nothing changed | Volume intact: no pull, no write, sandbox kept |
-| New image digest, or inline bundle edited | Volume wiped and refilled in place; running sandbox sees it; OpenClaw reloads skills and plugins when its gateway restarts, MCP servers apply from the next session |
+| New image digest, or inline bundle edited | Volume wiped and refilled in place; the running sandbox sees it through the mount (briefly empty while it is refilled); OpenClaw reloads skills and plugins, MCP servers apply from the next session |
 | Sandbox created before its `harnessRef` | Recreated with the mount on the next apply |
 | Volume edited on the VM | Verify fails; next apply refills it |
 | Volume without admission labels | Its sandbox and the volume are recreated |
@@ -400,7 +410,11 @@ mounts.
 2. An agent turn that calls a bundle MCP tool and a plugin tool.
 3. Pulling a public image from GHCR in the VM.
 4. A keyed stdio server end to end: a placeholder from its provider swapped
-   by the egress proxy.
+   by the egress proxy. OpenShell gives every `sandbox exec` process the
+   provider placeholders (`openshell-sandbox/src/boundary_exec.rs`); whether
+   OpenClaw passes its environment on to a stdio server, or only an
+   allowlist as the MCP SDK's stdio transport does by default, is not
+   confirmed. The fallback is naming the variable in the server's `env`.
 5. Whether the governance interceptor's profiles accept `protocol: mcp` with
    `rules`, for remote MCP servers (the fallback is `rest` with `read-write`).
 6. Reaching an in-cluster MCP Service from inside a sandbox.
