@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -87,7 +88,18 @@ def test_parse_harness_files_names_the_bundle_on_bad_schema(ab):
 def test_shipped_bundle_parses(ab, shipped_harness_files):
     bundles = ab.parse_harness_files(shipped_harness_files)
     assert "ds-default" in bundles
-    assert [t.governance_profile for t in bundles["ds-default"].tools] == ["web-search"]
+    assert {"plugin.json", "mcp.json", "plugins/saw-echo/index.mjs",
+            "skills/pattern-author/SKILL.md"} <= set(bundles["ds-default"].files)
+
+
+def test_chart_bundle_matches_the_published_bundle():
+    """charts/saw-bom/harness/ds-default ships in the ConfigMap;
+    harness-bundles/ds-default is what CI publishes as an OCI image. They are
+    the same bundle and must not drift."""
+    def tree(root):
+        return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*")
+                if p.is_file() and p.name not in (".containerignore", ".dockerignore")}
+    assert tree(HARNESS / "ds-default") == tree(ROOT / "harness-bundles" / "ds-default")
 
 
 def test_read_profile_files_splits_profiles_from_harness(ab, tmp_path, shipped_harness_files):
@@ -96,12 +108,11 @@ def test_read_profile_files_splits_profiles_from_harness(ab, tmp_path, shipped_h
         # The ConfigMap value is base64 (digest contract); raw bytes here would
         # fail b64decode(validate=True) and the test would assert the wrong thing.
         (tmp_path / key).write_text(base64.b64encode(raw).decode())
-    (tmp_path / "harness-index.yaml").write_text(
-        "bundles: {}\nenrolledGovernanceProfiles: [web-search]\n")
+    (tmp_path / "harness-index.yaml").write_text("bundles: {ds-default: sha256:x}\n")
     profiles, harness, index = ab.read_profile_files(tmp_path)
     assert list(profiles) == ["profiles__data-science__default__workspace.yaml"]
     assert set(harness) == set(shipped_harness_files)
-    assert index["enrolledGovernanceProfiles"] == ["web-search"]
+    assert index["bundles"] == {"ds-default": "sha256:x"}
 
 
 def test_read_profile_files_rejects_a_harness_key_that_is_not_base64(ab, tmp_path):
@@ -128,211 +139,190 @@ def test_parse_profiles_reads_harness_ref(ab):
     assert sb.harness_ref == {"name": "ds-default", "digest": "sha256:abc"}
 
 
-def _pinned(ab, bundles, digest, profile_name="web-search"):
-    """A one-sandbox profile list pinned to bundles['ds-default']."""
-    sb = ab.Sandbox(name="notebook", type="openclaw",
-                    harness_ref={"name": "ds-default", "digest": digest})
+IMAGE = "ghcr.io/example/saw-harness-ds-default@sha256:" + "a" * 64
+
+
+def _pinned(ab, ref):
+    sb = ab.Sandbox(name="notebook", type="openclaw", harness_ref=ref)
     ws = ab.Workspace(name="default", sandboxes=[sb])
     return [ab.Profile(name="p", workspaces=[ws])]
 
 
+# -- validate_harness ---------------------------------------------------------
+
 def test_validate_harness_rejects_a_digest_mismatch(ab, shipped_harness_files):
     bundles = ab.parse_harness_files(shipped_harness_files)
     with pytest.raises(ab.InstallerError, match="digest mismatch"):
-        ab.validate_harness(_pinned(ab, bundles, "sha256:STALE"), bundles, {"web-search"})
+        ab.validate_harness(_pinned(ab, {"name": "ds-default", "digest": "sha256:STALE"}), bundles)
 
 
-def test_validate_harness_rejects_a_missing_digest(ab, shipped_harness_files):
+def test_validate_harness_accepts_a_bundle_without_a_digest(ab, shipped_harness_files):
+    """Bundle and pin ship in the same ConfigMap, so the pin is optional."""
     bundles = ab.parse_harness_files(shipped_harness_files)
-    profiles = _pinned(ab, bundles, "")
-    with pytest.raises(ab.InstallerError, match="no digest"):
-        ab.validate_harness(profiles, bundles, {"web-search"})
+    assert ab.validate_harness(_pinned(ab, {"name": "ds-default"}), bundles) == {
+        "notebook": f"ds-default@{bundles['ds-default'].digest}"}
 
 
 def test_validate_harness_rejects_an_unknown_bundle(ab):
     with pytest.raises(ab.InstallerError, match="unknown harness bundle"):
-        ab.validate_harness(_pinned(ab, {}, "sha256:x"), {}, {"web-search"})
+        ab.validate_harness(_pinned(ab, {"name": "ds-default"}), {})
 
 
-def test_validate_harness_rejects_an_unenrolled_tool(ab, shipped_harness_files):
-    bundles = ab.parse_harness_files(shipped_harness_files)
-    profiles = _pinned(ab, bundles, bundles["ds-default"].digest)
-    with pytest.raises(ab.InstallerError, match="not enrolled"):
-        ab.validate_harness(profiles, bundles, set())
+def test_validate_harness_accepts_a_digest_pinned_image(ab):
+    assert ab.validate_harness(_pinned(ab, {"image": IMAGE}), {}) == {"notebook": IMAGE}
 
 
-def test_validate_harness_accepts_the_shipped_bundle(ab, shipped_harness_files):
-    bundles = ab.parse_harness_files(shipped_harness_files)
-    profiles = _pinned(ab, bundles, bundles["ds-default"].digest)
-    assert ab.validate_harness(profiles, bundles, {"web-search"}) == {
-        "notebook": f"ds-default@{bundles['ds-default'].digest}"}
+@pytest.mark.parametrize("image", ["ghcr.io/example/h:latest", "ghcr.io/example/h@sha256:abc"])
+def test_validate_harness_rejects_an_unpinned_image(ab, image):
+    with pytest.raises(ab.InstallerError, match="pinned by digest"):
+        ab.validate_harness(_pinned(ab, {"image": image}), {})
+
+
+def test_validate_harness_rejects_image_and_name_together(ab):
+    with pytest.raises(ab.InstallerError, match="not both"):
+        ab.validate_harness(_pinned(ab, {"image": IMAGE, "name": "ds-default"}), {})
 
 
 def test_plan_round_trips_the_harness(ab, shipped_harness_files):
     import json
     bundles = ab.parse_harness_files(shipped_harness_files)
     plan = json.loads(json.dumps(ab.plan_for_user(
-        {}, _pinned(ab, bundles, bundles["ds-default"].digest), {}, "d.sh",
-        harness={"bundles": bundles, "enrolled": ["web-search"]})))
+        {}, _pinned(ab, {"name": "ds-default"}), {}, "d.sh", harness={"bundles": bundles})))
     back = ab.harness_from_plan(plan)
     assert back["bundles"]["ds-default"].digest == bundles["ds-default"].digest
-    assert back["bundles"]["ds-default"].tools[0].governance_profile == "web-search"
-    assert back["enrolled"] == {"web-search"}
+    assert back["bundles"]["ds-default"].files == bundles["ds-default"].files
 
 
-def _staged(bundle, **override):
-    """The managed tree as a correct apply would leave it: relpath -> sha256."""
-    files = {rel: hashlib.sha256(base64.b64decode(b64)).hexdigest()
-             for rel, b64 in bundle.files.items()
-             if rel.split("/", 1)[0] in ("skills", "tools")}
-    files.update(override)
-    return files
+# -- reading a harness image, and the inline volume tarball ---------------------
+#
+# An OCI harness image is FROM scratch with the bundle tree at its root; the
+# sandbox mounts the image itself. The installer only reads it (via `podman
+# export`) for the governance check, so these tests pin what it accepts.
+
+def _tar(path, entries):
+    """entries: (name, bytes | None for a dir | ("symlink", target))."""
+    import io
+    import tarfile
+    with tarfile.open(path, "w") as tar:
+        for name, data in entries:
+            info = tarfile.TarInfo(name)
+            if data is None:
+                info.type = tarfile.DIRTYPE
+                tar.addfile(info)
+            elif isinstance(data, tuple):
+                info.type = tarfile.SYMTYPE
+                info.linkname = data[1]
+                tar.addfile(info)
+            else:
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
 
 
-def _adapter(ab, calls, bundle, live=None, revision="", heals=True, locked=()):
-    """Adapter over a command-aware, minimally stateful fake shell.
-
-    A constant fake is wrong here: `verify` and `current_revision` issue
-    different commands, and one canned stdout makes verify fail for the wrong
-    reason. `heals=True` models the wipe-then-write: after `rm -rf` the tree
-    is exactly the bundle, so a restage converges. `heals=False` leaves the
-    tree untouched, which is how a real failed apply looks. `locked` models
-    files the shell can list but not read (e.g. host-root-owned): hashing
-    reports them instead of silently dropping them.
-    """
-    state = dict(_staged(bundle) if live is None else live)
-
-    def run(cmd, **k):
-        script = str(cmd[-1])
-        calls.append((list(map(str, cmd)), k.get("input_text")))
-        if script.startswith("rm -rf") and heals:
-            state.clear()
-            state.update(_staged(bundle))
-        if "sha256sum" in script:
-            return ab.Result(0, "\n".join(
-                f"UNREADABLE {rel}" if rel in locked else f"OK {h} {rel}"
-                for rel, h in sorted(state.items(), key=lambda kv: kv[0])), "")
-        if script.startswith("cat ") and ".saw-harness-revision" in script:
-            return ab.Result(0, revision, "")
-        return ab.Result(0, "", "")
-
-    sh = ab.Shell()
-    sh.run = run
-    return ab.HarnessAdapter(sh)
+def test_read_harness_tar_reads_the_tree_at_the_image_root(ab, tmp_path):
+    _tar(tmp_path / "i.tar", [("skills/", None), ("harness.yaml", b"spec: {}\n"),
+                              ("./skills/s/SKILL.md", b"x"),
+                              ("skills/s/._SKILL.md", b"appledouble")])
+    assert ab.read_harness_tar(tmp_path / "i.tar") == {
+        "harness.yaml": (b"spec: {}\n", False), "skills/s/SKILL.md": (b"x", False)}
 
 
-def test_wipe_target_refuses_managed_root_itself(ab):
-    with pytest.raises(ValueError, match="refusing to wipe"):
-        ab.HarnessAdapter(ab.Shell(dry_run=True)).wipe_target("/sandbox/.openclaw", "")
+def test_read_harness_tar_refuses_links(ab, tmp_path):
+    _tar(tmp_path / "i.tar", [("harness.yaml", b"spec: {}\n"),
+                              ("skills/evil", ("symlink", "/etc/shadow"))])
+    with pytest.raises(ab.InstallerError, match="not a regular file"):
+        ab.read_harness_tar(tmp_path / "i.tar")
 
 
-def test_wipe_target_refuses_an_unmanaged_subdir(ab):
-    with pytest.raises(ValueError, match="refusing to wipe"):
-        ab.HarnessAdapter(ab.Shell(dry_run=True)).wipe_target("/sandbox/.openclaw", "state")
+def test_read_harness_tar_refuses_path_escapes(ab, tmp_path):
+    _tar(tmp_path / "i.tar", [("harness.yaml", b"spec: {}\n"), ("skills/../../outside", b"x")])
+    with pytest.raises(ab.InstallerError, match="unsafe path"):
+        ab.read_harness_tar(tmp_path / "i.tar")
 
 
-def test_wipe_targets_are_only_skills_and_tools(ab):
-    a = ab.HarnessAdapter(ab.Shell(dry_run=True))
-    assert a.wipe_target("/sandbox/.openclaw/", "skills") == "/sandbox/.openclaw/skills"
-    assert a.wipe_target("/sandbox/.openclaw", "tools") == "/sandbox/.openclaw/tools"
+def test_read_harness_tar_needs_a_manifest(ab, tmp_path):
+    _tar(tmp_path / "i.tar", [("skills/s/SKILL.md", b"x")])
+    with pytest.raises(ab.InstallerError, match="no /harness.yaml"):
+        ab.read_harness_tar(tmp_path / "i.tar")
 
 
-def test_apply_wipes_then_stages_then_writes_the_revision(ab, shipped_harness_files):
-    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
-    calls = []
-    _adapter(ab, calls, bundle).apply("notebook", "default", bundle)
-    joined = "\n".join(" ".join(c) for c, _ in calls)
-    assert "rm -rf /sandbox/.openclaw/skills /sandbox/.openclaw/tools" in joined
-    assert "/sandbox/.openclaw/skills/pattern-author/SKILL.md" in joined
-    assert "/sandbox/.openclaw/tools/web-search.yaml" in joined
-    # harness.yaml is bundle metadata, not harness content: it is not staged.
-    assert "/sandbox/.openclaw/harness.yaml" not in joined
-    assert ".saw-harness-revision" in joined
-    assert f"ds-default@{bundle.digest}" in joined
-    # Every staged file arrives base64 on stdin, never in argv.
-    assert any(text for _, text in calls)
+def test_volume_tarball_is_root_owned_world_readable_and_round_trips(ab, tmp_path):
+    """Inline bundles go into a named volume unchanged; only ownership and
+    modes are normalised so the sandbox user can read them."""
+    import tarfile
+    tree = {"harness.yaml": (b"spec: {}\n", False), "mcp/server.sh": (b"#!/bin/sh\n", True),
+            "skills/s/SKILL.md": (b"x", False)}
+    ab.write_harness_tar(tmp_path / "v.tar", tree, {"source": "bundle:x@d", "treeDigest": "d"})
+    with tarfile.open(tmp_path / "v.tar") as tar:
+        members = {m.name: m for m in tar.getmembers()}
+        assert {m.uid for m in members.values()} == {0}
+        assert members["skills/s/SKILL.md"].mode == 0o644
+        assert members["mcp/server.sh"].mode == 0o755
+        assert members["skills"].mode == 0o755
+        tar.extractall(tmp_path / "vol")
+    assert ab.read_volume_tree(tmp_path / "vol") == tree
 
 
-def test_apply_never_touches_the_state_directory(ab, shipped_harness_files):
-    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
-    calls = []
-    _adapter(ab, calls, bundle).apply("notebook", "default", bundle)
-    for cmd, _ in calls:
-        assert "/sandbox/.openclaw/state" not in " ".join(cmd)
+def test_mount_json_matches_the_openshell_podman_driver_schema(ab):
+    assert json.loads(ab.harness_mounts_json("image", IMAGE)) == {"podman": {"mounts": [{
+        "type": "image", "source": IMAGE, "target": "/sandbox/harness", "read_only": True}]}}
 
 
-def test_current_revision_reads_the_marker(ab, shipped_harness_files):
-    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
-    rev = f"ds-default@{bundle.digest}"
-    assert _adapter(ab, [], bundle, revision=rev).current_revision(
-        "notebook", "default", bundle) == rev
+# -- what OpenClaw is pointed at, and what governance must allow ---------------
+
+def _tree(**files):
+    base = {"harness.yaml": (yaml.safe_dump({"metadata": {"name": "demo"},
+                                             "spec": {"agent": "openclaw"}}).encode(), False)}
+    base.update({k.replace("__", "/"): (v.encode(), False) for k, v in files.items()})
+    return base
 
 
-def test_reconcile_skips_when_the_revision_matches_and_nothing_drifted(
-        ab, shipped_harness_files, capsys):
-    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
-    calls = []
-    a = _adapter(ab, calls, bundle, revision=f"ds-default@{bundle.digest}")
-    assert a.reconcile("notebook", "default", bundle) is False
-    assert "rm -rf" not in "\n".join(" ".join(c) for c, _ in calls)
-    assert "up to date" in capsys.readouterr().out.lower()
+def test_an_agent_plugins_bundle_is_loaded_from_its_root(ab):
+    info = ab.describe_harness_tree(_tree(**{"plugin.json": "{}", "skills__s__SKILL.md": "x",
+                                             "plugins__p1__index.mjs": "",
+                                             "plugins__p2__index.mjs": ""}))
+    assert ab.openclaw_harness_config(info) == {
+        "plugins.load.paths": ["/sandbox/harness", "/sandbox/harness/plugins"]}
 
 
-def test_reconcile_applies_when_the_revision_differs(ab, shipped_harness_files):
-    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
-    calls = []
-    a = _adapter(ab, calls, bundle, revision="ds-default@sha256:OLD")
-    assert a.reconcile("notebook", "default", bundle) is True
-    assert "rm -rf" in "\n".join(" ".join(c) for c, _ in calls)
+def test_a_bundle_without_plugin_json_uses_extra_skill_dirs(ab):
+    info = ab.describe_harness_tree(_tree(**{"skills__s__SKILL.md": "x"}))
+    assert ab.openclaw_harness_config(info) == {
+        "skills.load.extraDirs": ["/sandbox/harness/skills"]}
 
 
-def test_reconcile_restages_on_drift_even_when_the_revision_matches(
-        ab, shipped_harness_files):
-    """Skip-on-match alone would never look, so drift would go undetected."""
-    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
-    calls = []
-    a = _adapter(ab, calls, bundle, revision=f"ds-default@{bundle.digest}",
-                 live=_staged(bundle, **{"skills/rogue": "00"}))
-    assert a.reconcile("notebook", "default", bundle) is True
-    assert "rm -rf" in "\n".join(" ".join(c) for c, _ in calls)
+def test_an_mcp_server_without_a_type_is_rejected(ab):
+    """OpenClaw drops such entries with a warning; fail early instead."""
+    mcp = '{"mcpServers": {"s": {"command": "node"}}}'
+    with pytest.raises(ab.InstallerError, match='needs "type"'):
+        ab.describe_harness_tree(_tree(**{"mcp.json": mcp}))
 
 
-def test_reconcile_raises_when_the_sandbox_still_drifts_after_apply(
-        ab, shipped_harness_files):
-    """heals=False: the wipe does not take, so the leftover survives apply."""
-    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
-    a = _adapter(ab, [], bundle, revision="ds-default@sha256:OLD",
-                 live=_staged(bundle, **{"skills/rogue": "00"}), heals=False)
-    with pytest.raises(ab.InstallerError, match="unexpected: skills/rogue"):
-        a.reconcile("notebook", "default", bundle)
+def test_a_remote_mcp_server_needs_a_governance_profile(ab):
+    mcp = '{"mcpServers": {"s": {"type": "streamable-http", "url": "https://api.tavily.com/mcp"}}}'
+    with pytest.raises(ab.InstallerError, match="needs a governanceProfile"):
+        ab.describe_harness_tree(_tree(**{"mcp.json": mcp}))
 
 
-def test_compare_is_content_aware_not_just_name_aware(ab):
-    a = ab.HarnessAdapter(ab.Shell(dry_run=True))
-    assert a.compare({"a": "h1"}, {"a": "h1"}) == []
-    assert a.compare({"a": "h1"}, {"a": "h1", "revoked": "h2"}) == ["unexpected: revoked"]
-    assert a.compare({"a": "h1", "b": "h2"}, {"a": "h1"}) == ["missing: b"]
-    # The hole a name-set comparison leaves: an empty or truncated file.
-    assert a.compare({"a": "h1"}, {"a": "h2"}) == ["content differs: a"]
+def test_a_remote_mcp_server_is_governed_by_host(ab):
+    manifest = yaml.safe_dump({"metadata": {"name": "demo"}, "spec": {
+        "mcpServers": [{"name": "s", "governanceProfile": "web-search"}]}})
+    mcp = '{"mcpServers": {"s": {"type": "streamable-http", "url": "https://api.tavily.com/mcp"},' \
+          ' "local": {"type": "stdio", "command": "node"}}}'
+    tree = {"harness.yaml": (manifest.encode(), False), "mcp.json": (mcp.encode(), False)}
+    assert ab.describe_harness_tree(tree)["governance"] == [
+        {"kind": "MCP server", "name": "s", "governanceProfile": "web-search",
+         "hosts": ["api.tavily.com"]}]
 
 
-def test_verify_catches_an_empty_staged_file(ab, shipped_harness_files):
-    """Regression for the unverified base64-over-stdin transport: if the CLI
-    does not forward stdin, files land empty and a name-only check passes."""
-    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
-    live = _staged(bundle, **{
-        "skills/pattern-author/SKILL.md": hashlib.sha256(b"").hexdigest()})
-    a = _adapter(ab, [], bundle, live=live, heals=False)
-    assert a.verify("notebook", "default", bundle) == [
-        "content differs: skills/pattern-author/SKILL.md"]
+def test_a_networked_plugin_is_governed_by_profile(ab):
+    manifest = yaml.safe_dump({"metadata": {"name": "demo"}, "spec": {
+        "plugins": [{"name": "p", "governanceProfile": "github"}]}})
+    tree = {"harness.yaml": (manifest.encode(), False)}
+    assert ab.describe_harness_tree(tree)["governance"] == [
+        {"kind": "plugin", "name": "p", "governanceProfile": "github", "hosts": []}]
 
 
-def test_verify_reports_files_it_can_list_but_not_read(ab, shipped_harness_files):
-    """Fail closed, not silent: a managed file the shell lists but cannot hash
-    (found live: host-root-owned +i file, readable by ls/stat, EACCES on open)
-    must fail verify instead of dropping out of a batched hash listing."""
-    bundle = ab.parse_harness_files(shipped_harness_files)["ds-default"]
-    a = _adapter(ab, [], bundle, heals=False,
-                 locked=("skills/pattern-author/SKILL.md",))
-    assert a.verify("notebook", "default", bundle) == [
-        "unreadable: skills/pattern-author/SKILL.md"]
+def test_parse_profile_catalog_reads_ids_and_hosts(ab):
+    out = ('[{"id": "web-search", "endpoints": [{"host": "api.tavily.com", "port": 443}]},'
+           ' {"id": "slack", "endpoints": []}]')
+    assert ab.parse_profile_catalog(out) == {"web-search": {"api.tavily.com"}, "slack": set()}

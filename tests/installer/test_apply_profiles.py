@@ -23,7 +23,7 @@ def _shipped_harness(ab):
     """Matches the digest pinned on the real 'notebook' sandbox in the shipped
     profile, so tests that don't care about the harness still get a working
     default instead of an 'unknown bundle' error."""
-    return {"bundles": ab.parse_harness_files(harness_files()), "enrolled": {"web-search"}}
+    return {"bundles": ab.parse_harness_files(harness_files())}
 
 
 def make_applier(ab, config, creds, harness=None, **overrides):
@@ -296,19 +296,15 @@ def test_verify_fails_when_openclaw_cannot_run_in_the_sandbox(ab, fake_env, conf
     """Live: the sandbox was Ready but `openclaw` was denied by the sandbox
     filesystem policy; the best-effort setup steps hid it and verify passed.
 
-    Every sandbox exec into 'notebook' is denied, so harness staging is also
-    best-effort-skipped (decision: reconcile_harness does not abort the whole
-    apply on an exec-level failure) and verify reports it too."""
+    The harness is unaffected: it reaches the sandbox through the volume
+    mount, not through `sandbox exec`, so only the openclaw failure shows."""
     fake_env.exec_fails_in("notebook")
     applier = make_applier(ab, config, creds)
     applier.apply(profiles)
     failures = applier.verify(profiles)
     assert failures == [
         "openclaw cannot run in sandbox 'notebook': "
-        "sh: line 1: /usr/local/sbin/openclaw: Permission denied",
-        "harness in sandbox 'notebook': missing: skills/pattern-author/SKILL.md",
-        "harness in sandbox 'notebook': missing: tools/web-search.yaml",
-    ]
+        "sh: line 1: /usr/local/sbin/openclaw: Permission denied"]
 
 
 def test_verify_runs_openclaw_in_agent_sandboxes_only(ab, fake_env, config, profiles, creds):
@@ -390,18 +386,19 @@ def test_key_never_appears_in_argv_or_logs(ab, fake_env, config, profiles, creds
     assert body[:40] not in capsys.readouterr().err
 
 
-def test_full_apply_stages_the_pinned_harness_into_notebook(ab, fake_env, config, profiles, creds):
-    """A full apply run stages the harness before the gateway launches, and
-    verify sees the staged bytes through the fake's virtual filesystem for
-    sandbox exec. This proves the adapter's own logic end to end; it does not
-    prove the real CLI forwards stdin (decision 9c) -- that is confirmed on
-    hardware (P6 step 2b).
-    """
+def test_full_apply_mounts_the_harness_into_notebook(ab, fake_env, config, profiles, creds):
+    """A full apply fills the notebook's harness volume, creates the sandbox
+    with it mounted read-only at /sandbox/harness, points OpenClaw at it, and
+    never copies bundle files with `sandbox exec`."""
     applier = make_applier(ab, config, creds)
     applier.apply(profiles)
-
-    scripts = [c[-1] for c in fake_env.openshell_calls() if c[:3] == ["sandbox", "exec", "-n"]]
-    joined = "\n".join(scripts)
-    assert "rm -rf /sandbox/.openclaw/skills /sandbox/.openclaw/tools" in joined
-    assert "base64 -d" in joined
+    notebook = fake_env.openshell_state()["sandboxes"]["default/notebook"]
+    assert notebook["driverConfig"] == {"podman": {"mounts": [{
+        "type": "volume", "source": "saw-harness-default-notebook",
+        "target": "/sandbox/harness", "read_only": True}]}}
+    volume = fake_env.state / "volumes" / "saw-harness-default-notebook"
+    assert (volume / "skills" / "pattern-author" / "SKILL.md").is_file()
+    scripts = "\n".join(c[-1] for c in fake_env.openshell_calls() if c[:2] == ["sandbox", "exec"])
+    assert "base64 -d" not in scripts
+    assert """openclaw config set plugins.load.paths '["/sandbox/harness", "/sandbox/harness/plugins"]'""" in scripts
     assert applier.verify(profiles) == []
