@@ -347,6 +347,10 @@ Notes:
 
 Details: [docs/custom-inference.md](docs/custom-inference.md).
 
+### Agent harness: skills, MCP servers and tools
+
+A sandbox's `harnessRef` in its SAW-BOM profile names a harness bundle: skills, MCP servers (`mcp.json`) and OpenClaw tool plugins (`.mjs`). The installer mounts it read-only at `/sandbox/harness`, exactly as written, and points OpenClaw at it. A bundle is either an OCI image built from `harness-bundles/` and published to GHCR by CI, mounted directly (`harnessRef: { image: ghcr.io/<owner>/saw-harness-<bundle>@sha256:… }`), or an inline bundle in the saw-bom chart (`harnessRef: { name: <bundle> }`). Details: [docs/harness-bundles.md](docs/harness-bundles.md).
+
 ### Validating the deployment
 
 ```bash
