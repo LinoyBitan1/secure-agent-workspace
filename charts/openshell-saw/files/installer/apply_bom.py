@@ -442,6 +442,18 @@ HARNESS_MOUNT = "/sandbox/harness"
 HARNESS_MARKER = ".saw-harness-revision"  # inline bundles: written into the volume
 
 
+def _harness_path(value):
+    """Resolve a bundle-relative ${PLUGIN_ROOT} to the live mount path.
+
+    A server entry written to openclaw.json is read outside the bundle, so
+    the bundle-root placeholder would not resolve there (checked live:
+    absolute paths work, placeholders don't). Non-strings pass through.
+    """
+    if isinstance(value, str):
+        return value.replace("${PLUGIN_ROOT}", HARNESS_MOUNT)
+    return value
+
+
 def harness_image(ref):
     """The digest-pinned image of an OCI harnessRef, or "" for an inline one."""
     return (ref or {}).get("image", "") or ""
@@ -584,9 +596,15 @@ def describe_harness_tree(files):
             if conf["type"] == "stdio":
                 # A stdio server's key never travels in mcp.json (bundles are
                 # secret-free); harness.yaml only names the Secret and the
-                # env var it fills. configure_harness sets the value as an
-                # OpenClaw SecretInput ref, resolved from the sandbox's own
-                # process env at gateway activation.
+                # env var it fills. configure_harness writes the server's
+                # full launch config with that var set to a ${VAR}
+                # placeholder, and start_openclaw exports the real value
+                # into the gateway process, where OpenClaw expands it when
+                # spawning the server. (Checked live on OpenClaw 2026.9.5:
+                # mcp.servers.*.env only accepts plain scalars, so a
+                # SecretInput ref object is rejected by config validation,
+                # and a partial openclaw.json entry shadows the bundle's
+                # mcp.json instead of merging with it.)
                 if decl.get("credentialSecret"):
                     env_var = decl.get("credentialEnvVar", "")
                     if not ENV_VAR_RE.match(env_var):
@@ -603,9 +621,18 @@ def describe_harness_tree(files):
                         raise InstallerError(
                             f"harness '{name}': mcp server '{server}' has an invalid "
                             "credentialSecret/credentialSecretKey")
+                    if not isinstance(conf.get("command"), str) or not conf["command"]:
+                        raise InstallerError(
+                            f"harness '{name}': mcp server '{server}' declares a credentialSecret "
+                            "but no command: the full launch config is written to openclaw.json, "
+                            "and a partial entry would shadow the bundle's mcp.json")
                     mcp_secrets.append({"server": server, "envVar": env_var,
                                         "credentialSecret": secret_name,
-                                        "credentialSecretKey": secret_key})
+                                        "credentialSecretKey": secret_key,
+                                        "command": conf.get("command", ""),
+                                        "args": list(conf.get("args") or []),
+                                        "cwd": conf.get("cwd", ""),
+                                        "env": dict(conf.get("env") or {})})
                 continue
             host = urlsplit(conf.get("url") or "").hostname
             profile = decl.get("governanceProfile", "")
@@ -2002,11 +2029,13 @@ class ProfileApplier:
         or a refilled volume -- normally leaves them unchanged.
 
         A secret never appears in the bundle or in mcp.json: harness.yaml
-        only names the Secret and the env var it fills, and OpenClaw is told
-        to resolve that env var itself (a SecretInput `env` ref) rather than
-        being handed the value directly. Returns {envVar: value} so the
-        caller can export it into the same process that runs the gateway,
-        which is where OpenClaw resolves the ref from.
+        only names the Secret and the env var it fills. OpenClaw is told
+        the full server launch config with that var set to a ${VAR}
+        placeholder (mcp.servers.*.env only accepts plain scalars), and
+        the real value is exported into the gateway process, where
+        OpenClaw expands the placeholder when spawning the server.
+        Returns {envVar: value} so the caller can export it into the same
+        process that runs the gateway.
         """
         info = self.harness_info.get((ws.name, sb.name))
         if info is None:
@@ -2020,11 +2049,21 @@ class ProfileApplier:
             value = bundle_secrets.get(entry["server"])
             if not value:
                 continue  # resolve_mcp_secrets already fails closed
-            ref = shlex.quote(json.dumps({"source": "env", "provider": "default",
-                                          "id": entry["envVar"]}))
+            # Write the whole server entry, not just the secret env var: a
+            # partial openclaw.json entry shadows the bundle's mcp.json
+            # instead of merging with it (checked live). The secret itself
+            # is stored as a ${VAR} placeholder (mcp.servers.*.env only
+            # accepts plain scalars) and start_openclaw exports the real
+            # value into the gateway process, where OpenClaw expands it.
+            server_conf = {"command": _harness_path(entry["command"]),
+                           "args": [_harness_path(a) for a in entry["args"]],
+                           "env": {**{k: _harness_path(v) for k, v in entry["env"].items()},
+                                   entry["envVar"]: "${" + entry["envVar"] + "}"}}
+            if entry["cwd"]:
+                server_conf["cwd"] = _harness_path(entry["cwd"])
             self.cli(*exec_cmd, "sh", "-c",
-                     f"{oc_env} openclaw config set mcp.servers.{entry['server']}.env.{entry['envVar']} "
-                     f"{ref}", check=False)
+                     f"{oc_env} openclaw config set mcp.servers.{entry['server']} "
+                     f"'{json.dumps(server_conf)}'", check=False)
             secret_env[entry["envVar"]] = value
         return secret_env
 

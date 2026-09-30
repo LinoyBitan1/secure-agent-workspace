@@ -356,7 +356,8 @@ def _stdio_secret_tree(**decl_overrides):
 def test_a_stdio_server_with_a_credential_secret_is_declared(ab):
     info = ab.describe_harness_tree(_stdio_secret_tree())
     assert info["mcpSecrets"] == [{"server": "tavily", "envVar": "TAVILY_API_KEY",
-                                   "credentialSecret": "tavily", "credentialSecretKey": "api_key"}]
+                                   "credentialSecret": "tavily", "credentialSecretKey": "api_key",
+                                   "command": "node", "args": [], "cwd": "", "env": {}}]
     assert info["governance"] == []  # stdio needs no governance profile
 
 
