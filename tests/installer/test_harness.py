@@ -1,7 +1,6 @@
 """Harness bundle contract: digest, parsing, packaging invariants."""
 
 import base64
-import hashlib
 import json
 from pathlib import Path
 
@@ -55,34 +54,24 @@ def test_bundle_path_segments_have_no_double_underscore():
             assert "__" not in part, p
 
 
-def test_parse_harness_files_reads_spec(ab):
+def test_parse_harness_files_reads_the_tree_and_the_manifest(ab):
+    """The bundle is its file tree: what it holds is read from the files
+    (describe_harness_tree), not declared in harness.yaml."""
     manifest = yaml.safe_dump({
         "apiVersion": "saw.redhat.com/v1alpha1", "kind": "HarnessBundle",
-        "metadata": {"name": "demo"},
-        "spec": {"agent": "openclaw",
-                 "skills": [{"name": "s1", "path": "skills/s1"}],
-                 "tools": [{"name": "t1", "path": "tools/t1.yaml",
-                            "governanceProfile": "web-search"}]}})
+        "metadata": {"name": "demo"}, "spec": {"agent": "openclaw"}})
     bundles = ab.parse_harness_files({
         "harness__demo__harness.yaml": manifest.encode(),
         "harness__demo__skills__s1__SKILL.md": b"x\n"})
     assert set(bundles) == {"demo"}
+    assert bundles["demo"].agent == "openclaw"
     assert bundles["demo"].digest.startswith("sha256:")
-    assert bundles["demo"].managed_root == "/sandbox/.openclaw"
-    assert bundles["demo"].tools[0].governance_profile == "web-search"
     assert set(bundles["demo"].files) == {"harness.yaml", "skills/s1/SKILL.md"}
 
 
 def test_parse_harness_files_rejects_a_bundle_without_a_manifest(ab):
     with pytest.raises(ab.InstallerError, match="stray.*harness.yaml"):
         ab.parse_harness_files({"harness__stray__skills__s__SKILL.md": b"x\n"})
-
-
-def test_parse_harness_files_names_the_bundle_on_bad_schema(ab):
-    manifest = yaml.safe_dump({"metadata": {"name": "demo"},
-                               "spec": {"skills": [{"path": "skills/s1"}]}})
-    with pytest.raises(ab.InstallerError, match="demo.*'name'"):
-        ab.parse_harness_files({"harness__demo__harness.yaml": manifest.encode()})
 
 
 def test_shipped_bundle_parses(ab, shipped_harness_files):

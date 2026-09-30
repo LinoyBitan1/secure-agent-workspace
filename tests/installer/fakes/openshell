@@ -5,11 +5,8 @@ State lives in openshell.json; every call is appended to openshell.log.
 deny.json lists operations (e.g. "workspace create") that fail with a
 permission error, to test error paths.
 """
-import base64
-import hashlib
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -297,51 +294,6 @@ elif op == "sandbox exec":
     for needle, text in outputs.items():
         if needle in " ".join(args):
             print(text, file=sys.stderr)
-    # Minimal virtual filesystem for the HarnessAdapter's staging scripts only
-    # (matched by exact shape). This proves the adapter's own logic offline;
-    # it says nothing about whether the real CLI forwards stdin (decision 9c
-    # in the harness plan) -- that is confirmed on real hardware.
-    fs = state.setdefault("sandbox_fs", {}).setdefault(f"{ws}/{opt('-n')}", {})
-    script = args[-1]
-    stdin_data = sys.stdin.read()
-
-    def fs_write(path, raw):
-        fs[path] = base64.b64encode(raw).decode()
-
-    m = re.match(r"^rm -rf (.+) && mkdir -p .+$", script)
-    if m:
-        prefixes = [d.rstrip("/") + "/" for d in m.group(1).split()]
-        for path in [p for p in fs if any(p.startswith(pre) for pre in prefixes)]:
-            del fs[path]
-    m = re.match(r'^mkdir -p "\$\(dirname (.+)\)" && base64 -d > (.+) && chmod 0444 .+$', script)
-    if m:
-        fs_write(m.group(2), base64.b64decode(stdin_data))
-    m = re.match(r"^printf %s '(.+)' > (.+)$", script)
-    if m:
-        fs_write(m.group(2), m.group(1).encode())
-    m = re.match(r"^cat (.+) 2>/dev/null \|\| true$", script)
-    if m:
-        if m.group(1) in fs:
-            sys.stdout.write(base64.b64decode(fs[m.group(1)]).decode())
-    m = re.match(r"^cd (.+) 2>/dev/null \|\| exit 0; find skills tools ", script)
-    if m:
-        root = m.group(1).rstrip("/") + "/"
-        unreadable = (json.loads((state_dir / "unreadable.json").read_text())
-                      if (state_dir / "unreadable.json").exists() else {})
-        locked = set(unreadable.get(opt("-n"), []))
-        lines = []
-        for p in fs:
-            if not p.startswith(root):
-                continue
-            rel = p[len(root):]
-            if rel.split("/", 1)[0] not in ("skills", "tools"):
-                continue
-            if rel in locked:
-                lines.append(f"UNREADABLE {rel}")
-            else:
-                lines.append(f"OK {hashlib.sha256(base64.b64decode(fs[p])).hexdigest()} {rel}")
-        for line in sorted(lines):
-            print(line)
 elif op == "sandbox provider" and head[2] == "attach":
     sb = state["sandboxes"].get(f"{ws}/{head[3]}")
     if not sb:

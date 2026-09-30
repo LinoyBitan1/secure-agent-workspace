@@ -460,26 +460,10 @@ class Profile:
 
 
 @dataclass
-class HarnessSkill:
-    name: str
-    path: str = ""
-
-
-@dataclass
-class HarnessTool:
-    name: str
-    path: str = ""
-    governance_profile: str = ""
-
-
-@dataclass
 class HarnessBundle:
     name: str
     agent: str = "openclaw"
-    managed_root: str = "/sandbox/.openclaw"
     digest: str = ""
-    skills: list = field(default_factory=list)
-    tools: list = field(default_factory=list)
     files: dict = field(default_factory=dict)   # relpath -> base64 text
 
 
@@ -658,6 +642,9 @@ def describe_harness_tree(files):
       pluginDirs           native plugins under plugins/
       governance           [{kind, name, governanceProfile, hosts}] to check
                            against the gateway's catalog
+      mcpSecrets           stdio servers whose harness.yaml names a
+                           credentialSecret, with the launch config
+                           configure_harness writes to openclaw.json
     """
     doc = _yaml(files["harness.yaml"][0].decode("utf-8"), "harness.yaml")
     spec = doc.get("spec") or {}
@@ -789,13 +776,6 @@ def openclaw_harness_config(info):
     return config
 
 
-def _harness_required(item, key, bundle):
-    if key not in item:
-        raise InstallerError(f"harness bundle {bundle!r}: entry {item!r} is "
-                             f"missing the required key {key!r}")
-    return item[key]
-
-
 def parse_harness_files(files):
     """Build bundles from flat ConfigMap keys harness__<bundle>__<relpath>.
 
@@ -818,15 +798,7 @@ def parse_harness_files(files):
         bundles[name] = HarnessBundle(
             name=(doc.get("metadata") or {}).get("name", name),
             agent=spec.get("agent", "openclaw"),
-            managed_root=spec.get("managedRoot", "/sandbox/.openclaw"),
             digest=tree_digest(tree),
-            skills=[HarnessSkill(name=_harness_required(s, "name", name),
-                                 path=s.get("path", ""))
-                    for s in (spec.get("skills") or [])],
-            tools=[HarnessTool(name=_harness_required(t, "name", name),
-                               path=t.get("path", ""),
-                               governance_profile=t.get("governanceProfile", ""))
-                   for t in (spec.get("tools") or [])],
             files={rel: base64.b64encode(raw).decode() for rel, raw in tree.items()},
         )
     return bundles
@@ -3023,11 +2995,7 @@ def harness_from_plan(data):
     bundles = {}
     for name, b in (raw.get("bundles") or {}).items():
         bundles[name] = HarnessBundle(
-            name=b["name"], agent=b["agent"], managed_root=b["managed_root"],
-            digest=b["digest"],
-            skills=[HarnessSkill(**s) for s in b["skills"]],
-            tools=[HarnessTool(**t) for t in b["tools"]],
-            files=b["files"])
+            name=b["name"], agent=b["agent"], digest=b["digest"], files=b["files"])
     return {"bundles": bundles, "mcpSecrets": raw.get("mcpSecrets") or {}}
 
 
