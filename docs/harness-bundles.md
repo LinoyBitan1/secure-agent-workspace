@@ -48,7 +48,8 @@ without one.
 | `streamable-http`, `sse` | `url`, `headers` | elsewhere; the sandbox connects to it |
 
 The only placeholders are `${PLUGIN_ROOT}` and `${PLUGIN_DATA}`, so a bundle
-cannot reference secrets. The agent sees a server's tools as
+cannot reference secrets directly; a stdio server needing a key names its
+Secret in `harness.yaml` instead (below). The agent sees a server's tools as
 `<server>__<tool>`, e.g. `local-mcp__search`.
 
 A remote server must be declared in `harness.yaml` with a governance profile,
@@ -69,9 +70,27 @@ Example, web search with Tavily's MCP server. It runs inside the sandbox;
 "web-search": { "type": "stdio", "command": "npx", "args": ["-y", "tavily-mcp@0.2.22"] }
 ```
 
-It reads `TAVILY_API_KEY` from its environment. How that key reaches the
-server from the SAW's provider Secret is not verified yet, so `ds-default`
-does not include it.
+It reads `TAVILY_API_KEY` from its environment. The key never goes in the
+bundle: name the Secret in `harness.yaml`, and the installer resolves it and
+gives it to the server at gateway start.
+
+```yaml
+spec:
+  mcpServers:
+    - name: web-search
+      governanceProfile: web-search
+      credentialSecret: web-search-credentials  # a Secret mounted on the SAW
+      credentialSecretKey: api_key              # default: api_key
+      credentialEnvVar: TAVILY_API_KEY
+```
+
+The server name must be a DNS label, and its `mcp.json` entry must have a
+`command` (the whole entry is re-declared to OpenClaw). This works for an
+inline bundle; an image-sourced one cannot declare a credential yet. See
+§7.9 of [harness-implementation.md](harness-implementation.md).
+
+`ds-default` does not ship this example: it would need the Secret on every
+SAW that uses the bundle.
 
 ### Tool plugins (`plugins/<id>/`)
 

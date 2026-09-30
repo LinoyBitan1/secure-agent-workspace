@@ -110,8 +110,9 @@ refuses them:
 | `stdio` | `command` (bare name or `./`-relative), `args`, `env`, `cwd` | inside the sandbox, under OpenShell's policy |
 | `streamable-http`, `sse` | `url`, `headers` | remote; the sandbox connects to it |
 
-`${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are the only placeholders, so secrets
-cannot be referenced. The agent sees a server's tools as `<server>__<tool>`.
+`${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are the only placeholders, so a bundle
+cannot reference a secret; §7.9 is how a stdio server gets a key. The agent
+sees a server's tools as `<server>__<tool>`.
 
 ### Tool plugins
 
@@ -244,6 +245,42 @@ Config only; bundle content never goes through `exec`. `plugins.allow` is
 deliberately not set: it would restrict every plugin, and it warns about
 stale entries when a plugin is removed.
 
+### 7.9 stdio MCP server secrets (`resolve_harness_mcp_secrets`)
+
+A bundle holds no secret. `harness.yaml` `spec.mcpServers[]` names the
+Secret and the env var it fills:
+
+```yaml
+- name: web-search
+  credentialSecret: web-search-credentials   # mounted Secret, as for providers
+  credentialSecretKey: api_key               # default: api_key
+  credentialEnvVar: TAVILY_API_KEY
+```
+
+- `resolve_harness_mcp_secrets` runs **admin-side** (`Inputs.load`), reading
+  the mounted Secret the same way `resolve_credentials` does, and hands the
+  value to the runtime-user subprocess, which never reads `/run/saw`. A
+  missing Secret or key stops the apply.
+- `configure_harness` writes the server's **whole** launch config with
+  `openclaw config set mcp.servers.<server>`, with the key as a literal
+  `${VAR}` placeholder. The full entry is needed because a partial
+  `openclaw.json` entry *shadows* the bundle's `mcp.json` entry instead of
+  merging with it, and `mcp.servers.*.env` only accepts plain scalars, so a
+  SecretInput reference is rejected by config validation (both checked live
+  on OpenClaw 2026.9.5).
+- `start_openclaw` exports the real value into the gateway process
+  (`export <VAR>=<value> && … openclaw gateway run`), where OpenClaw expands
+  the placeholder when it spawns the server. The value is never written to
+  the bundle, to `mcp.json`, or to `openclaw.json`. It does go through one
+  `sh -c` argument, `shlex.quote`d — so it is briefly visible in that
+  command's process arguments, as the gateway token already is.
+- Server names carrying a `credentialSecret` must be DNS labels (the name
+  becomes part of an `openclaw config` path), the env var must look like one,
+  and the entry must have a `command`.
+- **Inline bundles only.** An image-sourced harness is read by the runtime
+  user at apply time, past the admin-side boundary, so it cannot declare a
+  stdio secret yet; `prepare_harness` WARNs.
+
 ### 7.7 Verification (`verify_harness`)
 
 - **Image:** the container mounts exactly the pinned image reference, and
@@ -259,6 +296,14 @@ Failures join the normal verification list, so the SAW is not marked ready.
 `HarnessAdapter` (exec staging, wipe targets, in-sandbox hashing),
 `reconcile_harness`, `governanceProfiles` in saw-bom values with its render
 check, and `enrolledGovernanceProfiles` in `harness-index.yaml`.
+
+Also gone with the staging model: `HarnessBundle.managed_root`
+(`/sandbox/.openclaw`, the old staging root), the `HarnessSkill` /
+`HarnessTool` dataclasses and the `spec.skills` / `spec.tools` lists
+`parse_harness_files` built them from. A bundle **is** its file tree, so
+`describe_harness_tree` reads what it holds from the files; `harness.yaml`
+only carries what the files cannot say (governance profiles, credential
+Secrets).
 
 ## 8. Lifecycle
 
@@ -286,18 +331,20 @@ and reconcile runs apply, so neither kind of update needs a VM restart.
   paths are refused.
 - Governance comes from the gateway's live catalog and endpoint hosts, not a
   list in the same repository as the bundle.
-- Secrets are not part of bundles (§11 for stdio server keys).
+- Secrets are not part of bundles. A stdio server's key comes from a mounted
+  Secret, resolved admin-side and expanded from a `${VAR}` placeholder in the
+  gateway process (§7.9).
 - `npx`-style servers fetch code at run time, outside the digest. Vendor the
   package into the bundle when that matters.
 
 ## 10. Tests
 
-`make test-installer`: 222 installer tests and 86 chart tests.
+`make test-installer`: 282 installer tests and 96 chart tests.
 
 | File | Covers |
 |---|---|
-| `tests/installer/test_harness.py` | digest contract; validation (optional digest, image pinning, `name`/`image` exclusivity); reading an image root tree (links, `..`, AppleDouble, missing manifest); the inline volume tarball's ownership and modes; the `--driver-config-json` shape; OpenClaw config; `mcp.json` types; remote server and plugin governance; catalog parsing; inline and published bundles identical |
-| `tests/installer/test_harness_mount.py` | image mounted directly (no volume); no second pull; unchanged image keeps the sandbox; new digest recreates it; sandbox without a harness recreated; verify catches another image; inline volume mounted, refilled in place (dropped files removed, sandbox kept), tamper detected and repaired; unserved profile and `search.internal` refused before anything is created; catalog read once; OpenClaw config set with no exec copies |
+| `tests/installer/test_harness.py` | digest contract; validation (optional digest, image pinning, `name`/`image` exclusivity); reading an image root tree (links, `..`, AppleDouble, missing manifest); the inline volume tarball's ownership and modes; the `--driver-config-json` shape; OpenClaw config; `mcp.json` types; remote server and plugin governance; catalog parsing; inline and published bundles identical; stdio credential declaration, env-var and Secret-name validation, `resolve_harness_mcp_secrets` reading the mounted Secret and failing closed, plan round-trip |
+| `tests/installer/test_harness_mount.py` | image mounted directly (no volume); no second pull; unchanged image keeps the sandbox; new digest recreates it; sandbox without a harness recreated; verify catches another image; inline volume mounted, refilled in place (dropped files removed, sandbox kept), tamper detected and repaired; unserved profile and `search.internal` refused before anything is created; catalog read once; OpenClaw config set with no exec copies; a stdio secret written as a `${VAR}` placeholder and exported at gateway start, the whole server entry written with bundle paths resolved, a secret entry with no `command` refused, shell metacharacters in one not injected |
 | `tests/installer/test_apply_profiles.py` | full apply mounts the inline `ds-default` into `notebook`; a denied `openclaw` does not affect harness delivery |
 | `tests/charts/test_saw_bom_chart.py` | no governance list in the chart; optional digest; image refs render without shipping a bundle; unpinned image fails |
 
@@ -323,6 +370,10 @@ volumes as directories.
 - A volume refill seen by the running sandbox: a removed plugin gone, a skill
   at its new version, a new MCP server listed.
 - `openshell provider list-profiles -o json` returns ids and endpoint hosts.
+- `mcp.servers.*.env` accepts only plain scalars (a SecretInput reference is
+  rejected by config validation), and a partial `openclaw.json` server entry
+  shadows the bundle's `mcp.json` entry instead of merging with it. §7.9 is
+  built around both.
 
 **Open:**
 
@@ -330,8 +381,9 @@ volumes as directories.
    digest, and recreating the existing `notebook` once.
 2. An agent turn that calls a bundle MCP tool and a plugin tool.
 3. Pulling a public image from GHCR in the VM (the probes used local images).
-4. How a stdio MCP server's key (e.g. `TAVILY_API_KEY`) reaches it from the
-   SAW's provider Secret.
+4. An end-to-end run of §7.9 on the cluster: a real stdio server (e.g.
+   Tavily) reaching `TAVILY_API_KEY` from its mounted Secret. The same for an
+   **image-sourced** bundle, which cannot declare a stdio secret yet.
 5. Whether the governance interceptor's profiles accept `protocol: mcp` with
    `rules`, for remote MCP servers (the fallback is `rest` with `read-write`).
 6. Reaching an in-cluster MCP Service from inside a sandbox.
