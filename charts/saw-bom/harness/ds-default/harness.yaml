@@ -16,6 +16,12 @@ spec:
   plugins: []
   #  - name: my-plugin
   #    governanceProfile: <profile>
-  mcpServers: []
+  mcpServers:
+    # Throwaway live-test declaration for handoff item 4 (stdio MCP secret).
+    # NOT for production.
+    - name: saw-env-echo
+      credentialSecret: saw-test-secret
+      credentialSecretKey: api_key
+      credentialEnvVar: SAW_TEST_API_KEY
   #  - name: web-search
   #    governanceProfile: web-search

@@ -6,3 +6,10 @@ users:
   - name: alice
     profiles:
       - data-science
+    # Throwaway live-test wiring for handoff item 4 (stdio MCP secret).
+    # additionalProviderSecrets replaces the chart default list, so web-search
+    # must be repeated here. NOT for production.
+    values:
+      additionalProviderSecrets:
+        - web-search
+        - saw-test-secret
