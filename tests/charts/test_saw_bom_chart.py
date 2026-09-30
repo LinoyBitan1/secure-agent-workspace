@@ -61,10 +61,13 @@ def ds_default_digest(ab):
     return ab.tree_digest(files)
 
 
-def test_governance_profiles_match_the_enrolled_directory():
+def test_no_governance_list_is_kept_in_the_chart():
+    """Governance is checked in the guest against the gateway's live catalog;
+    a copy of the profile names here would only drift."""
     values = yaml.safe_load((CHART / "values.yaml").read_text())
-    stems = sorted(p.stem for p in GOVERNANCE_PROFILES.glob("*.yaml"))
-    assert sorted(values["governanceProfiles"]) == stems
+    assert "governanceProfiles" not in values
+    index = yaml.safe_load(bom_data()["harness-index.yaml"])
+    assert "enrolledGovernanceProfiles" not in index
 
 
 def test_configmap_ships_the_harness_manifest_byte_for_byte():
@@ -92,15 +95,33 @@ def test_harness_ref_digest_mismatch_fails_the_render(tmp_path):
     assert "harnessRef digest mismatch" in err
 
 
-def test_unenrolled_governance_profile_fails_the_render(tmp_path):
+def test_harness_ref_without_a_digest_renders(tmp_path):
+    """The digest pin is optional: bundle and pin ship in the same chart."""
+    docs = render()
+    assert "harness__ds-default__harness.yaml" in docs[("ConfigMap", "saw-bom-profiles")]["data"]
+
+
+def _with_ref(tmp_path, ref):
     copy = tmp_path / "saw-bom"
     shutil.copytree(CHART, copy)
-    manifest_path = copy / "harness" / "ds-default" / "harness.yaml"
-    doc = yaml.safe_load(manifest_path.read_text())
-    doc["spec"]["tools"][0]["governanceProfile"] = "nope"
-    manifest_path.write_text(yaml.safe_dump(doc))
-    err = render_error(copy)
-    assert "not enrolled" in err
+    sandbox_path = copy / "profiles" / "data-science" / "default" / "sandbox.yaml"
+    doc = yaml.safe_load(sandbox_path.read_text())
+    doc["spec"]["sandboxes"][0]["harnessRef"] = ref
+    sandbox_path.write_text(yaml.safe_dump(doc))
+    return copy
+
+
+def test_an_oci_harness_ref_renders_without_shipping_the_bundle(tmp_path):
+    image = "ghcr.io/example/saw-harness-ds-default@sha256:" + "a" * 64
+    docs = render(_with_ref(tmp_path, {"image": image}))
+    data = docs[("ConfigMap", "saw-bom-profiles")]["data"]
+    assert not [k for k in data if k.startswith("harness__")]
+    assert "harness-index.yaml" in data
+
+
+def test_an_unpinned_oci_harness_ref_fails_the_render(tmp_path):
+    err = render_error(_with_ref(tmp_path, {"image": "ghcr.io/example/saw-harness-ds-default:latest"}))
+    assert "pinned by digest" in err
 
 
 def test_bundle_key_over_the_joliet_limit_fails_the_render(tmp_path):
