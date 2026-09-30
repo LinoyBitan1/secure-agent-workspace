@@ -212,3 +212,28 @@ def test_openclaw_loads_the_bundle_from_the_mount(ab, fake_env, config, profiles
     scripts = "\n".join(c[-1] for c in fake_env.openshell_calls() if c[:2] == ["sandbox", "exec"])
     assert """openclaw config set plugins.load.paths '["/sandbox/harness", "/sandbox/harness/plugins"]'""" in scripts
     assert "base64 -d" not in scripts, "bundle files never go through exec"
+
+
+# -- stdio MCP server secrets: resolved admin-side, injected at onboard time -----
+
+def test_a_stdio_secret_is_set_as_an_openclaw_env_ref_and_exported_at_gateway_start(
+        ab, fake_env, config, profiles, creds):
+    tree = {**V1, "harness.yaml": yaml.safe_dump({
+        "apiVersion": "saw.redhat.com/v1alpha1", "kind": "HarnessBundle",
+        "metadata": {"name": "demo"},
+        "spec": {"agent": "openclaw", "mcpServers": [
+            {"name": "echo", "credentialSecret": "tavily", "credentialSecretKey": "api_key",
+             "credentialEnvVar": "TAVILY_API_KEY"}]}})}
+    harness = _inline(ab, "demo", tree)
+    harness["mcpSecrets"] = {"demo": {"echo": "tvly-TEST-KEY"}}
+    make_applier(ab, config, creds, harness=harness).apply(use_ref(profiles, {"name": "demo"}))
+    scripts = [c[-1] for c in fake_env.openshell_calls()
+              if c[:2] == ["sandbox", "exec"] and c[3] == "notebook"]
+    config_set = "\n".join(scripts)
+    assert ('openclaw config set mcp.servers.echo.env.TAVILY_API_KEY '
+            '\'{"source": "env", "provider": "default", "id": "TAVILY_API_KEY"}\'') in config_set
+    gateway_run = next(s for s in scripts if "nohup openclaw gateway run" in s)
+    assert "export TAVILY_API_KEY=tvly-TEST-KEY" in gateway_run
+    assert "tvly-TEST-KEY" not in "\n".join(
+        " ".join(c) for c in fake_env.openshell_calls() if c[:2] != ["sandbox", "exec"]), \
+        "the raw key never appears outside the sandbox-exec command it's exported in"
