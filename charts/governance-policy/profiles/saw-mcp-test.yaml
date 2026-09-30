@@ -9,7 +9,6 @@ endpoints:
     port: 443
     protocol: mcp
     enforcement: enforce
-    access: read-only
     rules:
       - allow:
           method: POST
