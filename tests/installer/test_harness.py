@@ -193,6 +193,20 @@ def test_plan_round_trips_the_harness(ab, shipped_harness_files):
     assert back["bundles"]["ds-default"].files == bundles["ds-default"].files
 
 
+def test_plan_round_trips_resolved_mcp_secrets(ab, shipped_harness_files):
+    """Secrets are resolved admin-side (Inputs.load), before the plan hands
+    off to the runtime-user subprocess -- the resolved values must survive
+    that JSON round trip, same as provider credentials do."""
+    import json
+    bundles = ab.parse_harness_files(shipped_harness_files)
+    mcp_secrets = {"ds-default": {"tavily": "tvly-TEST-KEY"}}
+    plan = json.loads(json.dumps(ab.plan_for_user(
+        {}, _pinned(ab, {"name": "ds-default"}), {}, "d.sh",
+        harness={"bundles": bundles, "mcpSecrets": mcp_secrets})))
+    back = ab.harness_from_plan(plan)
+    assert back["mcpSecrets"] == mcp_secrets
+
+
 # -- reading a harness image, and the inline volume tarball ---------------------
 #
 # An OCI harness image is FROM scratch with the bundle tree at its root; the
@@ -326,3 +340,50 @@ def test_parse_profile_catalog_reads_ids_and_hosts(ab):
     out = ('[{"id": "web-search", "endpoints": [{"host": "api.tavily.com", "port": 443}]},'
            ' {"id": "slack", "endpoints": []}]')
     assert ab.parse_profile_catalog(out) == {"web-search": {"api.tavily.com"}, "slack": set()}
+
+
+# -- stdio MCP server secrets: never in the bundle, resolved from a Secret ---
+
+def _stdio_secret_tree(**decl_overrides):
+    decl = {"name": "tavily", "credentialSecret": "tavily",
+            "credentialSecretKey": "api_key", "credentialEnvVar": "TAVILY_API_KEY"}
+    decl.update(decl_overrides)
+    manifest = yaml.safe_dump({"metadata": {"name": "demo"}, "spec": {"mcpServers": [decl]}})
+    mcp = '{"mcpServers": {"tavily": {"type": "stdio", "command": "node"}}}'
+    return {"harness.yaml": (manifest.encode(), False), "mcp.json": (mcp.encode(), False)}
+
+
+def test_a_stdio_server_with_a_credential_secret_is_declared(ab):
+    info = ab.describe_harness_tree(_stdio_secret_tree())
+    assert info["mcpSecrets"] == [{"server": "tavily", "envVar": "TAVILY_API_KEY",
+                                   "credentialSecret": "tavily", "credentialSecretKey": "api_key",
+                                   "command": "node", "args": [], "cwd": "", "env": {}}]
+    assert info["governance"] == []  # stdio needs no governance profile
+
+
+def test_a_stdio_secret_needs_a_well_formed_env_var(ab):
+    with pytest.raises(ab.InstallerError, match="credentialEnvVar must look like an env var"):
+        ab.describe_harness_tree(_stdio_secret_tree(credentialEnvVar="not an env var!"))
+
+
+def test_a_stdio_secret_rejects_a_bad_secret_name(ab):
+    with pytest.raises(ab.InstallerError, match="invalid credentialSecret"):
+        ab.describe_harness_tree(_stdio_secret_tree(credentialSecret="Not Valid"))
+
+
+def test_resolve_harness_mcp_secrets_reads_the_mounted_secret(ab, tmp_path):
+    (tmp_path / "tavily").mkdir()
+    (tmp_path / "tavily" / "api_key").write_text("tvly-TEST-KEY\n")
+    bundle = ab.HarnessBundle(name="demo", files={
+        rel: base64.b64encode(data).decode()
+        for rel, (data, _) in _stdio_secret_tree().items()})
+    out = ab.resolve_harness_mcp_secrets({"demo": bundle}, tmp_path)
+    assert out == {"demo": {"tavily": "tvly-TEST-KEY"}}
+
+
+def test_resolve_harness_mcp_secrets_fails_closed_when_missing(ab, tmp_path):
+    bundle = ab.HarnessBundle(name="demo", files={
+        rel: base64.b64encode(data).decode()
+        for rel, (data, _) in _stdio_secret_tree().items()})
+    with pytest.raises(ab.InstallerError, match="credential for MCP server 'tavily' not found"):
+        ab.resolve_harness_mcp_secrets({"demo": bundle}, tmp_path)

@@ -85,6 +85,7 @@ VERSION_RE = re.compile(r"^v?[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9.+_-]*$")
 NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 SECRET_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
 SECRET_KEY_RE = re.compile(r"^[-._a-zA-Z0-9]+$")
+ENV_VAR_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 OPENSHELL_NAME_LIMIT = 19
 # The installer's own mTLS identity; the gateway reads roles from the OU.
 ADMIN_CERT_SUBJECT = "/O=openshell/OU=openshell-admin/CN=saw-installer"
@@ -533,6 +534,18 @@ HARNESS_MOUNT = "/sandbox/harness"
 HARNESS_MARKER = ".saw-harness-revision"  # inline bundles: written into the volume
 
 
+def _harness_path(value):
+    """Resolve a bundle-relative ${PLUGIN_ROOT} to the live mount path.
+
+    A server entry written to openclaw.json is read outside the bundle, so
+    the bundle-root placeholder would not resolve there (checked live:
+    absolute paths work, placeholders don't). Non-strings pass through.
+    """
+    if isinstance(value, str):
+        return value.replace("${PLUGIN_ROOT}", HARNESS_MOUNT)
+    return value
+
+
 def harness_image(ref):
     """The digest-pinned image of an OCI harnessRef, or "" for an inline one."""
     return (ref or {}).get("image", "") or ""
@@ -660,6 +673,7 @@ def describe_harness_tree(files):
     # endpoints include its host. A stdio server runs inside the sandbox,
     # where OpenShell's policy governs anything it reaches.
     declared = {m.get("name"): m for m in spec.get("mcpServers") or []}
+    mcp_secrets = []
     if "mcp.json" in files:
         try:
             servers = json.loads(files["mcp.json"][0]).get("mcpServers") or {}
@@ -670,10 +684,50 @@ def describe_harness_tree(files):
                 raise InstallerError(
                     f"harness '{name}': mcp.json server '{server}' needs \"type\": \"stdio\", "
                     "\"streamable-http\" or \"sse\" (OpenClaw ignores it otherwise)")
+            decl = declared.get(server) or {}
             if conf["type"] == "stdio":
+                # A stdio server's key never travels in mcp.json (bundles are
+                # secret-free); harness.yaml only names the Secret and the
+                # env var it fills. configure_harness writes the server's
+                # full launch config with that var set to a ${VAR}
+                # placeholder, and start_openclaw exports the real value
+                # into the gateway process, where OpenClaw expands it when
+                # spawning the server. (Checked live on OpenClaw 2026.9.5:
+                # mcp.servers.*.env only accepts plain scalars, so a
+                # SecretInput ref object is rejected by config validation,
+                # and a partial openclaw.json entry shadows the bundle's
+                # mcp.json instead of merging with it.)
+                if decl.get("credentialSecret"):
+                    env_var = decl.get("credentialEnvVar", "")
+                    if not ENV_VAR_RE.match(env_var):
+                        raise InstallerError(
+                            f"harness '{name}': mcp server '{server}' credentialEnvVar must look "
+                            "like an env var name (e.g. TAVILY_API_KEY)")
+                    if not NAME_RE.match(server):
+                        raise InstallerError(
+                            f"harness '{name}': mcp server name {server!r} with a credentialSecret "
+                            "must be a DNS label (it becomes part of an openclaw config path)")
+                    secret_name = decl["credentialSecret"]
+                    secret_key = decl.get("credentialSecretKey", "api_key")
+                    if not SECRET_NAME_RE.match(secret_name) or not SECRET_KEY_RE.match(secret_key):
+                        raise InstallerError(
+                            f"harness '{name}': mcp server '{server}' has an invalid "
+                            "credentialSecret/credentialSecretKey")
+                    if not isinstance(conf.get("command"), str) or not conf["command"]:
+                        raise InstallerError(
+                            f"harness '{name}': mcp server '{server}' declares a credentialSecret "
+                            "but no command: the full launch config is written to openclaw.json, "
+                            "and a partial entry would shadow the bundle's mcp.json")
+                    mcp_secrets.append({"server": server, "envVar": env_var,
+                                        "credentialSecret": secret_name,
+                                        "credentialSecretKey": secret_key,
+                                        "command": conf.get("command", ""),
+                                        "args": list(conf.get("args") or []),
+                                        "cwd": conf.get("cwd", ""),
+                                        "env": dict(conf.get("env") or {})})
                 continue
             host = urlsplit(conf.get("url") or "").hostname
-            profile = (declared.get(server) or {}).get("governanceProfile", "")
+            profile = decl.get("governanceProfile", "")
             if not host:
                 raise InstallerError(f"harness '{name}': mcp.json server '{server}' has no url host")
             if not profile:
@@ -690,6 +744,7 @@ def describe_harness_tree(files):
         "mcp": "mcp.json" in files,
         "pluginDirs": plugin_dirs,
         "governance": governance,
+        "mcpSecrets": mcp_secrets,
     }
 
 
@@ -1066,6 +1121,33 @@ def read_secret_value(base, key):
 # Characters a base URL never needs and a shell would interpret; the URL ends
 # up in an OpenClaw command line inside the sandbox.
 SHELL_UNSAFE = set("\"'`$\\;|&<>(){}")
+
+
+def resolve_harness_mcp_secrets(bundles, secrets_dir):
+    """{bundle name: {server: value}} for stdio MCP servers whose
+    harness.yaml declares a credentialSecret (SS4 of the harness doc), read
+    from the same mounted-Secret layout as provider credentials
+    (resolve_credentials), never from the bundle itself.
+
+    Runs admin-side (Inputs.load), like resolve_credentials: apply_plan hands
+    the result to the runtime-user subprocess, which never gets /run/saw
+    access. Only covers inline (ConfigMap-shipped) bundles -- an
+    image-sourced harness is read by the runtime user at apply time, past
+    this boundary, so it can't declare a stdio secret yet (see the WARN in
+    ProfileApplier.prepare_harness)."""
+    secrets_dir = Path(secrets_dir)
+    out = {}
+    for bundle in bundles.values():
+        info = describe_harness_tree({rel: (base64.b64decode(b64), False)
+                                      for rel, b64 in bundle.files.items()})
+        for entry in info["mcpSecrets"]:
+            value = read_secret_value(secrets_dir / entry["credentialSecret"], entry["credentialSecretKey"])
+            if not value:
+                raise InstallerError(
+                    f"harness '{bundle.name}': credential for MCP server '{entry['server']}' not "
+                    f"found: Secret '{entry['credentialSecret']}' key '{entry['credentialSecretKey']}'")
+            out.setdefault(bundle.name, {})[entry["server"]] = value
+    return out
 
 
 def check_base_url(url):
@@ -1797,6 +1879,9 @@ class ProfileApplier:
         for workspace in creds.values():
             for value in workspace.values():
                 shell.add_secret(value)
+        for servers in self.harness.get("mcpSecrets", {}).values():
+            for value in servers.values():
+                shell.add_secret(value)
 
     def cli(self, *args, **kwargs):
         return self.sh.run(["openshell", *args], **kwargs)
@@ -2141,6 +2226,14 @@ class ProfileApplier:
             raise InstallerError(f"harness {source} is for agent '{info['agent']}', "
                                  f"sandbox '{sb.name}' runs openclaw")
         self.check_harness_governance(sb, info)
+        if info["mcpSecrets"] and info["name"] not in self.harness.get("mcpSecrets", {}):
+            # Secrets are resolved admin-side (Inputs.load) from the inline
+            # bundle tree, before the plan hands off to the runtime user --
+            # apply_plan never gets /run/saw access. An image-sourced bundle
+            # is only read here, by the runtime user, so a stdio secret it
+            # declares can't be resolved this way yet.
+            log(f"WARN: harness '{info['name']}' declares MCP server secrets, but the runtime "
+                "user has no path to resolve them for an image-sourced bundle; skipping")
         if not current:
             self.volumes.fill(volume, source, tree)
             log(f"Harness volume {volume} filled from {source}")
@@ -2290,32 +2383,69 @@ class ProfileApplier:
         self.cli(*exec_cmd, "sh", "-c",
                  f"{oc_env} openclaw config set gateway.auth.token {shlex.quote(token)}",
                  check=False)
-        self.configure_harness(ws, sb, exec_cmd, oc_env)
+        secret_env = self.configure_harness(ws, sb, exec_cmd, oc_env)
         route = self.cfg.get("sandboxDashboardRoute")
         if route:
             origins = shlex.quote(json.dumps([f"https://{route}"]))
             self.cli(*exec_cmd, "sh", "-c",
                      f"{oc_env} openclaw config set gateway.controlUi.allowedOrigins {origins}",
                      check=False)
+        secret_exports = "".join(f"export {var}={shlex.quote(value)} && "
+                                 for var, value in secret_env.items())
         self.cli(*exec_cmd, "sh", "-c",
-                 f"export OPENCLAW_GATEWAY_TOKEN={token} {oc_env} && nohup openclaw gateway run "
-                 "--allow-unconfigured --bind lan --port 18789 > /tmp/openclaw-gateway.log 2>&1 &",
+                 f"{secret_exports}export OPENCLAW_GATEWAY_TOKEN={token} {oc_env} && "
+                 "nohup openclaw gateway run --allow-unconfigured --bind lan --port 18789 "
+                 "> /tmp/openclaw-gateway.log 2>&1 &",
                  check=False)
         self.install_keepalive(ws, sb)
 
     def configure_harness(self, ws, sb, exec_cmd, oc_env):
-        """Point OpenClaw at the mounted bundle (openclaw_harness_config).
+        """Point OpenClaw at the mounted bundle (openclaw_harness_config), and
+        wire up any stdio MCP server secrets the bundle declared.
 
         Config only: the bundle's files reach the sandbox through the mount,
         never through exec. The values depend only on the bundle's shape
         (plugin.json, skills/, plugins/), so a bundle update -- a new image
-        or a refilled volume -- normally leaves them unchanged."""
+        or a refilled volume -- normally leaves them unchanged.
+
+        A secret never appears in the bundle or in mcp.json: harness.yaml
+        only names the Secret and the env var it fills. OpenClaw is told
+        the full server launch config with that var set to a ${VAR}
+        placeholder (mcp.servers.*.env only accepts plain scalars), and
+        the real value is exported into the gateway process, where
+        OpenClaw expands the placeholder when spawning the server.
+        Returns {envVar: value} so the caller can export it into the same
+        process that runs the gateway.
+        """
         info = self.harness_info.get((ws.name, sb.name))
         if info is None:
-            return
+            return {}
         for key, value in openclaw_harness_config(info).items():
             self.cli(*exec_cmd, "sh", "-c",
                      f"{oc_env} openclaw config set {key} '{json.dumps(value)}'", check=False)
+        secret_env = {}
+        bundle_secrets = self.harness.get("mcpSecrets", {}).get(info["name"], {})
+        for entry in info.get("mcpSecrets", []):
+            value = bundle_secrets.get(entry["server"])
+            if not value:
+                continue  # resolve_mcp_secrets already fails closed
+            # Write the whole server entry, not just the secret env var: a
+            # partial openclaw.json entry shadows the bundle's mcp.json
+            # instead of merging with it (checked live). The secret itself
+            # is stored as a ${VAR} placeholder (mcp.servers.*.env only
+            # accepts plain scalars) and start_openclaw exports the real
+            # value into the gateway process, where OpenClaw expands it.
+            server_conf = {"command": _harness_path(entry["command"]),
+                           "args": [_harness_path(a) for a in entry["args"]],
+                           "env": {**{k: _harness_path(v) for k, v in entry["env"].items()},
+                                   entry["envVar"]: "${" + entry["envVar"] + "}"}}
+            if entry["cwd"]:
+                server_conf["cwd"] = _harness_path(entry["cwd"])
+            self.cli(*exec_cmd, "sh", "-c",
+                     f"{oc_env} openclaw config set mcp.servers.{entry['server']} "
+                     f"{shlex.quote(json.dumps(server_conf))}", check=False)
+            secret_env[entry["envVar"]] = value
+        return secret_env
 
     def verify_harness(self, ws, sb):
         """The sandbox mounts exactly its pinned harness, and sees it.
@@ -2718,7 +2848,8 @@ class Inputs:
         bundles = parse_harness_files(harness_files)
         revisions = validate_harness(profiles, bundles)
         harness = {"bundles": bundles,
-                   "revisions": revisions}
+                   "revisions": revisions,
+                   "mcpSecrets": resolve_harness_mcp_secrets(bundles, self.secrets)}
         return bom, cfg, profiles, creds, harness
 
 
@@ -2883,7 +3014,8 @@ def plan_for_user(cfg, profiles, creds, dashboard_script,
             "credentials": creds, "dashboardScript": str(dashboard_script),
             "providerProfiles": provider_profile_docs or {},
             "harness": {"bundles": {k: asdict(v) for k, v
-                                    in (harness.get("bundles") or {}).items()}}}
+                                    in (harness.get("bundles") or {}).items()},
+                       "mcpSecrets": harness.get("mcpSecrets") or {}}}
 
 
 def harness_from_plan(data):
@@ -2896,7 +3028,7 @@ def harness_from_plan(data):
             skills=[HarnessSkill(**s) for s in b["skills"]],
             tools=[HarnessTool(**t) for t in b["tools"]],
             files=b["files"])
-    return {"bundles": bundles}
+    return {"bundles": bundles, "mcpSecrets": raw.get("mcpSecrets") or {}}
 
 
 def profiles_from_plan(data):

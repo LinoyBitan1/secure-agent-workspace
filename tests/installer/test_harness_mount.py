@@ -212,3 +212,91 @@ def test_openclaw_loads_the_bundle_from_the_mount(ab, fake_env, config, profiles
     scripts = "\n".join(c[-1] for c in fake_env.openshell_calls() if c[:2] == ["sandbox", "exec"])
     assert """openclaw config set plugins.load.paths '["/sandbox/harness", "/sandbox/harness/plugins"]'""" in scripts
     assert "base64 -d" not in scripts, "bundle files never go through exec"
+
+
+# -- stdio MCP server secrets: resolved admin-side, injected at onboard time -----
+
+def _secret_tree(ab, server_conf):
+    return {**V1, "harness.yaml": yaml.safe_dump({
+        "apiVersion": "saw.redhat.com/v1alpha1", "kind": "HarnessBundle",
+        "metadata": {"name": "demo"},
+        "spec": {"agent": "openclaw", "mcpServers": [
+            {"name": "echo", "credentialSecret": "tavily", "credentialSecretKey": "api_key",
+             "credentialEnvVar": "TAVILY_API_KEY"}]}}),
+        "mcp.json": json.dumps({"mcpServers": {"echo": server_conf}})}
+
+
+def _server_config_writes(fake_env):
+    scripts = [c[-1] for c in fake_env.openshell_calls()
+               if c[:2] == ["sandbox", "exec"] and c[3] == "notebook"]
+    out = {}
+    for s in scripts:
+        if "openclaw config set mcp.servers." in s:
+            path, _, raw = s.split("openclaw config set ", 1)[1].partition(" ")
+            out[path] = json.loads(raw.strip("'"))
+    return scripts, out
+
+
+def test_a_stdio_secret_is_set_as_a_placeholder_and_exported_at_gateway_start(
+        ab, fake_env, config, profiles, creds):
+    """The secret is a ${VAR} placeholder in openclaw.json (mcp env only
+    takes scalars -- a SecretInput ref is rejected), resolved from the
+    gateway process env OpenClaw expands at spawn (checked live)."""
+    harness = _inline(ab, "demo", _secret_tree(ab, {"type": "stdio", "command": "node"}))
+    harness["mcpSecrets"] = {"demo": {"echo": "tvly-TEST-KEY"}}
+    make_applier(ab, config, creds, harness=harness).apply(use_ref(profiles, {"name": "demo"}))
+    scripts, writes = _server_config_writes(fake_env)
+    assert writes["mcp.servers.echo"] == {
+        "command": "node", "args": [],
+        "env": {"TAVILY_API_KEY": "${TAVILY_API_KEY}"}}
+    gateway_run = next(s for s in scripts if "nohup openclaw gateway run" in s)
+    assert "export TAVILY_API_KEY=tvly-TEST-KEY" in gateway_run
+    assert "tvly-TEST-KEY" not in "\n".join(
+        " ".join(c) for c in fake_env.openshell_calls() if c[:2] != ["sandbox", "exec"]), \
+        "the raw key never appears outside the sandbox-exec command it's exported in"
+
+
+def test_a_stdio_secret_server_is_written_whole_with_bundle_paths_resolved(
+        ab, fake_env, config, profiles, creds):
+    """A partial openclaw.json entry shadows the bundle's mcp.json instead
+    of merging (checked live), so the whole launch config is written, with
+    ${PLUGIN_ROOT} resolved to the mount and the bundle's own env kept."""
+    conf = {"type": "stdio", "command": "node",
+            "args": ["${PLUGIN_ROOT}/mcp/echo-server.mjs"],
+            "env": {"ECHO_MODE": "upper"}}
+    harness = _inline(ab, "demo", _secret_tree(ab, conf))
+    harness["mcpSecrets"] = {"demo": {"echo": "tvly-TEST-KEY"}}
+    make_applier(ab, config, creds, harness=harness).apply(use_ref(profiles, {"name": "demo"}))
+    _, writes = _server_config_writes(fake_env)
+    assert writes["mcp.servers.echo"] == {
+        "command": "node", "args": ["/sandbox/harness/mcp/echo-server.mjs"],
+        "env": {"ECHO_MODE": "upper", "TAVILY_API_KEY": "${TAVILY_API_KEY}"}}
+
+
+def test_a_stdio_secret_without_a_command_is_refused(ab, fake_env, config, profiles, creds):
+    tree = _secret_tree(ab, {"type": "stdio"})
+    with pytest.raises(ab.InstallerError, match="no command"):
+        make_applier(ab, config, creds, harness=_inline(ab, "demo", tree)).apply(
+            use_ref(profiles, {"name": "demo"}))
+    assert not notebook_creates(fake_env)
+
+
+def test_a_stdio_secret_server_entry_with_shell_metacharacters_is_not_injected(
+        ab, fake_env, config, profiles, creds):
+    """The server entry's command/args/env come from the bundle's own
+    mcp.json -- a shell metacharacter in one of them must never break out
+    of the sh -c command it's written with (the same injection class fixed
+    for start_openclaw in 2d40ae2)."""
+    import shlex
+    dangerous = "'; touch /tmp/pwned; echo '"
+    conf = {"type": "stdio", "command": "node", "env": {"ECHO_MODE": dangerous}}
+    harness = _inline(ab, "demo", _secret_tree(ab, conf))
+    harness["mcpSecrets"] = {"demo": {"echo": "tvly-TEST-KEY"}}
+    make_applier(ab, config, creds, harness=harness).apply(use_ref(profiles, {"name": "demo"}))
+    scripts = [c[-1] for c in fake_env.openshell_calls()
+              if c[:2] == ["sandbox", "exec"] and c[3] == "notebook"]
+    script = next(s for s in scripts if "openclaw config set mcp.servers." in s)
+    tokens = shlex.split(script)
+    assert "touch" not in tokens, "the payload broke out of the shell string"
+    payload = json.loads(tokens[tokens.index("mcp.servers.echo") + 1])
+    assert payload["env"]["ECHO_MODE"] == dangerous
