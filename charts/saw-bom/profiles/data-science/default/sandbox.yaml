@@ -18,7 +18,7 @@ spec:
       #                                  mounted directly, a new digest
       #                                  recreates the sandbox
       harnessRef:
-        name: ds-default
+        image: ghcr.io/linoybitan1/saw-harness-ds-default@sha256:e13fabdea4adfaf0c546cab74f87e36deb4f2d71f08ee0286b2daa61790f5dd5
     - name: cuda-sandbox
       type: nemoclaw
       enabled: false
