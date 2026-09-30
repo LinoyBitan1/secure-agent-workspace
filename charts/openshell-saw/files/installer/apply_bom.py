@@ -1791,7 +1791,10 @@ class HarnessVolume:
                 HARNESS_VOLUME_LABEL: "true"}
 
     def inspect(self, volume):
-        """podman's view of the volume, or None when it does not exist."""
+        """podman's view of the volume, or None when it does not exist.
+        `volume exists` first, so a missing volume is not logged as an error."""
+        if not self._podman("volume", "exists", volume, check=False, quiet=True).ok:
+            return None
         got = self._podman("volume", "inspect", "--format", "json", volume, check=False, quiet=True)
         if not got.ok:
             return None
