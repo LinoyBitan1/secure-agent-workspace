@@ -1,0 +1,16 @@
+# Throwaway live-test profile for handoff item 5 (protocol: mcp).
+# NOT for production.
+id: saw-mcp-test
+display_name: SAW MCP Test
+description: Throwaway endpoint to check the interceptor accepts protocol mcp
+provider_type: custom
+endpoints:
+  - host: mcp.example.com
+    port: 443
+    protocol: mcp
+    enforcement: enforce
+    access: read-only
+    rules:
+      - allow:
+          method: POST
+          path: /mcp
