@@ -37,6 +37,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import socket
 import subprocess
@@ -1877,12 +1878,14 @@ class ProfileApplier:
                 log(f"  waiting for sandbox '{sb.name}' to be Ready ({attempt + 1}/20)")
                 time.sleep(5)
         # The supervisor rewrites passwd; match /sandbox ownership to it.
-        self.sh.run(["bash", "-c",
-                     "CNAME=$(podman ps -a --filter 'name=openshell.*" + sb.name +
-                     "' --format '{{.Names}}' | head -1) && [ -n \"$CNAME\" ] && "
-                     "podman exec -u 0 \"$CNAME\" find /sandbox -path " + HARNESS_MOUNT +
-                     " -prune -o -exec chown sandbox:sandbox {} +"],
-                    check=False)
+        # No shell: the container name and sandbox name never go through one.
+        found = self.sh.run(["podman", "ps", "-a", "--filter", f"name=openshell.*{sb.name}",
+                              "--format", "{{.Names}}"], check=False, quiet=True)
+        cname = found.out.splitlines()[0].strip() if found.out.strip() else ""
+        if cname:
+            self.sh.run(["podman", "exec", "-u", "0", cname, "find", "/sandbox", "-path",
+                         HARNESS_MOUNT, "-prune", "-o", "-exec", "chown", "sandbox:sandbox", "{}", "+"],
+                        check=False)
         token = secrets.token_hex(16)
         self.sh.add_secret(token)
         model = sb.model or provider.model or "nvidia/nemotron-3-super-120b-a12b"
@@ -1892,7 +1895,8 @@ class ProfileApplier:
                  f"{oc_env} CUSTOM_API_KEY=proxy-managed openclaw onboard --non-interactive "
                  "--accept-risk --mode local --auth-choice custom-api-key "
                  '--custom-base-url "https://inference.local/v1" '
-                 f"--custom-provider-id {provider.type} --custom-model-id \"{model}\" "
+                 f"--custom-provider-id {shlex.quote(provider.type)} "
+                 f"--custom-model-id {shlex.quote(model)} "
                  "--custom-compatibility openai --skip-channels --skip-health", check=False)
         # Re-onboarding an existing sandbox with a different provider or model
         # (e.g. after switching to a custom endpoint) makes OpenClaw save the
@@ -1901,15 +1905,18 @@ class ProfileApplier:
         if profile_id:
             log(f"Activating the new OpenClaw credential '{profile_id}'")
             self.cli(*exec_cmd, "sh", "-c",
-                     f"{oc_env} openclaw models auth activate {profile_id} --agent main", check=False)
-        self.cli(*exec_cmd, "sh", "-c", f"{oc_env} openclaw config set gateway.auth.token '{token}'",
+                     f"{oc_env} openclaw models auth activate {shlex.quote(profile_id)} --agent main",
+                     check=False)
+        self.cli(*exec_cmd, "sh", "-c",
+                 f"{oc_env} openclaw config set gateway.auth.token {shlex.quote(token)}",
                  check=False)
         self.configure_harness(ws, sb, exec_cmd, oc_env)
         route = self.cfg.get("sandboxDashboardRoute")
         if route:
+            origins = shlex.quote(json.dumps([f"https://{route}"]))
             self.cli(*exec_cmd, "sh", "-c",
-                     f"{oc_env} openclaw config set gateway.controlUi.allowedOrigins "
-                     f"'[\"https://{route}\"]'", check=False)
+                     f"{oc_env} openclaw config set gateway.controlUi.allowedOrigins {origins}",
+                     check=False)
         self.cli(*exec_cmd, "sh", "-c",
                  f"export OPENCLAW_GATEWAY_TOKEN={token} {oc_env} && nohup openclaw gateway run "
                  "--allow-unconfigured --bind lan --port 18789 > /tmp/openclaw-gateway.log 2>&1 &",

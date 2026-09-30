@@ -71,6 +71,25 @@ def test_fresh_apply_creates_everything(ab, fake_env, config, profiles, creds):
     assert applier.verify(profiles) == []
 
 
+def test_chown_after_create_uses_argv_not_a_shell(ab, fake_env, config, profiles, creds):
+    """The post-create chown step (matching /sandbox ownership to the
+    supervisor's passwd rewrite) used to build a `bash -c` string with the
+    sandbox name concatenated in unquoted -- a shell-injection class of bug.
+    It now never invokes a shell at all."""
+    make_applier(ab, config, creds).apply(profiles)
+    calls = fake_env.podman_calls()
+    assert not any(c[0] == "bash" for c in calls)
+    ps_calls = [c for c in calls if c[:2] == ["ps", "-a"]]
+    filters = {c[c.index("--filter") + 1] for c in ps_calls}
+    assert filters == {"name=openshell.*notebook", "name=openshell.*cuda-sandbox"}
+    exec_calls = [c for c in calls if c[:1] == ["exec"] and "find" in c]
+    assert len(exec_calls) == 2, "expected one podman exec .. find .. chown call per agent sandbox"
+    for call in exec_calls:
+        # Every argument (including the container name) is its own argv
+        # element, never interpolated into a shell string.
+        assert call[4:9] == ["find", "/sandbox", "-path", "/sandbox/harness", "-prune"]
+
+
 def test_system_inference_skipped_without_default_workspace_model(ab, fake_env, config, profiles, creds):
     for _, ws in ab.enabled_workspaces(profiles):
         if ws.name == "default":

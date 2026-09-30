@@ -49,7 +49,7 @@ def test_apply_creates_an_openai_provider_and_the_inference_route(ab, fake_env, 
     # OpenClaw is onboarded against inference.local, not the endpoint itself.
     onboard = next(" ".join(c) for c in fake_env.openshell_calls() if "onboard" in " ".join(c))
     assert "https://inference.local/v1" in onboard and URL not in onboard
-    assert f'--custom-model-id "{MODEL}"' in onboard
+    assert f"--custom-model-id {MODEL}" in onboard
 
 
 def test_rerun_updates_the_base_url(ab, fake_env, config, profiles, custom_secrets):
