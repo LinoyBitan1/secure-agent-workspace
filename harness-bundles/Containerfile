@@ -1,0 +1,7 @@
+# One image per harness bundle: the bundle tree is the image root, nothing
+# else. The sandbox mounts this image read-only at /sandbox/harness (podman
+# image mount), like a Kubernetes image volume. Build context is the bundle:
+#   podman build -f harness-bundles/Containerfile harness-bundles/ds-default
+FROM scratch
+COPY . /
+LABEL org.opencontainers.image.description="SAW harness bundle (skills, MCP servers, OpenClaw tool plugins)"

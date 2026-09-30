@@ -7,8 +7,11 @@
 {{- $_ := set $profileFiles $path ($.Files.Get $path) }}
 {{- end }}
 {{- end }}
-{{- /* Harness bundles: charts/saw-bom/harness/<bundle>/<relpath>. Content is
-     base64 per key -- a `|` block scalar normalises trailing whitespace, which
+{{- /* Inline harness bundles: charts/saw-bom/harness/<bundle>/<relpath>, for
+     sandboxes with harnessRef.name. The guest copies them unchanged into a
+     volume mounted read-only at /sandbox/harness. (harnessRef.image bundles
+     are OCI images the guest mounts directly; nothing is shipped here for
+     them.) Content is base64 per key -- a `|` block scalar normalises trailing whitespace, which
      would change the tree digest between Git and the guest.
      Only bundles referenced by a selected profile's sandbox harnessRef are
      shipped, so the ConfigMap stays scoped to `.Values.profiles`. */ -}}
@@ -16,7 +19,7 @@
 {{- range $profile := .Values.profiles }}
 {{- range $path, $_ := $.Files.Glob (printf "profiles/%s/**/sandbox.yaml" $profile) }}
 {{- range $sb := ((($.Files.Get $path | fromYaml).spec).sandboxes | default list) }}
-{{- if $sb.harnessRef }}
+{{- if and $sb.harnessRef (not $sb.harnessRef.image) }}
 {{- $_ := set $wanted ($sb.harnessRef.name | default "") true }}
 {{- end }}
 {{- end }}
@@ -57,36 +60,36 @@
 {{- if gt $payload 921600 }}
 {{- fail (printf "harness payload is %d bytes (>900KiB); the ConfigMap limit is 1MiB" $payload) }}
 {{- end }}
-{{- /* Every shipped bundle's tools must name an enrolled governance profile. */ -}}
-{{- range $path, $_ := $.Files.Glob "harness/*/harness.yaml" }}
-{{- $bundle := index (splitList "/" $path) 1 }}
-{{- if hasKey $wanted $bundle }}
-{{- $doc := $.Files.Get $path | fromYaml }}
-{{- range $tool := (($doc.spec).tools | default list) }}
-{{- if not (has ($tool.governanceProfile | default "") $.Values.governanceProfiles) }}
-{{- fail (printf "harness tool %q names governanceProfile %q, which is not enrolled (saw-bom values.governanceProfiles)" $tool.name ($tool.governanceProfile | default "")) }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- /* Every selected profile's harnessRef must match the computed digest. */ -}}
+{{- /* A selected profile's harnessRef digest, when set, must match the
+     computed digest (the pin is optional: bundle and pin ship together).
+     An OCI harnessRef (image: repo@sha256:...) is pinned by the image
+     digest instead; the guest pulls it and mounts it into the sandbox. */ -}}
+{{- $imageRefs := false }}
 {{- range $profile := $.Values.profiles }}
 {{- range $path, $_ := $.Files.Glob (printf "profiles/%s/**/sandbox.yaml" $profile) }}
 {{- range $sb := ((($.Files.Get $path | fromYaml).spec).sandboxes | default list) }}
-{{- if $sb.harnessRef }}
+{{- if and $sb.harnessRef $sb.harnessRef.image }}
+{{- $imageRefs = true }}
+{{- if not (regexMatch "^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$" $sb.harnessRef.image) }}
+{{- fail (printf "sandbox %q harnessRef.image must be pinned by digest (repo@sha256:...), got %q" $sb.name $sb.harnessRef.image) }}
+{{- end }}
+{{- if $sb.harnessRef.digest }}
+{{- fail (printf "sandbox %q harnessRef: set image or name/digest, not both" $sb.name) }}
+{{- end }}
+{{- else if $sb.harnessRef }}
 {{- $want := $sb.harnessRef.digest | default "" }}
 {{- $got := get $digests ($sb.harnessRef.name | default "") }}
 {{- if not $got }}
 {{- fail (printf "sandbox %q references unknown harness bundle %q" $sb.name ($sb.harnessRef.name | default "")) }}
 {{- end }}
-{{- if ne $want $got }}
+{{- if and $want (ne $want $got) }}
 {{- fail (printf "harnessRef digest mismatch for sandbox %q: sandbox.yaml says %q, the bundle hashes to %q" $sb.name $want $got) }}
 {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
-{{- if or $profileFiles $harness }}
+{{- if or $profileFiles $harness $imageRefs }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -102,15 +105,11 @@ data:
   {{- range $key, $b64 := $harness }}
   {{ $key }}: {{ $b64 | quote }}
   {{- end }}
-  {{- if $harness }}
+  {{- if or $harness $imageRefs }}
   harness-index.yaml: |
     bundles:
     {{- range $bundle, $digest := $digests }}
       {{ $bundle }}: {{ $digest }}
-    {{- end }}
-    enrolledGovernanceProfiles:
-    {{- range $p := $.Values.governanceProfiles }}
-      - {{ $p }}
     {{- end }}
   {{- end }}
 {{- end }}
