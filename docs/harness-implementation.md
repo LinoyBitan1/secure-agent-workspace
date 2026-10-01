@@ -345,8 +345,8 @@ and reconcile runs apply, so neither kind of update needs a VM restart.
   are refused.
 - An OCI bundle is pinned by digest, and what lands in the volume is exactly
   what was published. CI signs it with cosign; the installer does not verify
-  that signature, so the digest in `harnessRef` is the trust anchor. PR #54's
-  per-pull signature policy is the place to add it (`harnessRef.signature`).
+  that signature, so the digest in `harnessRef` is the trust anchor. Next
+  work: verify it at pull time (`harnessRef.signature`).
 - Only regular files are read from an image; links and `..` paths are
   refused.
 - Governance comes from the gateway's live catalog and endpoint hosts, not a
@@ -425,7 +425,16 @@ mounts.
   catalog (the gateway itself refuses to start without the interceptor);
 - a `protocol: mcp` endpoint is accepted with `rules` of the form
   `{allow: {method: tools/call, tool: <name>}}` (`access` is mutually
-  exclusive with `rules`; `path`/`query` are rejected for mcp).
+  exclusive with `rules`; `path`/`query` are rejected for mcp);
+- a keyed stdio server end to end on an image-sourced bundle: same as the
+  inline case above, but the volume marker names a GHCR digest; an agent
+  turn calling `saw-brave-probe__brave_probe` got back the provider
+  placeholder (`BRAVE_API_KEY=SET`), never the raw key;
+- `harnessRef` removed from a running sandbox: recreated mountless, its
+  volume pruned;
+- an unlabelled volume (same name, pre-created with no labels, no sandbox):
+  next apply recreated both, volume regained all three admission labels,
+  content refilled from the same bundle source.
 
 **From the OpenShell v0.1.2 source** (the rules the design follows):
 
@@ -441,15 +450,12 @@ mounts.
 
 **Open:**
 
-1. On a cluster: a removed `harnessRef`, and relabelling a volume from
-   before this change (covered by the unit tests).
-2. A keyed stdio server end to end on an image-sourced bundle.
-3. Reaching an in-cluster MCP Service from inside a sandbox: the network
+1. Reaching an in-cluster MCP Service from inside a sandbox: the network
    path works, but the platform's default-deny L7 policy answers `403
    policy_denied`, live policy updates are governance-blocked, and a
    governance profile for the host does not open it. No repo-side knob
    exists; needs an OpenShell-side answer.
-4. Verifying the bundle image's cosign signature at pull time (after PR #54).
+2. Next work: verifying the bundle image's cosign signature at pull time.
 
 ## 12. Files
 
