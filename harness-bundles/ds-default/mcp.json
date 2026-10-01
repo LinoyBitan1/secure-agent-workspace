@@ -4,19 +4,7 @@
     "saw-mcp-echo": {
       "type": "stdio",
       "command": "node",
-      "args": [
-        "${PLUGIN_ROOT}/mcp/echo-server.mjs"
-      ]
-    },
-    "saw-brave-probe": {
-      "type": "stdio",
-      "command": "node",
-      "args": [
-        "${PLUGIN_ROOT}/mcp/brave-probe.mjs"
-      ],
-      "env": {
-        "BRAVE_API_KEY": "${BRAVE_API_KEY}"
-      }
+      "args": ["${PLUGIN_ROOT}/mcp/echo-server.mjs"]
     }
   }
 }

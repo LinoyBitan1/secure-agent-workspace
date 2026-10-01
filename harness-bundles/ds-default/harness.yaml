@@ -18,9 +18,6 @@ spec:
   plugins: []
   #  - name: my-plugin
   #    governanceProfile: <profile>
-  mcpServers:
-    # Throwaway I-phase probe (provider-keys model). NOT for production.
-    - name: saw-brave-probe
-      governanceProfile: brave
+  mcpServers: []
   #  - name: web-search
   #    governanceProfile: web-search

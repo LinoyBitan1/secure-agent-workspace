@@ -9,7 +9,6 @@ spec:
       image: quay.io/rh-ai-quickstart/openclaw-openshell:latest
       providers:
         - nvidia
-        - brave
       # The harness bundle is mounted read-only at /sandbox/harness, as is,
       # from a volume the installer fills; an update refills it in place:
       #   harnessRef: {name: <bundle>}   inline, from charts/saw-bom/harness/
