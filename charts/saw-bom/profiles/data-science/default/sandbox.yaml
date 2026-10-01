@@ -5,7 +5,7 @@ spec:
   sandboxes:
     - name: notebook
       type: openclaw
-      enabled: false
+      enabled: true
       image: quay.io/rh-ai-quickstart/openclaw-openshell:latest
       providers:
         - nvidia
