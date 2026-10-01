@@ -7,4 +7,4 @@ description: Managed example skill. Proves harness-delivered skills load in the 
 
 Managed example skill. Real prompt content lives here and is versioned with the BOM.
 
-E2E-PROBE-LINE-012: inline refill reaches the running sandbox.
+E2E-PROBE-LINE-013: new digest refills in place.
