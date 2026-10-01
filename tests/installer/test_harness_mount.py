@@ -252,6 +252,22 @@ def test_a_tampered_inline_volume_is_reported_and_refilled(ab, fake_env, config,
     assert applier.verify(profiles) == []
 
 
+# -- stdio secrets from image bundles: refused at describe time --------------------
+
+def test_an_image_bundle_that_declares_a_credential_is_refused(
+        ab, fake_env, config, profiles, creds):
+    """credentialSecret/* cannot be resolved past the privilege boundary, so
+    describe fails the bundle outright (before anything is mounted) with a
+    message pointing at the provider-keys model."""
+    tree = {**V1, "harness.yaml": manifest(mcpServers=[
+        {"name": "echo", "credentialSecret": "tavily",
+         "credentialSecretKey": "api_key", "credentialEnvVar": "TAVILY_API_KEY"}])}
+    fake_env.set_images({IMAGE_V1: {"__tree__": tree}})
+    with pytest.raises(ab.InstallerError, match="keys no longer reach the sandbox that way"):
+        make_applier(ab, config, creds).apply(use_ref(profiles, {"image": IMAGE_V1}))
+    assert not notebook_creates(fake_env)
+
+
 # -- governance: checked before anything is filled ------------------------------------
 
 def test_an_unserved_governance_profile_stops_before_the_sandbox_is_created(
