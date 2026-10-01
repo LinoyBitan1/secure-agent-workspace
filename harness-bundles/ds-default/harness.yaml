@@ -21,6 +21,6 @@ spec:
   mcpServers:
     # Throwaway H2 probe: unserved profile must refuse the apply.
     - name: probe-remote
-      governanceProfile: no-such-profile
+      governanceProfile: web-search
   #  - name: web-search
   #    governanceProfile: web-search
