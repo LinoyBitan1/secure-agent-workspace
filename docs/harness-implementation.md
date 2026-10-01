@@ -408,7 +408,13 @@ mounts.
   `Ready` after the driver's 30-second admission re-check;
 - an agent turn through the running OpenClaw gateway called both bundle
   tools: `saw-echo: hello-plugin` (native plugin) and `saw-mcp-echo:
-  hello-mcp` (stdio MCP server).
+  hello-mcp` (stdio MCP server);
+- a keyed stdio server end to end on an inline bundle: with `env:
+  {BRAVE_API_KEY: "${BRAVE_API_KEY}"}` declared in its `mcp.json` entry
+  (the documented fallback), the server reported the provider placeholder
+  (`SET`), whereas without it, `NOT SET`. Only the placeholder is
+  forwarded, never the real key; `credentialSecret`/`credentialSecretKey`/
+  `credentialEnvVar` stay refused.
 
 **From the OpenShell v0.1.2 source** (the rules the design follows):
 
@@ -428,12 +434,7 @@ mounts.
    removed `harnessRef`, and relabelling a volume from before this change
    (covered by the unit tests).
 2. Pulling a public image from GHCR in the VM.
-3. A keyed stdio server end to end: a placeholder from its provider swapped
-   by the egress proxy. OpenShell gives every `sandbox exec` process the
-   provider placeholders (`openshell-sandbox/src/boundary_exec.rs`); whether
-   OpenClaw passes its environment on to a stdio server, or only an
-   allowlist as the MCP SDK's stdio transport does by default, is not
-   confirmed. The fallback is naming the variable in the server's `env`.
+3. A keyed stdio server end to end on an image-sourced bundle.
 4. Whether the governance interceptor's profiles accept `protocol: mcp` with
    `rules`, for remote MCP servers (the fallback is `rest` with `read-write`).
 5. Reaching an in-cluster MCP Service from inside a sandbox.
