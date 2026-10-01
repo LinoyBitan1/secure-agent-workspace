@@ -16,7 +16,7 @@ spec:
       #   harnessRef: {image: ghcr.io/<owner>/saw-harness-<bundle>@sha256:<digest>}
       #                                  published by CI from harness-bundles/
       harnessRef:
-        image: ghcr.io/linoybitan1/saw-harness-ds-default@sha256:f260e826308c792867de7f7d11923eb80a0cf0fedee911054027749ce0469c8e
+        name: ds-default
     - name: cuda-sandbox
       type: nemoclaw
       enabled: false
