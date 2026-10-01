@@ -18,9 +18,6 @@ spec:
   plugins: []
   #  - name: my-plugin
   #    governanceProfile: <profile>
-  mcpServers:
-    # Throwaway H2 probe: unserved profile must refuse the apply.
-    - name: probe-remote
-      governanceProfile: web-search
+  mcpServers: []
   #  - name: web-search
   #    governanceProfile: web-search

@@ -7,10 +7,6 @@
       "args": [
         "${PLUGIN_ROOT}/mcp/echo-server.mjs"
       ]
-    },
-    "probe-remote": {
-      "type": "streamable-http",
-      "url": "https://search.internal/mcp"
     }
   }
 }
