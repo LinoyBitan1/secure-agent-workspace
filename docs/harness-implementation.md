@@ -414,7 +414,18 @@ mounts.
   (the documented fallback), the server reported the provider placeholder
   (`SET`), whereas without it, `NOT SET`. Only the placeholder is
   forwarded, never the real key; `credentialSecret`/`credentialSecretKey`/
-  `credentialEnvVar` stay refused.
+  `credentialEnvVar` stay refused;
+- pulling a public bundle image from GHCR in the VM (no credentials) and
+  unpacking it into the sandbox's labelled volume: `appliedRevision` carries
+  the full digest-pinned ref, the mount stays `Type: volume`, and a new
+  digest refills the volume in place with the same container kept
+  (`/sandbox/persist` and `/sandbox/tmp` survive);
+- governance refusals fail closed before anything is mounted: an unserved
+  profile, a missing provider of the profile's type, and an unreadable
+  catalog (the gateway itself refuses to start without the interceptor);
+- a `protocol: mcp` endpoint is accepted with `rules` of the form
+  `{allow: {method: tools/call, tool: <name>}}` (`access` is mutually
+  exclusive with `rules`; `path`/`query` are rejected for mcp).
 
 **From the OpenShell v0.1.2 source** (the rules the design follows):
 
@@ -430,15 +441,15 @@ mounts.
 
 **Open:**
 
-1. On a cluster: an image-sourced bundle (a refill from a new digest), a
-   removed `harnessRef`, and relabelling a volume from before this change
-   (covered by the unit tests).
-2. Pulling a public image from GHCR in the VM.
-3. A keyed stdio server end to end on an image-sourced bundle.
-4. Whether the governance interceptor's profiles accept `protocol: mcp` with
-   `rules`, for remote MCP servers (the fallback is `rest` with `read-write`).
-5. Reaching an in-cluster MCP Service from inside a sandbox.
-6. Verifying the bundle image's cosign signature at pull time (after PR #54).
+1. On a cluster: a removed `harnessRef`, and relabelling a volume from
+   before this change (covered by the unit tests).
+2. A keyed stdio server end to end on an image-sourced bundle.
+3. Reaching an in-cluster MCP Service from inside a sandbox: the network
+   path works, but the platform's default-deny L7 policy answers `403
+   policy_denied`, live policy updates are governance-blocked, and a
+   governance profile for the host does not open it. No repo-side knob
+   exists; needs an OpenShell-side answer.
+4. Verifying the bundle image's cosign signature at pull time (after PR #54).
 
 ## 12. Files
 
