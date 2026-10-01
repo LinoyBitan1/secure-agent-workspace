@@ -425,7 +425,16 @@ mounts.
   catalog (the gateway itself refuses to start without the interceptor);
 - a `protocol: mcp` endpoint is accepted with `rules` of the form
   `{allow: {method: tools/call, tool: <name>}}` (`access` is mutually
-  exclusive with `rules`; `path`/`query` are rejected for mcp).
+  exclusive with `rules`; `path`/`query` are rejected for mcp);
+- a keyed stdio server end to end on an image-sourced bundle: same as the
+  inline case above, but the volume marker names a GHCR digest; an agent
+  turn calling `saw-brave-probe__brave_probe` got back the provider
+  placeholder (`BRAVE_API_KEY=SET`), never the raw key;
+- `harnessRef` removed from a running sandbox: recreated mountless, its
+  volume pruned;
+- an unlabelled volume (same name, pre-created with no labels, no sandbox):
+  next apply recreated both, volume regained all three admission labels,
+  content refilled from the same bundle source.
 
 **From the OpenShell v0.1.2 source** (the rules the design follows):
 
@@ -441,15 +450,12 @@ mounts.
 
 **Open:**
 
-1. On a cluster: a removed `harnessRef`, and relabelling a volume from
-   before this change (covered by the unit tests).
-2. A keyed stdio server end to end on an image-sourced bundle.
-3. Reaching an in-cluster MCP Service from inside a sandbox: the network
+1. Reaching an in-cluster MCP Service from inside a sandbox: the network
    path works, but the platform's default-deny L7 policy answers `403
    policy_denied`, live policy updates are governance-blocked, and a
    governance profile for the host does not open it. No repo-side knob
    exists; needs an OpenShell-side answer.
-4. Verifying the bundle image's cosign signature at pull time (after PR #54).
+2. Verifying the bundle image's cosign signature at pull time (after PR #54).
 
 ## 12. Files
 
