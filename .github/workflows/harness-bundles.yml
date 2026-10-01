@@ -1,9 +1,9 @@
 name: Build and push harness bundles
 
 # One OCI image per harness-bundles/<bundle>/: FROM scratch, the bundle tree
-# is the image root. A SAW sandbox mounts the image read-only at
-# /sandbox/harness (podman image mount, like a Kubernetes image volume), so
-# the image holds exactly the files OpenClaw loads -- nothing is generated or
+# is the image root. The SAW installer unpacks it, unchanged, into the volume
+# a sandbox mounts read-only at /sandbox/harness, so the image holds exactly
+# the files OpenClaw loads -- nothing is generated or
 # converted after this build. Pull requests build only; main pushes to
 # ghcr.io/<owner>/saw-harness-<bundle> and signs the digest with cosign
 # (keyless, this workflow's GitHub identity). The job summary prints the

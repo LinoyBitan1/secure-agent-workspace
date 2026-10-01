@@ -399,11 +399,12 @@ def test_full_apply_mounts_the_harness_into_notebook(ab, fake_env, config, profi
     never copies bundle files with `sandbox exec`."""
     applier = make_applier(ab, config, creds)
     applier.apply(profiles)
+    name = ab.harness_volume_name("default", "notebook")
     notebook = fake_env.openshell_state()["sandboxes"]["default/notebook"]
     assert notebook["driverConfig"] == {"podman": {"mounts": [{
-        "type": "volume", "source": "saw-harness-default-notebook",
+        "type": "volume", "source": name,
         "target": "/sandbox/harness", "read_only": True}]}}
-    volume = fake_env.state / "volumes" / "saw-harness-default-notebook"
+    volume = fake_env.state / "volumes" / name
     assert (volume / "skills" / "pattern-author" / "SKILL.md").is_file()
     scripts = "\n".join(c[-1] for c in fake_env.openshell_calls() if c[:2] == ["sandbox", "exec"])
     assert "base64 -d" not in scripts
