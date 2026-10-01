@@ -13,7 +13,10 @@
       "command": "node",
       "args": [
         "${PLUGIN_ROOT}/mcp/brave-probe.mjs"
-      ]
+      ],
+      "env": {
+        "BRAVE_API_KEY": "${BRAVE_API_KEY}"
+      }
     }
   }
 }
