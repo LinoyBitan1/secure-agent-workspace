@@ -1940,6 +1940,7 @@ class ProfileApplier:
         self.harness_info = {}        # (workspace, sandbox) -> describe_harness_tree()
         self.harness_volumes = set()  # volumes this apply wants to keep
         self.harness_digests = {}     # volume -> trusted tree digest, this apply
+        self.sandbox_failures = []    # "sandbox '<name>': <error>" kept for the raise at end
         for workspace in creds.values():
             for value in workspace.values():
                 shell.add_secret(value)
@@ -2664,11 +2665,22 @@ class ProfileApplier:
                     self.apply_provider(ws, provider)
             for sb in ws.sandboxes:
                 if sb.enabled:
-                    self.apply_sandbox(ws, sb)
+                    try:
+                        self.apply_sandbox(ws, sb)
+                    except InstallerError as exc:
+                        log(f"ERROR: sandbox '{sb.name}': {exc}")
+                        self.sandbox_failures.append(f"sandbox '{sb.name}': {exc}")
+                    except Exception as exc:
+                        log(f"ERROR: sandbox '{sb.name}': {exc}")
+                        self.sandbox_failures.append(f"sandbox '{sb.name}': {exc}")
                 else:
                     log(f"Sandbox '{sb.name}' disabled, skipping")
         self.finish_prune()
         self.cleanup_harness_volumes()
+        if self.sandbox_failures:
+            raise InstallerError(
+                f"{len(self.sandbox_failures)} sandbox(es) failed to apply:\n" +
+                "\n".join(self.sandbox_failures))
 
     def finish_prune(self):
         if self.ledger is None or self.prune_mode == "off":
@@ -3228,15 +3240,25 @@ def apply_plan(data, dry_run):
     shell = Shell(dry_run=dry_run)
     applier = ProfileApplier(shell, cfg, data["credentials"], data.get("providerProfiles"),
                              harness_from_plan(data))
+    apply_error = None
     if not list(enabled_workspaces(profiles)):
         log("No enabled workspaces in the SAW-BOM profiles; only the gateway entry is configured")
         applier.register_gateway()
     else:
-        applier.apply(profiles)
-    setup_dashboard(shell, cfg, data["dashboardScript"], os.environ.get("HOME", "~"))
+        try:
+            applier.apply(profiles)
+        except InstallerError as exc:
+            # Partial apply still reaches verify so successful siblings are checked.
+            apply_error = exc
     if dry_run:
+        if apply_error:
+            raise apply_error
         return 0
+    if apply_error is None:
+        setup_dashboard(shell, cfg, data["dashboardScript"], os.environ.get("HOME", "~"))
     failures = applier.verify(profiles)
+    if apply_error:
+        raise apply_error
     if failures:
         raise InstallerError(f"verification failed: {len(failures)} problem(s)")
     return 0
