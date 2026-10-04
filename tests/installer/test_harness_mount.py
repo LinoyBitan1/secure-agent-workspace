@@ -492,6 +492,17 @@ def test_dry_run_still_refuses_bad_governance(ab, fake_env, config, profiles, cr
     assert not (fake_env.state / "volumes" / volume_name(ab)).exists()
 
 
+def test_dry_run_still_refuses_an_unsigned_image(ab, fake_env, config, profiles, creds):
+    """The cosign check runs under --dry-run too (force), before any pull."""
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    (fake_env.state / "unsigned.json").write_text(json.dumps([IMAGE_V1]))
+    applier = ab.ProfileApplier(ab.Shell(dry_run=True), config, creds)
+    with pytest.raises(ab.InstallerError, match="is not signed by"):
+        applier.apply(use_ref(profiles, {"image": IMAGE_V1}))
+    assert not notebook_creates(fake_env)
+    assert not (fake_env.state / "volumes" / volume_name(ab) / "harness.yaml").exists()
+
+
 def test_a_governed_item_needs_a_provider_of_its_type(ab, fake_env, config, profiles, creds):
     """Without a provider of that type, neither the profile's endpoints nor
     its key reach the sandbox."""
