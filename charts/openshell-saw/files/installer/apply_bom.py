@@ -1805,14 +1805,24 @@ class HarnessVolume:
         except (OSError, ValueError):
             return {}
 
-    def current(self, mountpoint, source):
+    def current(self, mountpoint, source, expected_digest):
         """(tree, marker) if the volume holds exactly `source`, intact; else
-        (None, marker)."""
+        (None, marker).
+
+        `expected_digest` comes from outside the volume (ConfigMap digest for
+        an inline bundle, installer ledger for an image). The marker's own
+        treeDigest is not trusted: a workspace user who can mount the volume
+        writable could edit the tree, recompute the digest and rewrite the
+        marker to match.
+        """
         marker = self.marker(mountpoint)
         if marker.get("source") != source:
             return None, marker
+        if expected_digest is None:
+            # No trusted digest yet (image bundle, no ledger): refill.
+            return None, marker
         tree = read_volume_tree(mountpoint)
-        if harness_tree_digest(tree) != marker.get("treeDigest"):
+        if harness_tree_digest(tree) != expected_digest:
             return None, marker
         return tree, marker
 
@@ -1835,9 +1845,9 @@ class HarnessVolume:
             self._podman("volume", "import", volume, str(tarball))
         return marker
 
-    def verify(self, volume, workspace, source):
+    def verify(self, volume, workspace, source, expected_digest):
         """Failures (list of text) unless the volume is admitted and holds
-        `source` intact."""
+        `source` intact against `expected_digest`."""
         if self.sh.dry_run:
             return []
         info = self.inspect(volume)
@@ -1845,7 +1855,8 @@ class HarnessVolume:
             return [f"volume {volume} does not exist"]
         if not self.admitted(info, workspace):
             return [f"volume {volume} lacks the openshell.ai/sandbox-attachable labels"]
-        tree, marker = self.current(Path(info.get("Mountpoint") or ""), source)
+        tree, marker = self.current(
+            Path(info.get("Mountpoint") or ""), source, expected_digest)
         if tree is None:
             if marker.get("source") and marker.get("source") != source:
                 return [f"volume {volume} holds {marker['source']}, not {source}"]
@@ -1872,6 +1883,7 @@ class ProfileApplier:
         self.catalogs = {}            # workspace -> {profile id: endpoint hosts}
         self.harness_info = {}        # (workspace, sandbox) -> describe_harness_tree()
         self.harness_volumes = set()  # volumes this apply wants to keep
+        self.harness_digests = {}     # volume -> trusted tree digest, this apply
         for workspace in creds.values():
             for value in workspace.values():
                 shell.add_secret(value)
@@ -2204,6 +2216,21 @@ class ProfileApplier:
                         f"allow (allowed: {allowed}); refusing to fill the harness of "
                         f"sandbox '{sb.name}'")
 
+    def expected_harness_digest(self, volume, bundle):
+        """Trusted tree digest for `volume`, or None when none is known yet.
+
+        Inline: the ConfigMap digest. Image: this apply's confirmed digest,
+        else the ledger entry written after a previous fill. No ledger and
+        no in-apply confirmation means the volume is always refilled.
+        """
+        if bundle is not None:
+            return bundle.digest
+        if volume in self.harness_digests:
+            return self.harness_digests[volume]
+        if self.ledger is None:
+            return None
+        return self.ledger.data.get("harness", {}).get(volume, {}).get("treeDigest")
+
     def prepare_harness(self, ws, sb):
         """Check the sandbox's harness and fill its volume.
 
@@ -2221,9 +2248,11 @@ class ProfileApplier:
             log(f"Harness {source} for sandbox '{sb.name}' in volume {volume} (dry run)")
             return None
         mountpoint = self.volumes.ensure(volume, ws.name)
+        expected_digest = self.expected_harness_digest(volume, bundle)
         # None: the volume predates its admission labels, which cannot be
         # added later; it is replaced below, after governance passed.
-        tree = self.volumes.current(mountpoint, source)[0] if mountpoint else None
+        tree = (self.volumes.current(mountpoint, source, expected_digest)[0]
+                if mountpoint else None)
         current = tree is not None
         if current:
             log(f"Harness volume {volume} already holds {source}")
@@ -2232,6 +2261,10 @@ class ProfileApplier:
             tree = self.image_tree(source)
         else:
             tree = {rel: (base64.b64decode(b64), False) for rel, b64 in bundle.files.items()}
+        if bundle is None:
+            # Confirmed for this apply so verify can trust it even with no ledger.
+            self.harness_digests[volume] = (
+                expected_digest if current else harness_tree_digest(tree))
         info = describe_harness_tree(tree, inline=bundle is not None)
         if info["agent"] != "openclaw":
             raise InstallerError(f"harness {source} is for agent '{info['agent']}', "
@@ -2246,7 +2279,11 @@ class ProfileApplier:
             if mountpoint is None:
                 raise InstallerError(f"podman created volume {volume} without its labels")
         if not current:
-            self.volumes.fill(volume, mountpoint, source, tree)
+            marker = self.volumes.fill(volume, mountpoint, source, tree)
+            if bundle is None and self.ledger is not None:
+                self.ledger.data.setdefault("harness", {})[volume] = {
+                    "source": source, "treeDigest": marker["treeDigest"]}
+                self.ledger.save()
             log(f"Harness volume {volume} filled from {source}")
         self.harness_info[(ws.name, sb.name)] = info
         return info
@@ -2454,14 +2491,15 @@ class ProfileApplier:
         (the marker file, which names the source and tree digest)."""
         if self.sh.dry_run:
             return []
-        source, _ = self.harness_source(sb)
+        source, bundle = self.harness_source(sb)
         if source is None:
             if not self.harness_mount_ok(ws, sb):
                 return [f"{HARNESS_MOUNT} is still mounted although the sandbox has no "
                         "harnessRef; the next apply recreates the sandbox"]
             return []
         volume = harness_volume_name(ws.name, sb.name)
-        failures = self.volumes.verify(volume, ws.name, source)
+        expected_digest = self.expected_harness_digest(volume, bundle)
+        failures = self.volumes.verify(volume, ws.name, source, expected_digest)
         if failures:
             return failures
         if not self.harness_mount_ok(ws, sb):

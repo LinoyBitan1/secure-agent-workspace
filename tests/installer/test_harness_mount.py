@@ -113,21 +113,26 @@ def test_the_volume_carries_the_admission_labels(ab, fake_env, config, profiles,
         "saw.redhat.com/harness-volume": "true"}
 
 
-def test_an_unchanged_image_is_not_pulled_again(ab, fake_env, config, profiles, creds):
-    """The volume already holds it intact, so it is read from there."""
+def test_an_unchanged_image_is_not_pulled_again(
+        ab, fake_env, config, profiles, creds, tmp_path):
+    """Across applies the ledger holds the tree digest, so the volume is
+    trusted without another pull/export. Without a ledger every apply refills."""
     fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    cfg = {**config, "prune": {"mode": "off", "ledgerPath": str(tmp_path / "ledger.json")}}
     use_ref(profiles, {"image": IMAGE_V1})
-    make_applier(ab, config, creds).apply(profiles)
-    make_applier(ab, config, creds).apply(profiles)
+    make_applier(ab, cfg, creds).apply(profiles)
+    make_applier(ab, cfg, creds).apply(profiles)
     assert sum(op[:1] == ["pull"] and op[-1] == IMAGE_V1 for op in podman_ops(fake_env)) == 1
     assert sum(op[:1] == ["export"] for op in podman_ops(fake_env)) == 1
 
 
-def test_an_unchanged_image_keeps_the_sandbox(ab, fake_env, config, profiles, creds):
+def test_an_unchanged_image_keeps_the_sandbox(
+        ab, fake_env, config, profiles, creds, tmp_path):
     fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    cfg = {**config, "prune": {"mode": "off", "ledgerPath": str(tmp_path / "ledger.json")}}
     use_ref(profiles, {"image": IMAGE_V1})
-    make_applier(ab, config, creds).apply(profiles)
-    make_applier(ab, config, creds).apply(profiles)
+    make_applier(ab, cfg, creds).apply(profiles)
+    make_applier(ab, cfg, creds).apply(profiles)
     assert len(notebook_creates(fake_env)) == 1
     assert not notebook_deletes(fake_env)
 
@@ -250,6 +255,24 @@ def test_a_tampered_inline_volume_is_reported_and_refilled(ab, fake_env, config,
     applier.apply(profiles)
     assert skill.read_text() == V1["skills/demo/SKILL.md"]
     assert applier.verify(profiles) == []
+
+
+def test_an_inline_forged_marker_does_not_pass_verify(ab, fake_env, config, profiles, creds):
+    """Rewriting the tree and the in-volume marker together must still fail:
+    the ConfigMap digest is the trust anchor, not the marker."""
+    use_ref(profiles, {"name": "demo"})
+    harness = _inline(ab, "demo", V1)
+    make_applier(ab, config, creds, harness=harness).apply(profiles)
+    volume = fake_env.state / "volumes" / volume_name(ab)
+    (volume / "skills/demo/SKILL.md").write_text("forged")
+    tree = ab.read_volume_tree(volume)
+    (volume / ab.HARNESS_MARKER).write_text(json.dumps({
+        "source": f"bundle:demo@{harness['bundles']['demo'].digest}",
+        "treeDigest": ab.harness_tree_digest(tree)}))
+    applier = make_applier(ab, config, creds, harness=harness)
+    assert applier.verify(profiles), "forged marker must not satisfy verify"
+    applier.apply(profiles)
+    assert (volume / "skills/demo/SKILL.md").read_text() == V1["skills/demo/SKILL.md"]
 
 
 # -- stdio secrets from image bundles: refused at describe time --------------------
