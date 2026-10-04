@@ -671,12 +671,11 @@ def describe_harness_tree(files, inline=False):
       skills               the bundle has skills/
       agentPluginsBundle   plugin.json at the root (OpenClaw loads skills/ and
                            mcp.json from the bundle root)
-      mcp                  the bundle has mcp.json
-      mcpServers           sorted mcp.json server names (for verify)
-      pluginDirs           native plugins under plugins/
-      governance           [{kind, name, governanceProfile, hosts}] to check
-                           against the gateway's catalog and the sandbox's
-                           providers
+       mcp                  the bundle has mcp.json
+       pluginDirs           native plugins under plugins/
+       governance           [{kind, name, governanceProfile, hosts}] to check
+                            against the gateway's catalog and the sandbox's
+                            providers
 
     Keys never travel in a bundle. A plugin or MCP server that calls a
     service names the provider profile (governanceProfile) that governs it;
@@ -719,13 +718,11 @@ def describe_harness_tree(files, inline=False):
                 "key the server needs and give the sandbox a provider of that type: the server "
                 "reads a placeholder from the provider's env var (for example BRAVE_API_KEY) "
                 "and the sandbox's egress proxy adds the real key")
-    mcp_servers = []
     if "mcp.json" in files:
         try:
             servers = json.loads(files["mcp.json"][0]).get("mcpServers") or {}
         except ValueError as exc:
             raise InstallerError(f"harness '{name}': mcp.json is not valid JSON ({exc})") from None
-        mcp_servers = sorted(servers)
         for server, conf in sorted(servers.items()):
             if not isinstance(conf, dict) or conf.get("type") not in ("stdio", "streamable-http", "sse"):
                 raise InstallerError(
@@ -772,7 +769,6 @@ def describe_harness_tree(files, inline=False):
         "skills": any(rel.startswith("skills/") for rel in files),
         "agentPluginsBundle": "plugin.json" in files,
         "mcp": "mcp.json" in files,
-        "mcpServers": mcp_servers,
         "pluginDirs": plugin_dirs,
         "governance": governance,
     }
@@ -2625,24 +2621,48 @@ class ProfileApplier:
         if info is None:
             return []
         exec_cmd = ["sandbox", "exec", "-n", sb.name, *ws_args(ws.name), "--no-tty", "--"]
-        listed = lambda out: {line.strip() for line in (out or "").splitlines() if line.strip()}
-        if info["mcpServers"]:
-            mcp_list = self.cli(*exec_cmd, "sh", "-c", f"{OPENCLAW_EXEC_ENV} openclaw mcp list",
-                                check=False, quiet=True)
-            if not mcp_list.ok:
-                return [f"could not list OpenClaw MCP servers for sandbox '{sb.name}'"]
-            missing = [s for s in info["mcpServers"] if s not in listed(mcp_list.out)]
-            if missing:
-                return [f"OpenClaw does not list MCP server(s) {', '.join(missing)} from {source}"]
-        if info["pluginDirs"]:
-            plugin_list = self.cli(*exec_cmd, "sh", "-c",
-                                   f"{OPENCLAW_EXEC_ENV} openclaw plugins list",
-                                   check=False, quiet=True)
-            if not plugin_list.ok:
-                return [f"could not list OpenClaw plugins for sandbox '{sb.name}'"]
-            missing = [p for p in info["pluginDirs"] if p not in listed(plugin_list.out)]
-            if missing:
-                return [f"OpenClaw does not list plugin(s) {', '.join(missing)} from {source}"]
+        # `mcp list` never shows bundle servers; verify the bundle row of
+        # `plugins list --json` instead (mount row loaded, caps when present,
+        # native ids enabled).
+        plugin_json = self.cli(*exec_cmd, "sh", "-c",
+                               f"{OPENCLAW_EXEC_ENV} openclaw plugins list --json",
+                               check=False, quiet=True)
+        if not plugin_json.ok:
+            return [f"could not list OpenClaw plugins for sandbox '{sb.name}'"]
+        try:
+            parsed = json.loads(plugin_json.out)
+            rows = [p for p in (parsed.get("plugins") or []) if isinstance(p, dict)]
+        except (ValueError, AttributeError, TypeError):
+            return [f"could not parse `openclaw plugins list --json` for sandbox '{sb.name}'"]
+        by_id = {p.get("id") or p.get("name"): p for p in rows}
+        # Match the mount row first: a stock plugin could reuse the bundle name.
+        # rootDir only: Source may be an origin string ($OPENCLAW_HOME/...),
+        # not a path.
+        bundle = next((p for p in rows
+                       if p.get("format") == "bundle" and p.get("rootDir") == HARNESS_MOUNT),
+                      None)
+        if bundle is None:
+            bundle = by_id.get(info["name"])
+        if (not isinstance(bundle, dict) or not bundle.get("enabled")
+                or bundle.get("status") != "loaded"):
+            return [f"OpenClaw does not load the harness bundle '{info['name']}' "
+                    f"from {HARNESS_MOUNT} ({source})"]
+        caps = bundle.get("bundleCapabilities") or []
+        if caps:
+            need_caps = set()
+            if info["mcp"]:
+                need_caps.add("mcpServers")
+            if info["skills"]:
+                need_caps.add("skills")
+            missing_caps = sorted(need_caps - set(caps))
+            if missing_caps:
+                return [f"OpenClaw bundle '{info['name']}' lacks capability(ies) "
+                        f"{', '.join(missing_caps)} from {source}"]
+        missing = [p for p in info["pluginDirs"]
+                   if not by_id.get(p, {}).get("enabled", False)]
+        if missing:
+            return [f"OpenClaw does not list enabled plugin(s) {', '.join(missing)} "
+                    f"from {source}"]
         desired = openclaw_harness_config(info)
         for key in HARNESS_CONFIG_KEYS:
             got = self.cli(*exec_cmd, "sh", "-c",
