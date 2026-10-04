@@ -1,0 +1,26 @@
+#!/usr/bin/env python3
+"""Fake cosign for installer tests. Logs argv to cosign.log.
+
+`verify` succeeds unless the image is listed in unsigned.json (same fixture
+the fake podman uses for signature-policy pulls).
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+state = Path(os.environ["FAKE_STATE"])
+args = sys.argv[1:]
+with open(state / "cosign.log", "a") as log:
+    log.write(json.dumps(args) + "\n")
+
+if not args or args[0] != "verify":
+    print(f"fake cosign: unsupported {args}", file=sys.stderr)
+    sys.exit(2)
+
+image = args[-1]
+unsigned = json.loads((state / "unsigned.json").read_text()) if (state / "unsigned.json").exists() else []
+if image in unsigned:
+    print(f"Error: no matching signatures: {image}", file=sys.stderr)
+    sys.exit(1)
+print(json.dumps([{"critical": {"identity": {"docker-reference": image}}}]))

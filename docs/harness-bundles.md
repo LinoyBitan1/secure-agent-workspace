@@ -156,10 +156,13 @@ harnessRef:
 ```
 
 The image is `FROM scratch` with the bundle tree at its root. The installer
-pulls it by digest and unpacks it into the volume, keeping file modes, so a
-stdio server can run a script from the bundle directly. The digest in
-`harnessRef` is the trust anchor: the installer does not check the cosign
-signature CI adds.
+pulls it by digest, verifies the cosign signature against
+`harness.cosign.identity` / `issuer` (the keyless GitHub Actions identity of
+`.github/workflows/harness-bundles.yml`), then unpacks it into the volume,
+keeping file modes, so a stdio server can run a script from the bundle
+directly. A missing or wrong signature refuses the apply before anything is
+mounted. Inline ConfigMap bundles skip this check. The digest in
+`harnessRef` is still the pin; cosign proves that pin was signed by CI.
 
 `.github/workflows/harness-bundles.yml` builds every `harness-bundles/<bundle>/`,
 pushes `ghcr.io/<owner>/saw-harness-<bundle>:<version>` on `main`, signs the
@@ -215,22 +218,25 @@ For each sandbox with a `harnessRef`:
    enforced at runtime by the sandbox proxy. Nothing is written before this
    passes.
 3. **Fill the volume** if its content differs.
-4. **Mount:** create the sandbox with the volume at `/sandbox/harness`. A
-   running sandbox that does not mount its volume (created before its
-   `harnessRef`), or that still mounts a harness it no longer has, is
-   recreated; anything the agent wrote outside `/sandbox/persist` or other
+4. **Mount:** create the sandbox with the volume at `/sandbox/harness`
+   **read-only**. A running sandbox that does not mount its volume, still
+   mounts a harness it no longer has, or mounts it writable, is recreated;
+   anything the agent wrote outside `/sandbox/persist` or other
    data volumes is lost, as with a pod restart.
 5. **Configure OpenClaw:** `plugins.load.paths` gets `/sandbox/harness`
    (skills and MCP servers) and `/sandbox/harness/plugins` (every tool
    plugin). A bundle without `plugin.json` uses `skills.load.extraDirs`.
-6. **Verify:** the volume holds the source intact, the container mounts it,
-   and the sandbox reads the same content through it. `status.json` records
-   the source as `appliedRevision`.
+   Re-apply re-sets these keys; verify fails if they drifted.
+6. **Verify:** the volume holds the source intact, the container mounts it
+   read-only, OpenClaw lists the MCP servers/plugins and the config keys
+   match, and the sandbox reads the same content through it. `status.json`
+   records the source as `appliedRevision`.
 7. **Clean up** harness volumes no enabled sandbox wants (a volume still
    mounted by a sandbox stays until that sandbox is gone).
 
-`--dry-run` still reads the bundle (inline ConfigMap or image export) and
-runs the governance check; it only skips volume writes and sandbox changes.
+`--dry-run` still reads the bundle (inline ConfigMap or image export),
+verifies a harness image's cosign signature, and runs the governance check;
+it only skips volume writes and sandbox changes.
 A bundle that would fail a real apply must fail dry-run too.
 
 ### Installer details
@@ -243,7 +249,8 @@ Volume: one per sandbox, `saw-harness-<ws>-<sb>-<hash>`, labelled
 `openshell.ai/sandbox-attachable=true` and
 `openshell.ai/sandbox-attachable-workspace=<ws>`. Content change wipes then
 `podman volume import`s the tree plus `.saw-harness-revision`
-(`source`, `treeDigest`). Image trees keep executable bits; links, devices
+(`source`, `treeDigest`). A failed import restores the previous tree.
+Image trees keep executable bits; links, devices
 and `..` paths are refused. Integrity digests come from the ConfigMap or
 ledger, not the in-volume marker alone.
 
@@ -268,11 +275,16 @@ OpenClaw config (values only, never bundle bytes through `exec`):
 
 ### Security properties
 
-- Mount is read-only; a writable re-attach is repaired on the next apply when
-  the tree digest changes.
+- The intended mount is read-only. A writable remount is not prevented at
+  create time when `allowDriverConfig` is on; the next apply **detects** it
+  and recreates the sandbox. That is remediation, not hard immutability.
+  Stronger drift protection comes from the combination: RO by default,
+  recreate on RW, tree-digest / config verify on drift, and re-setting
+  OpenClaw harness config on every apply.
 - Caller driver config can attach only volumes labelled for that workspace
   (admission on, bind mounts off).
-- OCI pin is the digest in `harnessRef` (installer does not verify cosign yet).
+- OCI pin is the digest in `harnessRef`; the installer verifies CI's cosign
+  signature (`harness.cosign`) before using the image.
 - Governance uses the gateway's live catalog and requires a matching provider
   on the sandbox; keys never enter the sandbox (providers + egress proxy only).
 - `npx`-style servers fetch code at run time, outside the digest — vendor

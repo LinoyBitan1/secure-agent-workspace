@@ -769,6 +769,8 @@ def test_live_inputs_use_virtiofs_and_drop_the_installer_checksum():
 def test_signing_mode_defaults_to_warn(default_docs):
     config = json.loads(installer_data(default_docs)["config.json"])
     assert config["signing"]["mode"] == "warn"
+    assert config["harness"]["cosign"]["identity"] == ""
+    assert config["harness"]["cosign"]["issuer"] == "https://token.actions.githubusercontent.com"
     assert config["prune"]["mode"] == "report"
     assert config["prune"]["sandboxes"] is False
     assert "bundle.sigstore.json" not in installer_data(default_docs)

@@ -218,7 +218,10 @@ def config():
     return {"vmName": "saw-test", "namespace": "openshell-agents",
             "runtimeUser": "cloud-user", "mtlsGateway": "saw-installer",
             "ownerSubject": "", "oidcIssuer": "", "sandboxDashboardRoute": "",
-            "dashboard": {"enabled": False}}
+            "dashboard": {"enabled": False},
+            "harness": {"cosign": {
+                "identity": "https://github.com/example/saw/.github/workflows/harness-bundles.yml@refs/heads/main",
+                "issuer": "https://token.actions.githubusercontent.com"}}}
 
 
 @pytest.fixture

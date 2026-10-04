@@ -110,6 +110,14 @@ signing:
   identity: ""
   issuer: ""
 
+# Cosign check for harnessRef.image (keyless, same OIDC identity as
+# .github/workflows/harness-bundles.yml). Empty identity/issuer refuses
+# image-sourced harnesses. Inline ConfigMap bundles skip this.
+harness:
+  cosign:
+    identity: ""
+    issuer: "https://token.actions.githubusercontent.com"
+
 # Dropping an object from a SAW-BOM profile. report only logs what would be
 # deleted. on deletes it. Sandboxes are kept unless sandboxes is true, because
 # they hold user work. This is not pruneOnRemove (that deletes a user's VM).

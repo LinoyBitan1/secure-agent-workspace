@@ -101,7 +101,31 @@ def test_an_image_is_unpacked_into_a_volume_not_mounted(ab, fake_env, config, pr
     assert (volume / "skills/demo/SKILL.md").read_text() == V1["skills/demo/SKILL.md"]
     assert (volume / "bin/run.sh").stat().st_mode & 0o111, "an image keeps file modes"
     assert ["pull", "--quiet", IMAGE_V1] in podman_ops(fake_env)
+    cosign = [json.loads(line) for line in (fake_env.state / "cosign.log").read_text().splitlines()]
+    assert ["verify", "--certificate-identity",
+            config["harness"]["cosign"]["identity"],
+            "--certificate-oidc-issuer", config["harness"]["cosign"]["issuer"],
+            IMAGE_V1] in cosign
     assert applier.verify(profiles) == []
+
+
+def test_an_unsigned_harness_image_is_refused_before_fill(
+        ab, fake_env, config, profiles, creds):
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    (fake_env.state / "unsigned.json").write_text(json.dumps([IMAGE_V1]))
+    with pytest.raises(ab.InstallerError, match="is not signed by"):
+        make_applier(ab, config, creds).apply(use_ref(profiles, {"image": IMAGE_V1}))
+    assert not (fake_env.state / "volumes" / volume_name(ab) / "harness.yaml").exists()
+    assert not notebook_creates(fake_env)
+
+
+def test_a_harness_image_without_cosign_identity_is_refused(
+        ab, fake_env, config, profiles, creds):
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    cfg = {**config, "harness": {"cosign": {"identity": "", "issuer": ""}}}
+    with pytest.raises(ab.InstallerError, match="no cosign identity"):
+        make_applier(ab, cfg, creds).apply(use_ref(profiles, {"image": IMAGE_V1}))
+    assert not notebook_creates(fake_env)
 
 
 def test_the_volume_carries_the_admission_labels(ab, fake_env, config, profiles, creds):
@@ -350,6 +374,17 @@ def test_dry_run_still_refuses_bad_governance(ab, fake_env, config, profiles, cr
         applier.apply(use_ref(profiles, {"image": IMAGE_V1}))
     assert not notebook_creates(fake_env)
     assert not (fake_env.state / "volumes" / volume_name(ab)).exists()
+
+
+def test_dry_run_still_refuses_an_unsigned_image(ab, fake_env, config, profiles, creds):
+    """The cosign check runs under --dry-run too (force), before any pull."""
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    (fake_env.state / "unsigned.json").write_text(json.dumps([IMAGE_V1]))
+    applier = ab.ProfileApplier(ab.Shell(dry_run=True), config, creds)
+    with pytest.raises(ab.InstallerError, match="is not signed by"):
+        applier.apply(use_ref(profiles, {"image": IMAGE_V1}))
+    assert not notebook_creates(fake_env)
+    assert not (fake_env.state / "volumes" / volume_name(ab) / "harness.yaml").exists()
 
 
 def test_a_governed_item_needs_a_provider_of_its_type(ab, fake_env, config, profiles, creds):
