@@ -2154,6 +2154,25 @@ class ProfileApplier:
     def _podman(self, *args, **kw):
         return self.sh.run(["podman", *args], **kw)
 
+    def verify_harness_image(self, image):
+        """Fail closed unless `image` is signed by cfg harness.cosign.
+
+        Digest pin is not enough: anyone with registry write can push that
+        digest. CI already signs with cosign; this is the check at pull.
+        """
+        sig = (self.cfg.get("harness") or {}).get("cosign") or {}
+        identity, issuer = sig.get("identity") or "", sig.get("issuer") or ""
+        if not identity or not issuer:
+            raise InstallerError(
+                f"harness image {image} has no cosign identity/issuer configured; "
+                "refusing to use it")
+        result = self.sh.run(
+            ["cosign", "verify", "--certificate-identity", identity,
+             "--certificate-oidc-issuer", issuer, image],
+            check=False, quiet=True, force=True, timeout=120)
+        if not result.ok:
+            raise InstallerError(f"harness image {image} is not signed by {identity}")
+
     def image_tree(self, image):
         """The bundle tree of a harness image (with file modes). Pulled by
         digest when it is not present yet.
@@ -2161,6 +2180,7 @@ class ProfileApplier:
         Runs even under --dry-run (force): dry-run must refuse a bad image the
         same way a real apply would, before it claims success.
         """
+        self.verify_harness_image(image)
         if not self._podman("image", "exists", image, check=False, quiet=True, force=True).ok:
             self._podman("pull", "--quiet", image, timeout=900, force=True)
         created = self._podman("create", image, "/harness.yaml", force=True)

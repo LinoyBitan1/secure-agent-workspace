@@ -48,6 +48,9 @@ changes here reach an existing VM after a restart (unlike cloud-init).
           "redirectUrl" $redirectUrl
           "insecureSkipTlsVerify" (.Values.dashboard.insecureSkipIssuerTlsVerify | default false))
       "signing" (dict "mode" $signMode "trustKeys" $trustKeys "identity" $signIdentity "issuer" $signIssuer)
+      "harness" (dict "cosign" (dict
+          "identity" (.Values.harness.cosign.identity | default "")
+          "issuer" (.Values.harness.cosign.issuer | default "https://token.actions.githubusercontent.com")))
       "prune" (dict "mode" $pruneMode "sandboxes" (.Values.prune.sandboxes | default false))
       "secrets" (include "openshell-sandbox.providerSecrets" . | fromJsonArray) }}
 apiVersion: v1
