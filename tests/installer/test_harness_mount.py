@@ -433,6 +433,19 @@ def test_relabelling_checks_governance_before_deleting_the_sandbox(
     assert not notebook_deletes(fake_env), "a refused bundle must not cost the sandbox"
 
 
+def test_a_harness_failure_does_not_stop_other_sandboxes_or_cleanup(
+        ab, fake_env, config, profiles, creds):
+    """A failed sandbox must not abort the whole apply: siblings, prune and
+    harness-volume cleanup still run; the apply still fails overall."""
+    use_ref(profiles, {"name": "unknown-bundle"})
+    applier = make_applier(ab, config, creds)
+    with pytest.raises(ab.InstallerError, match="unknown-bundle"):
+        applier.apply(profiles)
+    state = fake_env.openshell_state()
+    assert "default/notebook" not in state["sandboxes"], "the broken sandbox is not created"
+    assert "cuda-dev/cuda-sandbox" in state["sandboxes"], "a sibling sandbox still applies"
+
+
 def test_a_harness_needs_driver_config_allowed(ab, tmp_path):
     toml = tmp_path / "gateway.toml"
     toml.write_text('[openshell.drivers.podman]\nsupervisor_image = "x"\n')
