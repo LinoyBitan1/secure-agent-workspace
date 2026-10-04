@@ -149,7 +149,8 @@ elif cmd == "inspect":
         else:
             mounts.append({"Type": "volume", "Name": m["source"],
                            "Source": str(state / "volumes" / m["source"] / "_data"),
-                           "Destination": m["target"], "RW": False})
+                           "Destination": m["target"],
+                           "RW": not m.get("read_only", True)})
     print(json.dumps(mounts))
 elif cmd == "volume":
     # Named volumes as real directories under volumes/<name>; their labels

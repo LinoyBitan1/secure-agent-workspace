@@ -128,6 +128,32 @@ def test_a_harness_image_without_cosign_identity_is_refused(
     assert not notebook_creates(fake_env)
 
 
+def test_a_writable_harness_mount_recreates_the_sandbox(
+        ab, fake_env, config, profiles, creds):
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    use_ref(profiles, {"image": IMAGE_V1})
+    make_applier(ab, config, creds).apply(profiles)
+    state = fake_env.openshell_state()
+    state["sandboxes"]["default/notebook"]["driverConfig"]["podman"]["mounts"][0]["read_only"] = False
+    fake_env.set_openshell_state(state)
+    make_applier(ab, config, creds).apply(profiles)
+    assert notebook_deletes(fake_env)
+    assert notebook(fake_env)["driverConfig"]["podman"]["mounts"][0]["read_only"] is True
+
+
+def test_drifted_openclaw_harness_config_fails_verify(
+        ab, fake_env, config, profiles, creds):
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    use_ref(profiles, {"image": IMAGE_V1})
+    applier = make_applier(ab, config, creds)
+    applier.apply(profiles)
+    assert applier.verify(profiles) == []
+    state = fake_env.openshell_state()
+    state["sandboxes"]["default/notebook"]["openclawConfig"]["plugins.load.paths"] = ["/tmp/evil"]
+    fake_env.set_openshell_state(state)
+    assert any("plugins.load.paths" in f for f in applier.verify(profiles))
+
+
 def test_the_volume_carries_the_admission_labels(ab, fake_env, config, profiles, creds):
     fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
     make_applier(ab, config, creds).apply(use_ref(profiles, {"image": IMAGE_V1}))

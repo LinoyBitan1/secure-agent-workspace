@@ -2196,7 +2196,7 @@ class ProfileApplier:
             return read_harness_tar(exported)
 
     def sandbox_harness_mount(self, ws, sb):
-        """(type, source) of what the sandbox's container mounts at
+        """(type, source, writable) of what the sandbox's container mounts at
         HARNESS_MOUNT; None when it mounts nothing there; False when there
         is no container to look at.
 
@@ -2234,12 +2234,13 @@ class ProfileApplier:
             if mount.get("Destination") == HARNESS_MOUNT:
                 kind = (mount.get("Type") or "").lower()
                 source = mount.get("Name") if kind == "volume" else mount.get("Source")
-                return (kind, source or "")
+                # Missing RW: treat as writable (not OK).
+                return (kind, source or "", bool(mount.get("RW", True)))
         return None
 
     def harness_mount_ok(self, ws, sb):
-        """True when the sandbox mounts exactly its harness volume, or,
-        without a harnessRef, mounts nothing at HARNESS_MOUNT (a harness
+        """True when the sandbox mounts exactly its harness volume read-only,
+        or, without a harnessRef, mounts nothing at HARNESS_MOUNT (a harness
         that was removed must not stay mounted). A sandbox whose container
         cannot be found is left to the gateway."""
         seen = self.sandbox_harness_mount(ws, sb)
@@ -2248,7 +2249,7 @@ class ProfileApplier:
                 "not checking its harness mount")
             return True
         want = self.desired_harness_mount(ws, sb)
-        return seen == (("volume", want) if want else None)
+        return seen == (("volume", want, False) if want else None)
 
     def governance_catalog(self, ws):
         """{profile id: endpoint hosts} the gateway serves in the workspace
@@ -2416,6 +2417,10 @@ class ProfileApplier:
         elif state == "running":
             log(f"Sandbox '{sb.name}' already exists")
             self.attach_missing_providers(ws, sb)
+            if sb.harness_ref:
+                exec_cmd = ["sandbox", "exec", "-n", sb.name, *ws_args(ws.name),
+                            "--no-tty", "--"]
+                self.configure_harness(ws, sb, exec_cmd, OPENCLAW_EXEC_ENV)
             self.remember("sandbox", ws.name, sb.name)
             return
         if sb.image and ("/" in sb.image or ":" in sb.image):
@@ -2622,6 +2627,21 @@ class ProfileApplier:
             missing = [p for p in info["pluginDirs"] if p not in listed(plugin_list.out)]
             if missing:
                 return [f"OpenClaw does not list plugin(s) {', '.join(missing)} from {source}"]
+        desired = openclaw_harness_config(info)
+        for key in HARNESS_CONFIG_KEYS:
+            got = self.cli(*exec_cmd, "sh", "-c",
+                           f"{OPENCLAW_EXEC_ENV} openclaw config get {key}",
+                           check=False, quiet=True)
+            if key not in desired:
+                if got.ok and got.out.strip() and got.out.strip() not in ("null", "undefined"):
+                    return [f"OpenClaw still has {key} although the harness does not need it"]
+                continue
+            try:
+                seen = json.loads(got.out) if got.ok else None
+            except ValueError:
+                seen = None
+            if seen != desired[key]:
+                return [f"OpenClaw {key} does not match the harness ({got.out.strip() or 'unset'})"]
         return []
 
     def cleanup_harness_volumes(self):
