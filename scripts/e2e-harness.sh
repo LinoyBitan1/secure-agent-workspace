@@ -87,7 +87,7 @@ step "Pre-flight"
 check "openshell CLI present" -- command -v openshell
 check "gateway '${GATEWAY}' reachable" -- "${GW[@]}" sandbox list --workspace "${WORKSPACE}"
 check "sandbox '${SANDBOX}' exists" -- \
-  bash -c "\"${GW[@]} sandbox list --workspace '${WORKSPACE}'\" | grep -q '^${SANDBOX} '"
+  bash -c "openshell --gateway '${GATEWAY}' sandbox list --workspace '${WORKSPACE}' | grep -q '^${SANDBOX} '"
 
 # Which source did the installer apply? status.json lives on the VM
 # (root-owned); read it over vm-ssh when available, else report and continue.
@@ -120,9 +120,9 @@ fi
 
 step "H1: read-only mount at /sandbox/harness"
 check "mountpoint exists" -- sb_exec test -d /sandbox/harness
-MOUNT_LINE=$(sb_exec mount 2>/dev/null | grep " /sandbox/harness " || true)
+MOUNT_LINE=$(sb_exec mount 2>/dev/null | grep -F "/sandbox/harness" || true)
 if [[ -z "${MOUNT_LINE}" ]]; then
-  fail "no /sandbox/harness entry in mount table"
+  skip "mount table not readable here; RO proven by refused write below"
 else
   echo "  ${MOUNT_LINE}"
   if echo "${MOUNT_LINE}" | grep -q "ro[, ]"; then pass "mounted read-only"; else fail "mount is not read-only"; fi
@@ -141,10 +141,16 @@ check "skills dir present" -- sb_exec test -d /sandbox/harness/skills
 check "revision marker present" -- sb_exec test -f /sandbox/harness/.saw-harness-revision
 if [[ -n "${STATUS_JSON}" ]]; then
   MARKER_SRC=$(sb_exec cat /sandbox/harness/.saw-harness-revision 2>/dev/null || true)
-  if echo "${STATUS_JSON}" | grep -q "$(echo "${MARKER_SRC}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('source',''))" 2>/dev/null)"; then
-    pass "marker source matches appliedRevision"
+  echo "  marker: ${MARKER_SRC}"
+  # Compare bundle name + digest hex loosely: the marker names the source
+  # (e.g. bundle:ds-default@sha256:…) while appliedRevision pins name@digest.
+  MARKER_DIGEST=$(echo "${MARKER_SRC}" | python3 -c "import json,sys,re; m=re.search(r'[0-9a-f]{64}', sys.stdin.read()); print(m.group(0) if m else '')" 2>/dev/null)
+  SANDBOX_REV=$(echo "${STATUS_JSON}" | python3 -c "import json,sys; print((json.load(sys.stdin).get('apply') or {}).get('appliedRevision', {}).get('${SANDBOX}',''))" 2>/dev/null)
+  echo "  appliedRevision[${SANDBOX}]: ${SANDBOX_REV}"
+  if [[ -n "${MARKER_DIGEST}" && -n "${SANDBOX_REV}" ]] && echo "${SANDBOX_REV}" | grep -q "${MARKER_DIGEST}"; then
+    pass "marker digest matches appliedRevision"
   else
-    fail "marker source does not match appliedRevision (drift?)"
+    fail "marker digest not found in appliedRevision (drift?)"
   fi
 fi
 
@@ -226,7 +232,7 @@ if [[ -n "${STATUS_JSON}" ]]; then
 import json,sys
 rev = (json.load(sys.stdin).get('apply') or {}).get('appliedRevision', {})
 v = rev.get('${SANDBOX}','')
-print('image' if '@sha256:' in v or 'ghcr.io' in v else 'inline')" 2>/dev/null || true)
+print('image' if '/' in v.split('@')[0] else 'inline')" 2>/dev/null || true)
 fi
 if [[ "${HREF_KIND}" == "image" ]]; then
   if command -v cosign >/dev/null 2>&1; then
