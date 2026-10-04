@@ -259,7 +259,7 @@ def test_volume_tarball_is_root_owned_world_readable_and_round_trips(ab, tmp_pat
         assert members["skills/s/SKILL.md"].mode == 0o644
         assert members["mcp/server.sh"].mode == 0o755
         assert members["skills"].mode == 0o755
-        tar.extractall(tmp_path / "vol")
+        tar.extractall(tmp_path / "vol", filter="data")
     assert ab.read_volume_tree(tmp_path / "vol") == tree
 
 

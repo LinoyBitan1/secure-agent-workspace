@@ -291,6 +291,44 @@ def test_an_image_bundle_that_declares_a_credential_is_refused(
     assert not notebook_creates(fake_env)
 
 
+# -- path safety through image export / volume import ---------------------------------
+
+def test_image_export_path_escape_is_refused_before_fill(
+        ab, fake_env, config, profiles, creds):
+    """Fake export puts __tree__ keys on the tar as-is; read_harness_tar must
+    refuse .. members on the image_tree path (not only in unit tests)."""
+    fake_env.set_images({IMAGE_V1: {"__tree__": {**V1, "skills/../../outside": "x"}}})
+    with pytest.raises(ab.InstallerError, match="unsafe path"):
+        make_applier(ab, config, creds).apply(use_ref(profiles, {"image": IMAGE_V1}))
+    assert not (fake_env.state / "volumes" / volume_name(ab) / "harness.yaml").exists()
+
+
+def test_volume_import_refuses_a_path_escape(fake_env, tmp_path):
+    """Fake podman volume import uses tar filter='data', so a crafted escape
+    cannot land outside the volume directory."""
+    import io
+    import os
+    import subprocess
+    import tarfile
+    from pathlib import Path
+
+    vol = "saw-harness-escape-test"
+    (fake_env.state / "volumes" / vol).mkdir(parents=True)
+    tarball = tmp_path / "evil.tar"
+    with tarfile.open(tarball, "w") as tar:
+        data = b"pwned"
+        info = tarfile.TarInfo("../escaped")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    env = {**os.environ, "FAKE_STATE": str(fake_env.state), "PATH": os.environ["PATH"]}
+    fake = Path(__file__).resolve().parent / "fakes" / "podman"
+    result = subprocess.run(
+        [str(fake), "volume", "import", vol, str(tarball)],
+        env=env, capture_output=True, text=True, check=False)
+    assert result.returncode != 0
+    assert not (fake_env.state / "volumes" / "escaped").exists()
+
+
 # -- governance: checked before anything is filled ------------------------------------
 
 def test_an_unserved_governance_profile_stops_before_the_sandbox_is_created(
@@ -301,6 +339,17 @@ def test_an_unserved_governance_profile_stops_before_the_sandbox_is_created(
         make_applier(ab, config, creds).apply(use_ref(profiles, {"image": IMAGE_V1}))
     assert not notebook_creates(fake_env)
     assert not (fake_env.state / "volumes" / volume_name(ab) / "harness.yaml").exists()
+
+
+def test_dry_run_still_refuses_bad_governance(ab, fake_env, config, profiles, creds):
+    """--dry-run must not report success for a bundle real apply would refuse."""
+    tree = {**V1, "harness.yaml": manifest(plugins=[{"name": "old-tool", "governanceProfile": "nope"}])}
+    fake_env.set_images({IMAGE_V1: {"__tree__": tree}})
+    applier = ab.ProfileApplier(ab.Shell(dry_run=True), config, creds)
+    with pytest.raises(ab.InstallerError, match="'nope', which the gateway does not serve"):
+        applier.apply(use_ref(profiles, {"image": IMAGE_V1}))
+    assert not notebook_creates(fake_env)
+    assert not (fake_env.state / "volumes" / volume_name(ab)).exists()
 
 
 def test_a_governed_item_needs_a_provider_of_its_type(ab, fake_env, config, profiles, creds):
