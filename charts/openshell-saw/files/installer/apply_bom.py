@@ -187,9 +187,11 @@ class Shell:
         return text
 
     def run(self, cmd, env=None, check=True, ok_if_exists=False,
-            timeout=300, input_text=None, quiet=False):
+            timeout=300, input_text=None, quiet=False, force=False):
         display = self.mask(" ".join(str(c) for c in cmd))
-        if self.dry_run:
+        # force=True: still run read-only probes during --dry-run (catalog,
+        # image export) so governance cannot pass dry-run and fail apply.
+        if self.dry_run and not force:
             log(f"[dry-run] {display}")
             return Result(0)
         if not quiet:
@@ -2154,19 +2156,23 @@ class ProfileApplier:
 
     def image_tree(self, image):
         """The bundle tree of a harness image (with file modes). Pulled by
-        digest when it is not present yet."""
-        if not self._podman("image", "exists", image, check=False, quiet=True).ok:
-            self._podman("pull", "--quiet", image, timeout=900)
-        created = self._podman("create", image, "/harness.yaml")
+        digest when it is not present yet.
+
+        Runs even under --dry-run (force): dry-run must refuse a bad image the
+        same way a real apply would, before it claims success.
+        """
+        if not self._podman("image", "exists", image, check=False, quiet=True, force=True).ok:
+            self._podman("pull", "--quiet", image, timeout=900, force=True)
+        created = self._podman("create", image, "/harness.yaml", force=True)
         cid = created.out.strip().splitlines()[-1] if created.out.strip() else ""
         if not cid:
             raise InstallerError(f"podman create returned no container id for {image}")
         with tempfile.TemporaryDirectory(prefix="saw-harness-") as tmp:
             exported = Path(tmp) / "image.tar"
             try:
-                self._podman("export", "-o", str(exported), cid)
+                self._podman("export", "-o", str(exported), cid, force=True)
             finally:
-                self._podman("rm", "-f", cid, check=False, quiet=True)
+                self._podman("rm", "-f", cid, check=False, quiet=True, force=True)
             return read_harness_tar(exported)
 
     def sandbox_harness_mount(self, ws, sb):
@@ -2231,8 +2237,9 @@ class ProfileApplier:
         0.1.x `provider list-profiles` lists one workspace's catalog, so it
         is read, and cached, per workspace."""
         if ws.name not in self.catalogs:
+            # force: dry-run must still see the live catalog (see prepare_harness).
             listed = self.cli("provider", "list-profiles", *ws_args(ws.name), "-o", "json",
-                              check=False, quiet=True)
+                              check=False, quiet=True, force=True)
             if not listed.ok:
                 raise InstallerError("cannot read the gateway's provider profile catalog "
                                      f"for workspace '{ws.name}' (openshell provider "
@@ -2301,10 +2308,9 @@ class ProfileApplier:
             return None
         volume = harness_volume_name(ws.name, sb.name)
         self.harness_volumes.add(volume)
-        if self.sh.dry_run:
-            log(f"Harness {source} for sandbox '{sb.name}' in volume {volume} (dry run)")
-            return None
-        mountpoint = self.volumes.ensure(volume, ws.name)
+        # Dry-run still resolves the tree and runs governance (so a bundle
+        # that would fail apply cannot pass --dry-run); it skips volume I/O.
+        mountpoint = None if self.sh.dry_run else self.volumes.ensure(volume, ws.name)
         expected_digest = self.expected_harness_digest(volume, bundle)
         # None: the volume predates its admission labels, which cannot be
         # added later; it is replaced below, after governance passed.
@@ -2327,6 +2333,10 @@ class ProfileApplier:
             raise InstallerError(f"harness {source} is for agent '{info['agent']}', "
                                  f"sandbox '{sb.name}' runs openclaw")
         self.check_harness_governance(ws, sb, info)
+        self.harness_info[(ws.name, sb.name)] = info
+        if self.sh.dry_run:
+            log(f"Harness {source} for sandbox '{sb.name}' in volume {volume} (dry run)")
+            return info
         if mountpoint is None:
             log(f"Harness volume {volume} lacks its admission labels; recreating it "
                 f"(and sandbox '{sb.name}', which mounts it)")
@@ -2342,7 +2352,6 @@ class ProfileApplier:
                     "source": source, "treeDigest": marker["treeDigest"]}
                 self.ledger.save()
             log(f"Harness volume {volume} filled from {source}")
-        self.harness_info[(ws.name, sb.name)] = info
         return info
 
     def delete_sandbox_and_wait(self, ws, sb, attempts=24, delay=5):
