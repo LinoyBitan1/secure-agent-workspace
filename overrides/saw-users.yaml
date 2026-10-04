@@ -6,3 +6,7 @@ users:
   - name: alice
     profiles:
       - data-science
+    # TEMPORARY for live E2E only - REVERT BEFORE MERGE.
+    demoHarness: true
+    values:
+      allowDriverConfig: true

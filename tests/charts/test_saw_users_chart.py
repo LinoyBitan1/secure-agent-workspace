@@ -225,7 +225,7 @@ def test_shipped_override_renders_alice(tmp_path):
     result = helm("template", "saw-users", str(CHART), "-f", str(ROOT / "overrides" / "saw-users.yaml"))
     docs = docs_from(result)
     assert [doc["metadata"]["name"] for doc in by_kind(docs, "Namespace")] == ["saw-alice"]
-    assert helm_values(app(docs, "saw-alice-bom")) == {"profiles": ["data-science"]}
+    assert helm_values(app(docs, "saw-alice-bom")) == {"profiles": ["data-science"], "demoHarness": True}
 
 
 def test_missing_repo_url_fails(tmp_path):
