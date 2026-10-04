@@ -6,5 +6,3 @@ users:
   - name: alice
     profiles:
       - data-science
-    # TEMPORARY for live dry-run drill - REVERT (allowDriverConfig derived).
-    harnessEnabled: true

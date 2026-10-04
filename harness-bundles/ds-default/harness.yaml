@@ -15,9 +15,7 @@ spec:
   # profile whose endpoints allow its hosts. The sandbox must have a provider
   # of that type: it is also how a key reaches the server, as a placeholder
   # the sandbox's egress proxy swaps for the real key. Keys never go here.
-  plugins:
-    - name: saw-echo
-      governanceProfile: nope  # TEMPORARY for live dry-run drill - REVERT
+  plugins: []
   #  - name: my-plugin
   #    governanceProfile: <profile>
   mcpServers: []
