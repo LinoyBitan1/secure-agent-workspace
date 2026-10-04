@@ -288,17 +288,23 @@ def test_a_bundle_without_plugin_json_uses_extra_skill_dirs(ab):
         "skills.load.extraDirs": ["/sandbox/harness/skills"]}
 
 
+def test_mcp_json_without_plugin_json_is_refused(ab):
+    mcp = '{"mcpServers": {"s": {"type": "stdio", "command": "node"}}}'
+    with pytest.raises(ab.InstallerError, match="mcp.json with no plugin.json"):
+        ab.describe_harness_tree(_tree(**{"mcp.json": mcp}))
+
+
 def test_an_mcp_server_without_a_type_is_rejected(ab):
     """OpenClaw drops such entries with a warning; fail early instead."""
     mcp = '{"mcpServers": {"s": {"command": "node"}}}'
     with pytest.raises(ab.InstallerError, match='needs "type"'):
-        ab.describe_harness_tree(_tree(**{"mcp.json": mcp}))
+        ab.describe_harness_tree(_tree(**{"plugin.json": "{}", "mcp.json": mcp}))
 
 
 def test_a_remote_mcp_server_needs_a_governance_profile(ab):
     mcp = '{"mcpServers": {"s": {"type": "streamable-http", "url": "https://api.tavily.com/mcp"}}}'
     with pytest.raises(ab.InstallerError, match="needs a governanceProfile"):
-        ab.describe_harness_tree(_tree(**{"mcp.json": mcp}))
+        ab.describe_harness_tree(_tree(**{"plugin.json": "{}", "mcp.json": mcp}))
 
 
 def test_a_remote_mcp_server_is_governed_by_host(ab):
@@ -306,7 +312,8 @@ def test_a_remote_mcp_server_is_governed_by_host(ab):
         "mcpServers": [{"name": "s", "governanceProfile": "web-search"}]}})
     mcp = '{"mcpServers": {"s": {"type": "streamable-http", "url": "https://api.tavily.com/mcp"},' \
           ' "local": {"type": "stdio", "command": "node"}}}'
-    tree = {"harness.yaml": (manifest.encode(), False), "mcp.json": (mcp.encode(), False)}
+    tree = {"harness.yaml": (manifest.encode(), False), "plugin.json": (b"{}", False),
+            "mcp.json": (mcp.encode(), False)}
     assert ab.describe_harness_tree(tree)["governance"] == [
         {"kind": "MCP server", "name": "s", "governanceProfile": "web-search",
          "hosts": ["api.tavily.com"]}]
@@ -332,7 +339,8 @@ def _stdio_tree(decl=None, conf=None):
     decl = {"name": "tavily", **(decl or {})}
     manifest = yaml.safe_dump({"metadata": {"name": "demo"}, "spec": {"mcpServers": [decl]}})
     mcp = json.dumps({"mcpServers": {"tavily": conf or {"type": "stdio", "command": "node"}}})
-    return {"harness.yaml": (manifest.encode(), False), "mcp.json": (mcp.encode(), False)}
+    return {"harness.yaml": (manifest.encode(), False), "plugin.json": (b"{}", False),
+            "mcp.json": (mcp.encode(), False)}
 
 
 def test_a_stdio_server_without_a_profile_is_not_governed(ab):
