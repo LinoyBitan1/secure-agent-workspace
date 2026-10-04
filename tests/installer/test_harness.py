@@ -76,6 +76,16 @@ def test_parse_harness_files_rejects_a_bundle_without_a_manifest(ab):
         ab.parse_harness_files({"harness__stray__skills__s__SKILL.md": b"x\n"})
 
 
+@pytest.mark.parametrize("key", [
+    "harness__demo__..__escape",           # ../escape
+    "harness__demo__a__..__..__b",         # a/../../b
+    "harness__demo__skills____x",          # skills//x (empty segment)
+])
+def test_parse_harness_files_rejects_an_unsafe_relpath(ab, key):
+    with pytest.raises(ab.InstallerError, match="unsafe path"):
+        ab.parse_harness_files({key: b"a: 1\n", "harness__demo__harness.yaml": b"a: 1\n"})
+
+
 def test_shipped_bundle_parses(ab, shipped_harness_files):
     bundles = ab.parse_harness_files(shipped_harness_files)
     assert "ds-default" in bundles

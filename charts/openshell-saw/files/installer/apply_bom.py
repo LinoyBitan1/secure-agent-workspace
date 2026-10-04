@@ -574,6 +574,14 @@ def harness_mounts_json(volume):
         separators=(",", ":"))
 
 
+def safe_rel_path(rel, where):
+    """A bundle-relative POSIX path: no absolute, no empty or '.'/'..' segment."""
+    parts = rel.split("/")
+    if not rel or rel.startswith("/") or any(part in ("", ".", "..") for part in parts):
+        raise InstallerError(f"{where}: unsafe path {rel!r}")
+    return rel
+
+
 def read_harness_tar(path):
     """{relpath: (bytes, executable)} from `podman export` of a harness image.
 
@@ -591,9 +599,7 @@ def read_harness_tar(path):
             rel = rel.lstrip("/")
             if not rel or member.isdir() or rel.rsplit("/", 1)[-1].startswith("._"):
                 continue
-            parts = rel.split("/")
-            if any(part in ("", ".", "..") for part in parts):
-                raise InstallerError(f"harness image: unsafe path {member.name!r}")
+            safe_rel_path(rel, "harness image")
             if not member.isfile():
                 raise InstallerError(f"harness image: {member.name!r} is not a regular file")
             files[rel] = (tar.extractfile(member).read(), bool(member.mode & 0o111))
@@ -826,14 +832,16 @@ def parse_harness_files(files):
     """Build bundles from flat ConfigMap keys harness__<bundle>__<relpath>.
 
     The digest is computed, never authored here: the pin lives in
-    sandbox.yaml harnessRef, outside the hashed tree.
+    sandbox.yaml harnessRef, outside the hashed tree. Relpaths get the same
+    .. / empty / absolute checks as read_harness_tar.
     """
     trees = {}
     for key, raw in files.items():
         parts = key.split("__")
         if len(parts) < 3 or parts[0] != "harness":
             raise InstallerError(f"unexpected harness file name: {key}")
-        trees.setdefault(parts[1], {})["/".join(parts[2:])] = raw
+        rel = safe_rel_path("/".join(parts[2:]), f"harness key {key}")
+        trees.setdefault(parts[1], {})[rel] = raw
     bundles = {}
     for name in sorted(trees):
         tree = trees[name]
