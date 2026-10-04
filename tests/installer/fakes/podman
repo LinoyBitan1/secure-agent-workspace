@@ -194,6 +194,10 @@ elif cmd == "volume":
         # filter='data': refuse absolute / .. members the way a careful
         # extract should; unfiltered extractall would hide write_harness_tar bugs.
         name, tarball = args[2], args[3]
+        fail_file = state / "import-fail.json"
+        if fail_file.exists() and name in json.loads(fail_file.read_text()):
+            print(f"Error: volume import {name} failed", file=sys.stderr)
+            sys.exit(125)
         with tarfile.open(tarball) as tar:
             tar.extractall(volumes / name, filter="data")
     elif sub == "rm":
