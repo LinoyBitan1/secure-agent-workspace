@@ -1885,22 +1885,38 @@ class HarnessVolume:
         return tree, marker
 
     def fill(self, volume, mountpoint, source, tree):
-        """Wipe the volume, then import `tree` unchanged plus the marker."""
-        for child in list(mountpoint.iterdir()):
-            try:
-                if child.is_dir() and not child.is_symlink():
-                    shutil.rmtree(child)
-                else:
-                    child.unlink()
-            except PermissionError:
-                # Content not written by this installer (other owner in the
-                # user namespace): remove it from inside the namespace.
-                self._podman("unshare", "rm", "-rf", str(child))
+        """Wipe the volume, then import `tree` unchanged plus the marker.
+
+        A previous tree is tarred first so a failed import can restore it
+        instead of leaving the volume empty.
+        """
         marker = {"source": source, "treeDigest": harness_tree_digest(tree)}
         with tempfile.TemporaryDirectory(prefix="saw-harness-") as tmp:
+            backup = Path(tmp) / "prev.tar"
+            had = any(mountpoint.iterdir())
+            if had:
+                with tarfile.open(backup, "w") as tar:
+                    for child in mountpoint.iterdir():
+                        tar.add(child, arcname=child.name)
+            for child in list(mountpoint.iterdir()):
+                try:
+                    if child.is_dir() and not child.is_symlink():
+                        shutil.rmtree(child)
+                    else:
+                        child.unlink()
+                except PermissionError:
+                    # Content not written by this installer (other owner in the
+                    # user namespace): remove it from inside the namespace.
+                    self._podman("unshare", "rm", "-rf", str(child))
             tarball = Path(tmp) / "bundle.tar"
             write_harness_tar(tarball, tree, marker)
-            self._podman("volume", "import", volume, str(tarball))
+            try:
+                self._podman("volume", "import", volume, str(tarball))
+            except InstallerError:
+                if had:
+                    with tarfile.open(backup) as tar:
+                        tar.extractall(mountpoint, filter="data")
+                raise
         return marker
 
     def verify(self, volume, workspace, source, expected_digest):

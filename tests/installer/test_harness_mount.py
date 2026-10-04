@@ -154,6 +154,17 @@ def test_drifted_openclaw_harness_config_fails_verify(
     assert any("plugins.load.paths" in f for f in applier.verify(profiles))
 
 
+def test_a_failed_volume_import_restores_the_previous_tree(
+        ab, fake_env, config, profiles, creds):
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}, IMAGE_V2: {"__tree__": V2}})
+    make_applier(ab, config, creds).apply(use_ref(profiles, {"image": IMAGE_V1}))
+    (fake_env.state / "import-fail.json").write_text(json.dumps([volume_name(ab)]))
+    with pytest.raises(ab.InstallerError, match="sandbox 'notebook'"):
+        make_applier(ab, config, creds).apply(use_ref(profiles, {"image": IMAGE_V2}))
+    volume = fake_env.state / "volumes" / volume_name(ab)
+    assert "v1" in (volume / "skills/demo/SKILL.md").read_text()
+
+
 def test_the_volume_carries_the_admission_labels(ab, fake_env, config, profiles, creds):
     fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
     make_applier(ab, config, creds).apply(use_ref(profiles, {"image": IMAGE_V1}))
