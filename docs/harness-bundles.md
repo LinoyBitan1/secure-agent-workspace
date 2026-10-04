@@ -142,8 +142,11 @@ changed and refills it.
 
 The shipped `ds-default` demo pin is opt-in (`demoHarness: false` in
 saw-bom). With it off, sandbox.yaml loses its `harnessRef` and no harness
-keys ship, so an upgrade does not recreate notebooks. Set
-`demoHarness: true` and `allowDriverConfig: true` to try the demo.
+keys ship, so an upgrade does not recreate notebooks. Set `demoHarness: true`
+to try the demo; under saw-users that also sets `allowDriverConfig: true` on
+the user's openshell-saw app (`saw-users.openshellValues`), so the two flags
+can't drift apart. Driving saw-bom and openshell-saw directly (no saw-users)
+still needs both set by hand.
 
 ### OCI image (recommended)
 

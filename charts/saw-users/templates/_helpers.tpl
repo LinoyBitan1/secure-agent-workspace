@@ -80,6 +80,13 @@ user's `values` on top. Nested maps merge; the user's keys win.
 {{- /* Argo CD runs the chart's pre-delete hook when the app is deleted: only
      users with pruneOnRemove get it, the others keep their VM. */ -}}
 {{- $_ := set $base "cleanupOnDelete" (eq (include "saw-users.prune" (dict "root" $root "user" $user)) "true") -}}
+{{- /* demoHarness puts a harnessRef on a sandbox, which OpenShell 0.1.x
+     refuses to mount without allow_driver_config; derive it here so the two
+     flags can't drift apart. The user's own `values.allowDriverConfig`
+     still wins if set. */ -}}
+{{- if $user.demoHarness -}}
+{{- $_ := set $base "allowDriverConfig" true -}}
+{{- end -}}
 {{- $overlay := deepCopy ($user.values | default dict) -}}
 {{- mergeOverwrite $base $overlay | toYaml -}}
 {{- end -}}
@@ -91,8 +98,6 @@ user's `values` on top. Nested maps merge; the user's keys win.
 {{- if hasKey $user "profiles" -}}
 {{- $profiles = $user.profiles -}}
 {{- end -}}
-{{- /* Opt-in demo harness bundle (charts/saw-bom/harness/ds-default).
-     Needs allowDriverConfig=true in the user's openshell-saw `values`. */ -}}
 {{- $bomValues := dict "profiles" $profiles -}}
 {{- if $user.demoHarness -}}
 {{- $_ := set $bomValues "demoHarness" true -}}
