@@ -684,6 +684,12 @@ def describe_harness_tree(files, inline=False):
             "at the bundle root")
     plugin_dirs = sorted({rel.split("/")[1] for rel in files
                           if rel.startswith("plugins/") and rel.count("/") >= 2})
+    declared_plugins = {item.get("name") for item in spec.get("plugins") or []}
+    for plugin in plugin_dirs:
+        if plugin not in declared_plugins:
+            log(f"WARN: harness '{name}': plugin '{plugin}' has no entry in harness.yaml "
+                "spec.plugins; its egress, if any, is enforced at runtime by the sandbox "
+                "proxy, not checked here")
     governance = []
     for item in spec.get("plugins") or []:
         if item.get("governanceProfile"):
@@ -726,6 +732,10 @@ def describe_harness_tree(files, inline=False):
                 if profile:
                     governance.append({"kind": "MCP server", "name": server,
                                        "governanceProfile": profile, "hosts": []})
+                else:
+                    log(f"WARN: harness '{name}': stdio MCP server '{server}' has no "
+                        "governanceProfile; its egress, if any, is enforced at runtime by "
+                        "the sandbox proxy, not checked here")
                 continue
             host = urlsplit(conf.get("url") or "").hostname
             if not host:
@@ -763,6 +773,17 @@ def parse_profile_catalog(output):
             catalog[item["id"]] = {e.get("host") for e in item.get("endpoints") or []
                                    if isinstance(e, dict) and e.get("host")}
     return catalog
+
+
+def host_allowed(host, patterns):
+    """A profile endpoint host may be a glob (*-aiplatform.googleapis.com);
+    ports are not part of the match. Each `*` is one DNS label (no dots)."""
+    host = (host or "").split(":")[0].lower()
+    for pattern in patterns:
+        regex = re.escape((pattern or "").split(":")[0].lower()).replace(r"\*", r"[^.]*")
+        if re.fullmatch(regex, host):
+            return True
+    return False
 
 
 def openclaw_harness_config(info):
@@ -2260,7 +2281,7 @@ class ProfileApplier:
                     "to the sandbox's providers (its endpoints and key reach the sandbox only "
                     "through a provider)")
             for host in item["hosts"]:
-                if host not in catalog[profile]:
+                if not host_allowed(host, catalog[profile]):
                     allowed = ", ".join(sorted(catalog[profile])) or "none"
                     raise InstallerError(
                         f"{what} reaches {host}, which governanceProfile '{profile}' does not "

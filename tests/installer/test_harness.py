@@ -333,6 +333,15 @@ def test_parse_profile_catalog_reads_ids_and_hosts(ab):
     assert ab.parse_profile_catalog(out) == {"web-search": {"api.tavily.com"}, "slack": set()}
 
 
+def test_host_allowed_matches_one_dns_label_globs(ab):
+    assert ab.host_allowed("us-central1-aiplatform.googleapis.com",
+                           {"*-aiplatform.googleapis.com"})
+    assert not ab.host_allowed("evil.us-central1-aiplatform.googleapis.com",
+                               {"*-aiplatform.googleapis.com"})
+    assert ab.host_allowed("api.tavily.com", {"api.tavily.com"})
+    assert ab.host_allowed("api.tavily.com:443", {"api.tavily.com"})
+
+
 # -- stdio MCP servers: keys come from providers, never from the bundle -------
 
 def _stdio_tree(decl=None, conf=None):
