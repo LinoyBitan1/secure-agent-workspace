@@ -6,3 +6,4 @@ users:
   - name: alice
     profiles:
       - data-science
+    harnessEnabled: true
