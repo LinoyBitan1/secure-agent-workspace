@@ -4,7 +4,15 @@
 {{- range $profile := .Values.profiles }}
 {{- $files := $.Files.Glob (printf "profiles/%s/**/*.yaml" $profile) }}
 {{- range $path, $_ := $files }}
+{{- if and (hasSuffix "sandbox.yaml" $path) (not $.Values.harnessEnabled) }}
+{{- $doc := $.Files.Get $path | fromYaml }}
+{{- range $sb := (($doc.spec).sandboxes | default list) }}
+{{- $_ := unset $sb "harnessRef" }}
+{{- end }}
+{{- $_ := set $profileFiles $path (toYaml $doc) }}
+{{- else }}
 {{- $_ := set $profileFiles $path ($.Files.Get $path) }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- /* Inline harness bundles: charts/saw-bom/harness/<bundle>/<relpath>, for
@@ -16,11 +24,13 @@
      Only bundles referenced by a selected profile's sandbox harnessRef are
      shipped, so the ConfigMap stays scoped to `.Values.profiles`. */ -}}
 {{- $wanted := dict }}
+{{- if .Values.harnessEnabled }}
 {{- range $profile := .Values.profiles }}
 {{- range $path, $_ := $.Files.Glob (printf "profiles/%s/**/sandbox.yaml" $profile) }}
 {{- range $sb := ((($.Files.Get $path | fromYaml).spec).sandboxes | default list) }}
 {{- if and $sb.harnessRef (not $sb.harnessRef.image) }}
 {{- $_ := set $wanted ($sb.harnessRef.name | default "") true }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -65,6 +75,7 @@
      An OCI harnessRef (image: repo@sha256:...) is pinned by the image
      digest instead; the guest pulls it and mounts it into the sandbox. */ -}}
 {{- $imageRefs := false }}
+{{- if .Values.harnessEnabled }}
 {{- range $profile := $.Values.profiles }}
 {{- range $path, $_ := $.Files.Glob (printf "profiles/%s/**/sandbox.yaml" $profile) }}
 {{- range $sb := ((($.Files.Get $path | fromYaml).spec).sandboxes | default list) }}
@@ -84,6 +95,7 @@
 {{- end }}
 {{- if and $want (ne $want $got) }}
 {{- fail (printf "harnessRef digest mismatch for sandbox %q: sandbox.yaml says %q, the bundle hashes to %q" $sb.name $want $got) }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

@@ -5,3 +5,10 @@ profiles:
 # Harness governance is checked in the guest against the gateway's live
 # provider profile catalog (`openshell provider list-profiles`), so there is
 # no list of governance profiles to keep in sync here.
+
+# The demo harness bundle (charts/saw-bom/harness/ds-default) is opt-in: with
+# it off, no profile sandbox gets a harnessRef, no bundle is shipped in the
+# ConfigMap, and existing sandboxes are left alone on upgrade. Turning it on
+# also needs allowDriverConfig=true in the openshell-saw chart (saw-users
+# sets this for you from the same user.harnessEnabled flag).
+harnessEnabled: false

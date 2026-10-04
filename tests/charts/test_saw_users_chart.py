@@ -146,6 +146,25 @@ def test_empty_global_values_are_left_out(tmp_path):
     assert namespace["metadata"]["labels"]["argocd.argoproj.io/managed-by"] == "gitops-ns"
 
 
+def test_demo_harness_turns_on_allow_driver_config(tmp_path):
+    docs = docs_from(render_file(tmp_path, [{"name": "alice", "harnessEnabled": True}]))
+    assert helm_values(app(docs, "saw-alice-bom")) == {
+        "profiles": ["data-science"], "harnessEnabled": True,
+    }
+    assert helm_values(app(docs, "saw-alice"))["allowDriverConfig"] is True
+
+
+def test_demo_harness_off_leaves_allow_driver_config_unset(tmp_path):
+    docs = docs_from(render_file(tmp_path, [ALICE]))
+    assert "allowDriverConfig" not in helm_values(app(docs, "saw-alice"))
+
+
+def test_a_user_can_override_allow_driver_config_off(tmp_path):
+    user = {"name": "alice", "harnessEnabled": True, "values": {"allowDriverConfig": False}}
+    docs = docs_from(render_file(tmp_path, [user]))
+    assert helm_values(app(docs, "saw-alice"))["allowDriverConfig"] is False
+
+
 def test_prune_on_remove_adds_the_foreground_finalizer(tmp_path):
     docs = docs_from(render_file(tmp_path, [ALICE], extra={"pruneOnRemove": True}))
     for application in by_kind(docs, "Application"):
@@ -272,3 +291,9 @@ def test_rendered_machine_values_validate_in_the_shipped_installer(tmp_path):
     config = json.loads(installer["data"]["config.json"])
     assert config["vmName"] == "alice"
     assert config["ownerSubject"] == ""
+
+
+def test_a_user_can_opt_into_the_demo_harness(tmp_path):
+    docs = docs_from(render_file(tmp_path, [dict(ALICE, harnessEnabled=True)]))
+    assert helm_values(app(docs, "saw-alice-bom")) == {
+        "profiles": ["data-science"], "harnessEnabled": True}
