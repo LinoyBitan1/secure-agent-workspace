@@ -7,8 +7,6 @@ exactly as written**. Nothing is copied into the sandbox with `sandbox exec`,
 and nothing is converted: the files in the bundle are the files OpenClaw
 reads.
 
-How it is built: [harness-implementation.md](harness-implementation.md).
-
 ## Layout
 
 ```
@@ -94,10 +92,11 @@ cannot read it.
    the profile's endpoints. OpenShell gives every process started in the
    sandbox the placeholder; name the variable in its `mcp.json` entry as
    exactly `${VAR}` (or `Bearer ${VAR}` for Authorization headers):
-   `"env": {"BRAVE_API_KEY": "${BRAVE_API_KEY}"}`. Any other value is refused
-   so a literal secret cannot ship in the bundle, ConfigMap or image. A
-   provider attached to a running sandbox reaches OpenClaw after its gateway
-   restarts.
+   `"env": {"BRAVE_API_KEY": "${BRAVE_API_KEY}"}`. Checked end to end: with
+   that declaration the server sees the placeholder (`SET`); without it,
+   `NOT SET`. Any other value is refused so a literal secret cannot ship in
+   the bundle, ConfigMap or image. A provider attached to a running sandbox
+   reaches OpenClaw after its gateway restarts.
 
 The installer refuses a bundle whose governed server or plugin names a profile
 the gateway does not serve in that workspace, or one the sandbox has no
@@ -226,3 +225,52 @@ For each sandbox with a `harnessRef`:
    the source as `appliedRevision`.
 7. **Clean up** harness volumes no enabled sandbox wants (a volume still
    mounted by a sandbox stays until that sandbox is gone).
+
+`--dry-run` still reads the bundle (inline ConfigMap or image export) and
+runs the governance check; it only skips volume writes and sandbox changes.
+A bundle that would fail a real apply must fail dry-run too.
+
+### Installer details
+
+Validation before any change: only `openclaw` sandboxes may have a
+`harnessRef`; image refs are `repo@sha256:<64 hex>`; inline names must match
+a delivered bundle and optional digests must match `harness-index.yaml`.
+
+Volume: one per sandbox, `saw-harness-<ws>-<sb>-<hash>`, labelled
+`openshell.ai/sandbox-attachable=true` and
+`openshell.ai/sandbox-attachable-workspace=<ws>`. Content change wipes then
+`podman volume import`s the tree plus `.saw-harness-revision`
+(`source`, `treeDigest`). Image trees keep executable bits; links, devices
+and `..` paths are refused. Integrity digests come from the ConfigMap or
+ledger, not the in-volume marker alone.
+
+OpenClaw config (values only, never bundle bytes through `exec`):
+
+| Bundle has | Setting |
+|---|---|
+| `plugin.json` | `plugins.load.paths` += `/sandbox/harness` |
+| no `plugin.json`, but `skills/` | `skills.load.extraDirs = ["/sandbox/harness/skills"]` |
+| `plugins/` | `plugins.load.paths` += `/sandbox/harness/plugins` |
+
+### Lifecycle
+
+| Event | What happens |
+|---|---|
+| First apply | Read, govern, fill volume, create sandbox with mount, configure OpenClaw |
+| Re-apply, unchanged | Volume intact: no pull/write; sandbox kept |
+| New digest / edited inline | Volume refilled in place (briefly empty mid-import); sandbox kept |
+| Sandbox created before `harnessRef` | Recreated with the mount |
+| Volume edited on the VM | Verify fails; next apply refills |
+| `harnessRef` removed | Sandbox recreated without the mount; volume removed when unused |
+
+### Security properties
+
+- Mount is read-only; a writable re-attach is repaired on the next apply when
+  the tree digest changes.
+- Caller driver config can attach only volumes labelled for that workspace
+  (admission on, bind mounts off).
+- OCI pin is the digest in `harnessRef` (installer does not verify cosign yet).
+- Governance uses the gateway's live catalog and requires a matching provider
+  on the sandbox; keys never enter the sandbox (providers + egress proxy only).
+- `npx`-style servers fetch code at run time, outside the digest — vendor
+  when that matters.
