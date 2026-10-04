@@ -372,6 +372,36 @@ def test_openclaw_loads_the_bundle_from_the_mount(ab, fake_env, config, profiles
     assert "base64 -d" not in scripts, "bundle files never go through exec"
 
 
+def test_the_gateway_is_restarted_before_a_fresh_run(ab, fake_env, config, profiles, creds):
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    make_applier(ab, config, creds).apply(use_ref(profiles, {"image": IMAGE_V1}))
+    scripts = "\n".join(c[-1] for c in fake_env.openshell_calls() if c[:2] == ["sandbox", "exec"])
+    assert "pkill -f 'openclaw gateway run'" in scripts
+    assert "openclaw gateway run" in scripts
+
+
+def test_a_shape_change_unsets_the_stale_config_key(ab, fake_env, config, profiles, creds):
+    """plugins/ → skills only must unset plugins.load.paths."""
+    use_ref(profiles, {"name": "demo"})
+    make_applier(ab, config, creds, harness=_inline(ab, "demo", V1)).apply(profiles)
+    skills_only = {k: v for k, v in V1.items()
+                   if k == "harness.yaml" or k.startswith("skills/")}
+    make_applier(ab, config, creds, harness=_inline(ab, "demo", skills_only)).apply(profiles)
+    scripts = [c[-1] for c in fake_env.openshell_calls() if c[:2] == ["sandbox", "exec"]]
+    assert any("openclaw config unset plugins.load.paths" in s for s in scripts)
+    assert any("skills.load.extraDirs" in s and "config set" in s for s in scripts)
+
+
+def test_a_removed_harness_ref_unsets_its_config_keys(ab, fake_env, config, profiles, creds):
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    make_applier(ab, config, creds).apply(use_ref(profiles, {"image": IMAGE_V1}))
+    use_ref(profiles, {})
+    make_applier(ab, config, creds, harness={"bundles": {}}).apply(profiles)
+    scripts = [c[-1] for c in fake_env.openshell_calls() if c[:2] == ["sandbox", "exec"]]
+    assert any("openclaw config unset plugins.load.paths" in s for s in scripts)
+    assert any("openclaw config unset skills.load.extraDirs" in s for s in scripts)
+
+
 # -- 0.1.x specifics ------------------------------------------------------------------
 
 def test_the_supervisor_container_is_not_mistaken_for_the_workload(

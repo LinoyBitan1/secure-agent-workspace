@@ -535,6 +535,11 @@ HARNESS_MOUNT = "/sandbox/harness"
 HARNESS_MARKER = ".saw-harness-revision"  # written into the volume with the bundle
 HARNESS_VOLUME_PREFIX = "saw-harness-"
 HARNESS_VOLUME_LABEL = "saw.redhat.com/harness-volume"
+# Keys configure_harness may set; a shape change must unset the ones it
+# no longer wants, not leave them stale.
+HARNESS_CONFIG_KEYS = ("plugins.load.paths", "skills.load.extraDirs")
+OPENCLAW_EXEC_ENV = ("OPENCLAW_HOME=/sandbox SQLITE_TMPDIR=/sandbox/.openclaw/state "
+                     "TMPDIR=/sandbox/.openclaw/state OPENCLAW_NIX_MODE=0")
 # The podman driver's workload container (its supervisor has the same
 # sandbox labels but not the user's mounts): isolation.rs WORKLOAD_FILTER.
 WORKLOAD_ROLE_LABEL = "openshell.ai/isolation-role=sandbox"
@@ -654,6 +659,7 @@ def describe_harness_tree(files, inline=False):
       agentPluginsBundle   plugin.json at the root (OpenClaw loads skills/ and
                            mcp.json from the bundle root)
       mcp                  the bundle has mcp.json
+      mcpServers           sorted mcp.json server names (for verify)
       pluginDirs           native plugins under plugins/
       governance           [{kind, name, governanceProfile, hosts}] to check
                            against the gateway's catalog and the sandbox's
@@ -670,6 +676,12 @@ def describe_harness_tree(files, inline=False):
     doc = _yaml(files["harness.yaml"][0].decode("utf-8"), "harness.yaml")
     spec = doc.get("spec") or {}
     name = (doc.get("metadata") or {}).get("name", "")
+    if "mcp.json" in files and "plugin.json" not in files:
+        raise InstallerError(
+            f"harness '{name}': mcp.json with no plugin.json at the bundle root; OpenClaw only "
+            "reads a bundle's mcp.json when the bundle root is on plugins.load.paths, which "
+            "openclaw_harness_config only sets for an Agent Plugins bundle. Add a plugin.json "
+            "at the bundle root")
     plugin_dirs = sorted({rel.split("/")[1] for rel in files
                           if rel.startswith("plugins/") and rel.count("/") >= 2})
     governance = []
@@ -688,11 +700,13 @@ def describe_harness_tree(files, inline=False):
                 "key the server needs and give the sandbox a provider of that type: the server "
                 "reads a placeholder from the provider's env var (for example BRAVE_API_KEY) "
                 "and the sandbox's egress proxy adds the real key")
+    mcp_servers = []
     if "mcp.json" in files:
         try:
             servers = json.loads(files["mcp.json"][0]).get("mcpServers") or {}
         except ValueError as exc:
             raise InstallerError(f"harness '{name}': mcp.json is not valid JSON ({exc})") from None
+        mcp_servers = sorted(servers)
         for server, conf in sorted(servers.items()):
             if not isinstance(conf, dict) or conf.get("type") not in ("stdio", "streamable-http", "sse"):
                 raise InstallerError(
@@ -728,6 +742,7 @@ def describe_harness_tree(files, inline=False):
         "skills": any(rel.startswith("skills/") for rel in files),
         "agentPluginsBundle": "plugin.json" in files,
         "mcp": "mcp.json" in files,
+        "mcpServers": mcp_servers,
         "pluginDirs": plugin_dirs,
         "governance": governance,
     }
@@ -2418,8 +2433,7 @@ class ProfileApplier:
         token = secrets.token_hex(16)
         self.sh.add_secret(token)
         model = sb.model or provider.model or "nvidia/nemotron-3-super-120b-a12b"
-        oc_env = ("OPENCLAW_HOME=/sandbox SQLITE_TMPDIR=/sandbox/.openclaw/state "
-                  "TMPDIR=/sandbox/.openclaw/state OPENCLAW_NIX_MODE=0")
+        oc_env = OPENCLAW_EXEC_ENV
         # OpenShell 0.1.x: no inference.local. OpenClaw calls the provider's
         # own endpoint with the placeholder key this exec receives in the
         # provider's env var (e.g. NVIDIA_API_KEY); the sandbox proxy puts in
@@ -2463,6 +2477,10 @@ class ProfileApplier:
                      check=False)
         self.cli(*exec_cmd, "sh", "-c",
                  f"export OPENCLAW_GATEWAY_TOKEN={token} {oc_env} && "
+                 # A refilled harness needs a fresh gateway process; unconditional
+                 # is simpler than threading a "was refilled" flag, and is a
+                 # no-op on create (nothing is running yet).
+                 "pkill -f 'openclaw gateway run' || true; sleep 1; "
                  "nohup openclaw gateway run --allow-unconfigured --bind lan --port 18789 "
                  "> /tmp/openclaw-gateway.log 2>&1 &",
                  check=False)
@@ -2474,16 +2492,17 @@ class ProfileApplier:
         Config only: the bundle's files reach the sandbox through the mount,
         never through exec, and no key is written: a governed plugin or MCP
         server gets its provider's placeholder from the sandbox environment.
-        The values depend only on the bundle's shape (plugin.json, skills/,
-        plugins/), so a refilled volume normally leaves them unchanged.
         """
         info = self.harness_info.get((ws.name, sb.name))
-        if info is None:
-            return
-        for key, value in openclaw_harness_config(info).items():
+        desired = openclaw_harness_config(info) if info is not None else {}
+        for key, value in desired.items():
             self.cli(*exec_cmd, "sh", "-c",
                      f"{oc_env} openclaw config set {key} {shlex.quote(json.dumps(value))}",
                      check=False)
+        for key in HARNESS_CONFIG_KEYS:
+            if key not in desired:
+                self.cli(*exec_cmd, "sh", "-c", f"{oc_env} openclaw config unset {key}",
+                         check=False)
 
     def verify_harness(self, ws, sb):
         """The sandbox mounts exactly its harness volume, the volume holds
@@ -2510,6 +2529,28 @@ class ProfileApplier:
                         "cat", f"{HARNESS_MOUNT}/{HARNESS_MARKER}", check=False, quiet=True)
         if not seen.ok or seen.out.strip() != expected.decode("utf-8", "replace").strip():
             return [f"the sandbox does not see {source} at {HARNESS_MOUNT}"]
+        info = self.harness_info.get((ws.name, sb.name))
+        if info is None:
+            return []
+        exec_cmd = ["sandbox", "exec", "-n", sb.name, *ws_args(ws.name), "--no-tty", "--"]
+        listed = lambda out: {line.strip() for line in (out or "").splitlines() if line.strip()}
+        if info["mcpServers"]:
+            mcp_list = self.cli(*exec_cmd, "sh", "-c", f"{OPENCLAW_EXEC_ENV} openclaw mcp list",
+                                check=False, quiet=True)
+            if not mcp_list.ok:
+                return [f"could not list OpenClaw MCP servers for sandbox '{sb.name}'"]
+            missing = [s for s in info["mcpServers"] if s not in listed(mcp_list.out)]
+            if missing:
+                return [f"OpenClaw does not list MCP server(s) {', '.join(missing)} from {source}"]
+        if info["pluginDirs"]:
+            plugin_list = self.cli(*exec_cmd, "sh", "-c",
+                                   f"{OPENCLAW_EXEC_ENV} openclaw plugins list",
+                                   check=False, quiet=True)
+            if not plugin_list.ok:
+                return [f"could not list OpenClaw plugins for sandbox '{sb.name}'"]
+            missing = [p for p in info["pluginDirs"] if p not in listed(plugin_list.out)]
+            if missing:
+                return [f"OpenClaw does not list plugin(s) {', '.join(missing)} from {source}"]
         return []
 
     def cleanup_harness_volumes(self):

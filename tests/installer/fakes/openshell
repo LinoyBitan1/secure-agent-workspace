@@ -239,6 +239,40 @@ elif op == "sandbox exec":
                     save()
                     sys.exit(0)
         fail(f"cat: {args[-1]}: No such file or directory", 1)
+    sb = state["sandboxes"].get(f"{ws}/{opt('-n')}") or {}
+    mounts = ((sb.get("driverConfig") or {}).get("podman") or {}).get("mounts", [])
+
+    def harness_files():
+        for mount in mounts:
+            if mount["target"].rstrip("/") != "/sandbox/harness":
+                continue
+            if mount["type"] == "image":
+                images_file = state_dir / "images.json"
+                images = json.loads(images_file.read_text()) if images_file.exists() else {}
+                return images.get(mount["source"], {}).get("__tree__", {})
+            root = state_dir / "volumes" / mount["source"]
+            if root.is_dir():
+                return {str(p.relative_to(root)): p.read_text()
+                        for p in root.rglob("*") if p.is_file()}
+        return {}
+
+    script = args[-1] if args else ""
+    if "openclaw mcp list" in script:
+        try:
+            servers = json.loads(harness_files().get("mcp.json", "{}")).get("mcpServers") or {}
+        except ValueError:
+            servers = {}
+        for name in sorted(servers):
+            print(name)
+        save()
+        sys.exit(0)
+    if "openclaw plugins list" in script:
+        files = harness_files()
+        for name in sorted({rel.split("/")[1] for rel in files
+                           if rel.startswith("plugins/") and rel.count("/") >= 2}):
+            print(name)
+        save()
+        sys.exit(0)
     failing = (json.loads((state_dir / "exec-fail.json").read_text())
                if (state_dir / "exec-fail.json").exists() else [])
     if opt("-n") in failing:
