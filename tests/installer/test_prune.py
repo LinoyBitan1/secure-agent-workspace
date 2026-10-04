@@ -248,19 +248,19 @@ def test_post_adoption_sandbox_is_pruned_from_json_labels(
     shape for sandbox get."""
     ledger = tmp_path / "managed.json"
     cfg = _on(config, ledger)
-    ab.ProfileApplier(ab.Shell(), cfg, creds).apply(profiles)
+    ab.ProfileApplier(ab.Shell(), cfg, creds, harness=_harness(ab)).apply(profiles)
     for profile in profiles:
         for ws in profile.workspaces:
             if ws.name == "default":
                 ws.sandboxes.append(ab.Sandbox(name="extra", image="base", providers=["nvidia"]))
-    ab.ProfileApplier(ab.Shell(), cfg, creds).apply(profiles)
+    ab.ProfileApplier(ab.Shell(), cfg, creds, harness=_harness(ab)).apply(profiles)
     saved = json.loads(ledger.read_text())
     extra = next(obj for obj in saved["objects"] if obj["kind"] == "sandbox" and obj["name"] == "extra")
     assert extra["adopted"] is False
     for profile in profiles:
         for ws in profile.workspaces:
             ws.sandboxes = [sb for sb in ws.sandboxes if sb.name != "extra"]
-    ab.ProfileApplier(ab.Shell(), cfg, creds).apply(profiles)
+    ab.ProfileApplier(ab.Shell(), cfg, creds, harness=_harness(ab)).apply(profiles)
     assert "default/extra" not in fake_env.openshell_state()["sandboxes"]
     assert "extra" not in _ledger_names(ledger, "sandbox")
     assert "sandbox default/extra" in json.loads(ledger.read_text())["lastPrune"]["pruned"]
@@ -271,19 +271,19 @@ def test_post_adoption_sandbox_without_label_is_kept(
         ab, fake_env, config, profiles, creds, tmp_path, capsys):
     ledger = tmp_path / "managed.json"
     cfg = _on(config, ledger)
-    ab.ProfileApplier(ab.Shell(), cfg, creds).apply(profiles)
+    ab.ProfileApplier(ab.Shell(), cfg, creds, harness=_harness(ab)).apply(profiles)
     for profile in profiles:
         for ws in profile.workspaces:
             if ws.name == "default":
                 ws.sandboxes.append(ab.Sandbox(name="extra", image="base", providers=["nvidia"]))
-    ab.ProfileApplier(ab.Shell(), cfg, creds).apply(profiles)
+    ab.ProfileApplier(ab.Shell(), cfg, creds, harness=_harness(ab)).apply(profiles)
     state = fake_env.openshell_state()
     state.get("labels", {}).pop("sandbox/default/extra", None)
     fake_env.set_openshell_state(state)
     for profile in profiles:
         for ws in profile.workspaces:
             ws.sandboxes = [sb for sb in ws.sandboxes if sb.name != "extra"]
-    ab.ProfileApplier(ab.Shell(), cfg, creds).apply(profiles)
+    ab.ProfileApplier(ab.Shell(), cfg, creds, harness=_harness(ab)).apply(profiles)
     out = capsys.readouterr().out
     assert "default/extra" in fake_env.openshell_state()["sandboxes"]
     assert "extra" in _ledger_names(ledger, "sandbox")
@@ -297,17 +297,17 @@ def test_post_adoption_sandbox_prunes_when_json_output_is_unsupported(
     """A CLI that rejects `--output json` is retried as human `key: value` text."""
     ledger = tmp_path / "managed.json"
     cfg = _on(config, ledger)
-    ab.ProfileApplier(ab.Shell(), cfg, creds).apply(profiles)
+    ab.ProfileApplier(ab.Shell(), cfg, creds, harness=_harness(ab)).apply(profiles)
     for profile in profiles:
         for ws in profile.workspaces:
             if ws.name == "default":
                 ws.sandboxes.append(ab.Sandbox(name="extra", image="base", providers=["nvidia"]))
-    ab.ProfileApplier(ab.Shell(), cfg, creds).apply(profiles)
+    ab.ProfileApplier(ab.Shell(), cfg, creds, harness=_harness(ab)).apply(profiles)
     fake_env.reject_json_output()
     for profile in profiles:
         for ws in profile.workspaces:
             ws.sandboxes = [sb for sb in ws.sandboxes if sb.name != "extra"]
-    ab.ProfileApplier(ab.Shell(), cfg, creds).apply(profiles)
+    ab.ProfileApplier(ab.Shell(), cfg, creds, harness=_harness(ab)).apply(profiles)
     assert "default/extra" not in fake_env.openshell_state()["sandboxes"]
     assert "extra" not in _ledger_names(ledger, "sandbox")
 
@@ -318,16 +318,16 @@ def test_post_adoption_workspace_is_pruned_from_equals_labels(
     adoption must still match that form and be deleted once it is empty."""
     ledger = tmp_path / "managed.json"
     cfg = _on(config, ledger)
-    ab.ProfileApplier(ab.Shell(), cfg, creds).apply(profiles)
+    ab.ProfileApplier(ab.Shell(), cfg, creds, harness=_harness(ab)).apply(profiles)
     profiles[0].workspaces.append(ab.Workspace(name="notes"))
-    ab.ProfileApplier(ab.Shell(), cfg, creds).apply(profiles)
+    ab.ProfileApplier(ab.Shell(), cfg, creds, harness=_harness(ab)).apply(profiles)
     saved = json.loads(ledger.read_text())
     notes = next(obj for obj in saved["objects"] if obj["kind"] == "workspace" and obj["name"] == "notes")
     assert notes["adopted"] is False
     assert "notes" in fake_env.openshell_state()["workspaces"]
     for profile in profiles:
         profile.workspaces = [ws for ws in profile.workspaces if ws.name != "notes"]
-    ab.ProfileApplier(ab.Shell(), cfg, creds).apply(profiles)
+    ab.ProfileApplier(ab.Shell(), cfg, creds, harness=_harness(ab)).apply(profiles)
     assert "notes" not in fake_env.openshell_state()["workspaces"]
     assert "notes" not in _ledger_names(ledger, "workspace")
     assert "workspace -/notes" in json.loads(ledger.read_text())["lastPrune"]["pruned"]
@@ -341,12 +341,12 @@ def test_failed_provider_delete_stays_in_the_ledger(
     recorded as pruned either."""
     ledger = tmp_path / "managed.json"
     cfg = _on(config, ledger)
-    ab.ProfileApplier(ab.Shell(), cfg, creds).apply(profiles)
+    ab.ProfileApplier(ab.Shell(), cfg, creds, harness=_harness(ab)).apply(profiles)
     state = fake_env.openshell_state()
     state["sandboxes"]["default/hand"] = {"image": "base", "providers": ["brave"], "phase": "Ready"}
     fake_env.set_openshell_state(state)
     _drop_provider(profiles, "default", "brave")
-    ab.ProfileApplier(ab.Shell(), cfg, creds).apply(profiles)
+    ab.ProfileApplier(ab.Shell(), cfg, creds, harness=_harness(ab)).apply(profiles)
     out = capsys.readouterr().out
     assert "default/brave" in fake_env.openshell_state()["providers"]
     assert "default/hand" in fake_env.openshell_state()["sandboxes"]
