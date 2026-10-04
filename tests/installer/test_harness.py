@@ -2,6 +2,8 @@
 
 import base64
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -376,6 +378,57 @@ def test_an_inline_stdio_server_cannot_run_a_bundled_file(ab):
     with pytest.raises(ab.InstallerError, match="keeps no file modes"):
         ab.describe_harness_tree(_stdio_tree(conf=conf), inline=True)
     assert ab.describe_harness_tree(_stdio_tree(conf=conf))["governance"] == []
+
+
+@pytest.mark.parametrize("field,value", [
+    ("env", {"API_KEY": "sk-literal-secret"}),
+    ("headers", {"Authorization": "Bearer sk-literal-secret"}),
+    ("env", {"API_KEY": "sk-live-secret${TAVILY_API_KEY}"}),
+    ("headers", {"Authorization": "Bearer real-token${TAVILY_API_KEY}"}),
+])
+def test_a_literal_secret_in_mcp_json_is_refused(ab, field, value):
+    conf = {"type": "stdio" if field == "env" else "streamable-http", "command": "node",
+            "url": "https://api.tavily.com/mcp", field: value}
+    decl = {"governanceProfile": "web-search"} if field == "headers" else None
+    with pytest.raises(ab.InstallerError, match="bare \\$\\{VAR\\} placeholder"):
+        ab.describe_harness_tree(_stdio_tree(decl, conf))
+
+
+@pytest.mark.parametrize("field,value", [
+    ("env", {"API_KEY": "${TAVILY_API_KEY}"}),
+    ("headers", {"Authorization": "Bearer ${TAVILY_API_KEY}"}),
+])
+def test_a_placeholder_only_value_in_mcp_json_is_accepted(ab, field, value):
+    conf = {"type": "stdio" if field == "env" else "streamable-http", "command": "node",
+            "url": "https://api.tavily.com/mcp", field: value}
+    decl = {"governanceProfile": "web-search"} if field == "headers" else None
+    ab.describe_harness_tree(_stdio_tree(decl, conf))
+
+
+def test_check_bundle_accepts_the_shipped_ds_default_bundle():
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "charts/openshell-saw/files/installer/apply_bom.py"),
+         "check-bundle", str(ROOT / "harness-bundles" / "ds-default")],
+        capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "bundle is valid" in result.stderr + result.stdout
+
+
+def test_check_bundle_rejects_a_literal_secret(tmp_path):
+    bundle = tmp_path / "bad-bundle"
+    bundle.mkdir()
+    (bundle / "harness.yaml").write_text(yaml.safe_dump(
+        {"metadata": {"name": "bad"}, "spec": {"agent": "openclaw"}}))
+    (bundle / "plugin.json").write_text("{}")
+    (bundle / "mcp.json").write_text(json.dumps(
+        {"mcpServers": {"s": {"type": "stdio", "command": "node",
+                              "env": {"KEY": "sk-literal"}}}}))
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "charts/openshell-saw/files/installer/apply_bom.py"),
+         "check-bundle", str(bundle)],
+        capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "placeholder" in result.stdout + result.stderr
 
 
 # -- harness-index.yaml: the chart's digest, checked by the installer ---------

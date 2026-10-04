@@ -540,6 +540,11 @@ HARNESS_VOLUME_LABEL = "saw.redhat.com/harness-volume"
 HARNESS_CONFIG_KEYS = ("plugins.load.paths", "skills.load.extraDirs")
 OPENCLAW_EXEC_ENV = ("OPENCLAW_HOME=/sandbox SQLITE_TMPDIR=/sandbox/.openclaw/state "
                      "TMPDIR=/sandbox/.openclaw/state OPENCLAW_NIX_MODE=0")
+# mcp.json env/header value: exactly ${VAR}, or Authorization-style
+# "Bearer ${VAR}". Any other prefix could smuggle a literal secret.
+MCP_PLACEHOLDER_ONLY = re.compile(
+    r"^(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|Bearer \$\{[A-Za-z_][A-Za-z0-9_]*\})$",
+    re.IGNORECASE)
 # The podman driver's workload container (its supervisor has the same
 # sandbox labels but not the user's mounts): isolation.rs WORKLOAD_FILTER.
 WORKLOAD_ROLE_LABEL = "openshell.ai/isolation-role=sandbox"
@@ -718,6 +723,13 @@ def describe_harness_tree(files, inline=False):
                 raise InstallerError(
                     f"harness '{name}': mcp.json server '{server}' needs \"type\": \"stdio\", "
                     "\"streamable-http\" or \"sse\" (OpenClaw ignores it otherwise)")
+            for field in ("env", "headers"):
+                for key, value in (conf.get(field) or {}).items():
+                    if not isinstance(value, str) or not MCP_PLACEHOLDER_ONLY.match(value):
+                        raise InstallerError(
+                            f"harness '{name}': mcp.json server '{server}' {field} '{key}' is not "
+                            "a bare ${VAR} placeholder (e.g. \"Bearer ${VAR}\"); a literal secret "
+                            "must not ship in a bundle's mcp.json, the ConfigMap or the image")
             profile = (declared.get(server) or {}).get("governanceProfile", "")
             if conf["type"] == "stdio":
                 command = conf.get("command")
@@ -3373,12 +3385,44 @@ def cmd_reconcile(args):
     return 0
 
 
+def check_bundle(directory):
+    """Validate a harness-bundles/<name>/ tree with the same rules apply uses.
+
+    Used by CI and scripts/harness-bundle.sh so a broken bundle fails once,
+    before every SAW.
+    """
+    root = Path(directory)
+    if not (root / "harness.yaml").is_file():
+        raise InstallerError(f"{root}: has no harness.yaml")
+    files = {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            if path.is_symlink():
+                raise InstallerError(f"{root}: contains symbolic link {path.relative_to(root)}")
+            continue
+        rel = path.relative_to(root).as_posix()
+        if rel.rsplit("/", 1)[-1].startswith("._"):
+            continue
+        files[rel] = (path.read_bytes(), bool(path.stat().st_mode & 0o111))
+    describe_harness_tree(files, inline=False)
+    log(f"{root.name}: bundle is valid")
+
+
+def cmd_check_bundle(args):
+    check_bundle(args.directory)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="In-guest SAW installer (Stage 1)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_validate = sub.add_parser("validate", help="check all inputs; changes nothing")
     p_validate.add_argument("--inputs", default=str(DEFAULT_INPUTS))
+
+    p_check = sub.add_parser("check-bundle",
+                             help="validate a harness-bundles/<name>/ tree; changes nothing")
+    p_check.add_argument("directory")
 
     for name, help_text in (("install", "step 1 (root): install BOM components, start the gateway"),
                             ("apply", "step 2 (root): apply SAW-BOM profiles as the runtime user"),
@@ -3407,7 +3451,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     commands = {"validate": cmd_validate, "install": cmd_install,
                 "apply": cmd_apply, "reconcile": cmd_reconcile,
-                "apply-profiles": cmd_apply_profiles}
+                "apply-profiles": cmd_apply_profiles,
+                "check-bundle": cmd_check_bundle}
     try:
         return commands[args.command](args)
     except InstallerError as exc:

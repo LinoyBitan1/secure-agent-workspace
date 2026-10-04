@@ -20,8 +20,10 @@ cmd="${1:-}"; bundle="${2:-}"
 dir="$ROOT/harness-bundles/$bundle"
 [[ -f "$dir/harness.yaml" ]] || { echo "no harness bundle at $dir (harness.yaml missing)" >&2; exit 1; }
 local_tag="saw-harness-$bundle:dev"
+CHECK="$ROOT/charts/openshell-saw/files/installer/apply_bom.py"
 
 build() {
+  python "$CHECK" check-bundle "$dir"
   COPYFILE_DISABLE=1 "$ENGINE" build -q -f "$ROOT/harness-bundles/Containerfile" -t "$local_tag" "$dir" >/dev/null
   echo "built $local_tag"
 }
