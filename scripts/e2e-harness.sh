@@ -155,14 +155,36 @@ if [[ -n "${STATUS_JSON}" ]]; then
 fi
 
 step "H3: OpenClaw loads the bundle"
-check "openclaw mcp list works" -- sb_exec sh -c 'openclaw mcp list'
-MCP_LIST=$(sb_exec sh -c 'openclaw mcp list' 2>/dev/null || true)
-echo "${MCP_LIST}" | sed 's/^/    mcp: /'
-if sb_exec sh -c 'openclaw plugins list' >/dev/null 2>&1; then
-  pass "openclaw plugins list works"
-  sb_exec sh -c 'openclaw plugins list' 2>/dev/null | sed 's/^/    plugin: /'
+# `mcp list` never shows bundle servers; check `plugins list --json` instead.
+PLUGINS_JSON=$(sb_exec sh -c 'OPENCLAW_HOME=/sandbox openclaw plugins list --json' 2>/dev/null || true)
+if [[ -z "${PLUGINS_JSON}" ]]; then
+  fail "openclaw plugins list --json returned nothing"
 else
-  skip "no plugins in this bundle (only MCP/skill bundle)"
+  # Same bar as the installer's verify: mount row loaded, caps covering the
+  # mounted tree, every native plugin id enabled.
+  NEED_CAPS=""
+  sb_exec test -f /sandbox/harness/mcp.json >/dev/null 2>&1 && NEED_CAPS="mcpServers"
+  sb_exec test -d /sandbox/harness/skills >/dev/null 2>&1 && NEED_CAPS="${NEED_CAPS} skills"
+  NEED_PLUGINS=$(sb_exec ls /sandbox/harness/plugins 2>/dev/null || true)
+  echo "${PLUGINS_JSON}" | NEED_CAPS="${NEED_CAPS}" NEED_PLUGINS="${NEED_PLUGINS}" python3 -c "
+import json, os, sys
+plugins = json.load(sys.stdin).get('plugins') or []
+rows = [p for p in plugins if isinstance(p, dict)]
+bundle = next((p for p in rows if p.get('format') == 'bundle'
+               and p.get('rootDir') == '/sandbox/harness'), None)
+assert bundle and bundle.get('enabled') and bundle.get('status') == 'loaded', 'bundle row not loaded'
+caps = set(bundle.get('bundleCapabilities') or [])
+if caps:
+    missing = sorted(set(os.environ['NEED_CAPS'].split()) - caps)
+    assert not missing, f'bundle lacks capabilities: {missing}'
+by_id = {p.get('id') or p.get('name'): p for p in rows}
+missing = [p for p in os.environ['NEED_PLUGINS'].split()
+           if not by_id.get(p, {}).get('enabled', False)]
+assert not missing, f'plugins not enabled: {missing}'
+print('  bundle:', bundle.get('id'), '| caps:', ','.join(sorted(caps)) or '<unreported>')
+print('  enabled plugins:', ' '.join(sorted(by_id)) or '<none>')
+" && pass "bundle row loaded from /sandbox/harness (caps + plugins match)" \
+    || fail "bundle row missing/disabled/capability-short in plugins list --json"
 fi
 
 step "H4: OpenClaw harness config points at the mount"

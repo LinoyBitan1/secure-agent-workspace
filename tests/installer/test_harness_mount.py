@@ -154,6 +154,85 @@ def test_drifted_openclaw_harness_config_fails_verify(
     assert any("plugins.load.paths" in f for f in applier.verify(profiles))
 
 
+def test_a_bundle_openclaw_has_not_loaded_fails_verify(
+        ab, fake_env, config, profiles, creds):
+    """`mcp list` never shows bundle servers, so verify reads the bundle row
+    of `plugins list --json`: no row (or not loaded) fails the run."""
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    use_ref(profiles, {"image": IMAGE_V1})
+    applier = make_applier(ab, config, creds)
+    applier.apply(profiles)
+    assert applier.verify(profiles) == []
+    (fake_env.state / "plugins-list.json").write_text(json.dumps({"plugins": []}))
+    failures = applier.verify(profiles)
+    assert any("does not load the harness bundle" in f for f in failures)
+
+
+def test_an_unparseable_plugins_list_fails_verify(
+        ab, fake_env, config, profiles, creds):
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    use_ref(profiles, {"image": IMAGE_V1})
+    applier = make_applier(ab, config, creds)
+    applier.apply(profiles)
+    assert applier.verify(profiles) == []
+    (fake_env.state / "plugins-list.json").write_text("not json\n")
+    failures = applier.verify(profiles)
+    assert any("could not parse" in f for f in failures)
+
+
+def live_listing(**overrides):
+    """The 2026.9.5 row shape: Source is an origin string, rootDir the path."""
+    bundle = {"id": "demo", "name": "demo", "format": "bundle",
+              "source": "$OPENCLAW_HOME/harness", "rootDir": "/sandbox/harness",
+              "enabled": True, "status": "loaded",
+              "bundleCapabilities": ["skills", "mcpServers"]}
+    bundle.update(overrides.pop("bundle", {}))
+    plugins = [bundle]
+    for name, enabled in overrides.pop("native", {"old-tool": True}).items():
+        plugins.append({"id": name, "format": "openclaw",
+                        "enabled": enabled, "status": "loaded"})
+    return json.dumps({"plugins": plugins})
+
+
+def test_a_bundle_that_is_not_loaded_fails_verify(
+        ab, fake_env, config, profiles, creds):
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    use_ref(profiles, {"image": IMAGE_V1})
+    applier = make_applier(ab, config, creds)
+    applier.apply(profiles)
+    assert applier.verify(profiles) == []
+    (fake_env.state / "plugins-list.json").write_text(
+        live_listing(bundle={"status": "error"}))
+    failures = applier.verify(profiles)
+    assert any("does not load the harness bundle 'demo'" in f for f in failures)
+
+
+def test_a_bundle_without_capabilities_still_passes_verify(
+        ab, fake_env, config, profiles, creds):
+    """Older shapes may omit bundleCapabilities; the mount row is the proof."""
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    use_ref(profiles, {"image": IMAGE_V1})
+    applier = make_applier(ab, config, creds)
+    applier.apply(profiles)
+    listing = json.loads(live_listing())
+    del listing["plugins"][0]["bundleCapabilities"]
+    (fake_env.state / "plugins-list.json").write_text(json.dumps(listing))
+    assert applier.verify(profiles) == []
+
+
+def test_a_disabled_native_plugin_fails_verify(
+        ab, fake_env, config, profiles, creds):
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    use_ref(profiles, {"image": IMAGE_V1})
+    applier = make_applier(ab, config, creds)
+    applier.apply(profiles)
+    assert applier.verify(profiles) == []
+    (fake_env.state / "plugins-list.json").write_text(
+        live_listing(native={"old-tool": False}))
+    failures = applier.verify(profiles)
+    assert any("old-tool" in f for f in failures)
+
+
 def test_a_failed_volume_import_restores_the_previous_tree(
         ab, fake_env, config, profiles, creds):
     fake_env.set_images({IMAGE_V1: {"__tree__": V1}, IMAGE_V2: {"__tree__": V2}})

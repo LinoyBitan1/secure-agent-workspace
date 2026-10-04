@@ -228,8 +228,10 @@ For each sandbox with a `harnessRef`:
    plugin). A bundle without `plugin.json` uses `skills.load.extraDirs`.
    Re-apply re-sets these keys; verify fails if they drifted.
 6. **Verify:** the volume holds the source intact, the container mounts it
-   read-only, OpenClaw lists the MCP servers/plugins and the config keys
-   match, and the sandbox reads the same content through it. `status.json`
+   read-only, `openclaw plugins list --json` shows the bundle row loaded
+   from the mount (`mcp list` only shows OpenClaw-managed servers, never
+   bundle ones) and the config keys match, and the sandbox reads the same
+   content through it. `status.json`
    records the source as `appliedRevision`.
 7. **Clean up** harness volumes no enabled sandbox wants (a volume still
    mounted by a sandbox stays until that sandbox is gone).

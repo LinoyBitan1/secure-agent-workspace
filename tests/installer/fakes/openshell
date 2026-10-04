@@ -332,20 +332,35 @@ elif op == "sandbox exec":
             print(json.dumps(val))
             save()
             sys.exit(0)
-    if "openclaw mcp list" in script:
-        try:
-            servers = json.loads(harness_files().get("mcp.json", "{}")).get("mcpServers") or {}
-        except ValueError:
-            servers = {}
-        for name in sorted(servers):
-            print(name)
-        save()
-        sys.exit(0)
-    if "openclaw plugins list" in script:
+    if "openclaw plugins list --json" in script:
+        # plugins-list.json overrides the listing (a bundle OpenClaw has not
+        # loaded, or output that does not parse).
+        override = state_dir / "plugins-list.json"
+        if override.exists():
+            print(override.read_text(), end="")
+            save()
+            sys.exit(0)
+        # 2026.9.5 `--json` shape: bundle row from the mount plus native ids.
+        # `mcp list` is not modelled (it never shows bundle servers).
+        import yaml as _yaml
         files = harness_files()
-        for name in sorted({rel.split("/")[1] for rel in files
-                           if rel.startswith("plugins/") and rel.count("/") >= 2}):
-            print(name)
+        try:
+            name = (_yaml.safe_load(files.get("harness.yaml", "")) or {}).get("metadata", {}).get("name", "")
+        except ValueError:
+            name = ""
+        caps = []
+        if any(rel.startswith("skills/") for rel in files):
+            caps.append("skills")
+        if "mcp.json" in files:
+            caps.append("mcpServers")
+        plugins = [{"id": name, "name": name, "format": "bundle",
+                    "source": "$OPENCLAW_HOME/harness", "rootDir": "/sandbox/harness",
+                    "enabled": True, "status": "loaded", "bundleCapabilities": caps}]
+        for pname in sorted({rel.split("/")[1] for rel in files
+                             if rel.startswith("plugins/") and rel.count("/") >= 2}):
+            plugins.append({"id": pname, "name": pname, "format": "openclaw",
+                            "enabled": True, "status": "loaded"})
+        print(json.dumps({"plugins": plugins}))
         save()
         sys.exit(0)
     failing = (json.loads((state_dir / "exec-fail.json").read_text())
