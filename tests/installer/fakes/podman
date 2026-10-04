@@ -8,8 +8,9 @@ State lives in $FAKE_STATE:
                    FROM-scratch image whose root is the bundle tree.
   containers.json  container id -> image, for `create` / `cp` / `export`.
   volumes/<name>/  named volumes, as real directories (`volume create`,
-                   `inspect`, `ls`, `import`, `rm`, which refuses a volume a
-                   sandbox mounts); volume-labels.json holds their labels.
+                   `inspect`, `ls`, `import` with tar filter='data', `rm`,
+                   which refuses a volume a sandbox mounts);
+                   volume-labels.json holds their labels.
   openshell.json   read-only here: the fake openshell's sandboxes. `ps` and
                    `inspect` present each one as a sandbox container with the
                    labels and `.Mounts` the real OpenShell podman driver sets
@@ -97,7 +98,9 @@ elif cmd == "cp":
         (dest / "bin").mkdir(parents=True)
         (dest / "bin" / "nemoclaw.js").write_text("console.log('nemoclaw')\n")
 elif cmd == "export":
-    # The container filesystem of a harness image: the bundle tree at the root.
+    # Container filesystem of a harness image: __tree__ keys are tar member
+    # names as-is (including unsafe ones), so read_harness_tar's path checks
+    # are exercised the same way a real podman export would.
     out = Path(args[args.index("-o") + 1])
     cid = args[-1]
     tree = images.get(containers.get(cid, ""), {}).get("__tree__")
@@ -106,7 +109,7 @@ elif cmd == "export":
         sys.exit(125)
     with tarfile.open(out, "w") as tar:
         for rel, text in sorted(tree.items()):
-            data = text.encode()
+            data = text.encode() if isinstance(text, str) else text
             info = tarfile.TarInfo(rel)
             info.size = len(data)
             info.mode = 0o755 if rel.endswith(".sh") else 0o644
@@ -187,9 +190,11 @@ elif cmd == "volume":
             if entry.is_dir():
                 print(entry.name)
     elif sub == "import":
+        # filter='data': refuse absolute / .. members the way a careful
+        # extract should; unfiltered extractall would hide write_harness_tar bugs.
         name, tarball = args[2], args[3]
         with tarfile.open(tarball) as tar:
-            tar.extractall(volumes / name)
+            tar.extractall(volumes / name, filter="data")
     elif sub == "rm":
         if not (volumes / name).is_dir():
             print(f"Error: no volume with name \"{name}\" found", file=sys.stderr)
