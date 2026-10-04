@@ -200,7 +200,11 @@ For each sandbox with a `harnessRef`:
    workspace (`openshell provider list-profiles [--workspace <ws>] -o json`).
    Every `governanceProfile` must be served, the sandbox must have a provider
    of that type, and a remote MCP server's host must be one of the profile's
-   endpoints. Nothing is written before this passes.
+   endpoints (a profile endpoint may be a single-label glob, e.g.
+   `*-aiplatform.googleapis.com`; ports are ignored). Plugins or stdio
+   servers with no `harness.yaml` entry are only warned; their egress is
+   enforced at runtime by the sandbox proxy. Nothing is written before this
+   passes.
 3. **Fill the volume** if its content differs.
 4. **Mount:** create the sandbox with the volume at `/sandbox/harness`. A
    running sandbox that does not mount its volume (created before its
