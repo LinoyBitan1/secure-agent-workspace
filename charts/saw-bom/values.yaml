@@ -10,5 +10,5 @@ profiles:
 # it off, no profile sandbox gets a harnessRef, no bundle is shipped in the
 # ConfigMap, and existing sandboxes are left alone on upgrade. Turning it on
 # also needs allowDriverConfig=true in the openshell-saw chart (saw-users
-# sets this for you from the same user.demoHarness flag).
-demoHarness: false
+# sets this for you from the same user.harnessEnabled flag).
+harnessEnabled: false

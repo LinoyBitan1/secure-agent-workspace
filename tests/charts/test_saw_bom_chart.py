@@ -38,9 +38,9 @@ def helm_template(chart=CHART, *args, release="saw-bom-test", namespace="saw-ali
 
 
 # This suite exercises harness packaging, so render with the demo bundle on
-# unless a test is specifically about the demoHarness=false default.
+# unless a test is specifically about the harnessEnabled=false default.
 def render(chart=CHART, *args, demo_harness=True):
-    args = (("--set=demoHarness=true",) if demo_harness else ()) + args
+    args = (("--set=harnessEnabled=true",) if demo_harness else ()) + args
     result = helm_template(chart, *args)
     assert result.returncode == 0, result.stderr
     docs = [d for d in yaml.safe_load_all(result.stdout) if d]
@@ -48,7 +48,7 @@ def render(chart=CHART, *args, demo_harness=True):
 
 
 def render_error(chart=CHART, *args, demo_harness=True):
-    args = (("--set=demoHarness=true",) if demo_harness else ()) + args
+    args = (("--set=harnessEnabled=true",) if demo_harness else ()) + args
     result = helm_template(chart, *args)
     assert result.returncode != 0, "render was expected to fail"
     return result.stderr
@@ -66,7 +66,7 @@ def ds_default_digest(ab):
 
 
 def test_demo_harness_is_off_by_default():
-    """With demoHarness off, no sandbox gets a harnessRef and nothing harness-
+    """With harnessEnabled off, no sandbox gets a harnessRef and nothing harness-
     shaped is shipped, so an upgrade with defaults never recreates a sandbox."""
     data = bom_data(demo_harness=False)
     assert "harnessRef" not in data["profiles__data-science__default__sandbox.yaml"]

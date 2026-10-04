@@ -147,9 +147,9 @@ def test_empty_global_values_are_left_out(tmp_path):
 
 
 def test_demo_harness_turns_on_allow_driver_config(tmp_path):
-    docs = docs_from(render_file(tmp_path, [{"name": "alice", "demoHarness": True}]))
+    docs = docs_from(render_file(tmp_path, [{"name": "alice", "harnessEnabled": True}]))
     assert helm_values(app(docs, "saw-alice-bom")) == {
-        "profiles": ["data-science"], "demoHarness": True,
+        "profiles": ["data-science"], "harnessEnabled": True,
     }
     assert helm_values(app(docs, "saw-alice"))["allowDriverConfig"] is True
 
@@ -160,7 +160,7 @@ def test_demo_harness_off_leaves_allow_driver_config_unset(tmp_path):
 
 
 def test_a_user_can_override_allow_driver_config_off(tmp_path):
-    user = {"name": "alice", "demoHarness": True, "values": {"allowDriverConfig": False}}
+    user = {"name": "alice", "harnessEnabled": True, "values": {"allowDriverConfig": False}}
     docs = docs_from(render_file(tmp_path, [user]))
     assert helm_values(app(docs, "saw-alice"))["allowDriverConfig"] is False
 
@@ -244,7 +244,10 @@ def test_shipped_override_renders_alice(tmp_path):
     result = helm("template", "saw-users", str(CHART), "-f", str(ROOT / "overrides" / "saw-users.yaml"))
     docs = docs_from(result)
     assert [doc["metadata"]["name"] for doc in by_kind(docs, "Namespace")] == ["saw-alice"]
-    assert helm_values(app(docs, "saw-alice-bom")) == {"profiles": ["data-science"]}
+    assert helm_values(app(docs, "saw-alice-bom")) == {
+        "profiles": ["data-science"], "harnessEnabled": True,
+    }
+    assert helm_values(app(docs, "saw-alice"))["allowDriverConfig"] is True
 
 
 def test_missing_repo_url_fails(tmp_path):
@@ -294,6 +297,6 @@ def test_rendered_machine_values_validate_in_the_shipped_installer(tmp_path):
 
 
 def test_a_user_can_opt_into_the_demo_harness(tmp_path):
-    docs = docs_from(render_file(tmp_path, [dict(ALICE, demoHarness=True)]))
+    docs = docs_from(render_file(tmp_path, [dict(ALICE, harnessEnabled=True)]))
     assert helm_values(app(docs, "saw-alice-bom")) == {
-        "profiles": ["data-science"], "demoHarness": True}
+        "profiles": ["data-science"], "harnessEnabled": True}
