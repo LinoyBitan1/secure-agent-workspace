@@ -37,21 +37,25 @@ def helm_template(chart=CHART, *args, release="saw-bom-test", namespace="saw-ali
                           capture_output=True, text=True)
 
 
-def render(chart=CHART, *args):
+# This suite exercises harness packaging, so render with the demo bundle on
+# unless a test is specifically about the demoHarness=false default.
+def render(chart=CHART, *args, demo_harness=True):
+    args = (("--set=demoHarness=true",) if demo_harness else ()) + args
     result = helm_template(chart, *args)
     assert result.returncode == 0, result.stderr
     docs = [d for d in yaml.safe_load_all(result.stdout) if d]
     return {(d["kind"], d["metadata"]["name"]): d for d in docs}
 
 
-def render_error(chart=CHART, *args):
+def render_error(chart=CHART, *args, demo_harness=True):
+    args = (("--set=demoHarness=true",) if demo_harness else ()) + args
     result = helm_template(chart, *args)
     assert result.returncode != 0, "render was expected to fail"
     return result.stderr
 
 
-def bom_data():
-    docs = render()
+def bom_data(**kwargs):
+    docs = render(**kwargs)
     return docs[("ConfigMap", "saw-bom-profiles")]["data"]
 
 
@@ -59,6 +63,22 @@ def ds_default_digest(ab):
     files = {str(p.relative_to(HARNESS / "ds-default")): p.read_bytes()
              for p in sorted((HARNESS / "ds-default").rglob("*")) if p.is_file()}
     return ab.tree_digest(files)
+
+
+def test_demo_harness_is_off_by_default():
+    """With demoHarness off, no sandbox gets a harnessRef and nothing harness-
+    shaped is shipped, so an upgrade with defaults never recreates a sandbox."""
+    data = bom_data(demo_harness=False)
+    assert "harnessRef" not in data["profiles__data-science__default__sandbox.yaml"]
+    assert not [k for k in data if k.startswith("harness__")]
+    assert "harness-index.yaml" not in data
+
+
+def test_demo_harness_true_ships_the_bundle_and_ref():
+    data = bom_data(demo_harness=True)
+    assert "harnessRef" in data["profiles__data-science__default__sandbox.yaml"]
+    assert "harness__ds-default__harness.yaml" in data
+    assert "harness-index.yaml" in data
 
 
 def test_no_governance_list_is_kept_in_the_chart():

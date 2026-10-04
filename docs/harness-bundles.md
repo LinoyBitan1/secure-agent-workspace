@@ -131,14 +131,20 @@ path mounts while resource admission is on (the default), and admits a volume
 only when it carries the `openshell.ai/sandbox-attachable=true` and
 `openshell.ai/sandbox-attachable-workspace=<workspace>` labels, which the
 installer sets. The gateway also needs `allow_driver_config = true`
-(`allowDriverConfig` in the openshell-saw chart, on by default); the
-installer stops before changing anything when a sandbox has a `harnessRef`
-and it is off. Turning it off later stops every sandbox created with a
-harness (the podman driver re-checks them), so recreate those first. With
-admission on and bind mounts off, a signed-in user of the workspace can
-attach nothing but the workspace's own labelled volumes; if one is attached
-writable and changed, the next apply finds the tree digest changed and
-refills it.
+(`allowDriverConfig` in the openshell-saw chart, **off by default** — turn
+it on together with a profile that has a `harnessRef`, e.g. saw-bom's
+`demoHarness`); the installer stops before changing anything when a sandbox
+has a `harnessRef` and it is off. Turning it off later stops every sandbox
+created with a harness (the podman driver re-checks them), so recreate those
+first. With admission on and bind mounts off, a signed-in user of the
+workspace can attach nothing but the workspace's own labelled volumes; if
+one is attached writable and changed, the next apply finds the tree digest
+changed and refills it.
+
+The shipped `ds-default` demo pin is opt-in (`demoHarness: false` in
+saw-bom). With it off, sandbox.yaml loses its `harnessRef` and no harness
+keys ship, so an upgrade does not recreate notebooks. Set
+`demoHarness: true` and `allowDriverConfig: true` to try the demo.
 
 ### OCI image (recommended)
 
