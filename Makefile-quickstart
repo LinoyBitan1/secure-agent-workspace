@@ -549,6 +549,9 @@ governance-demo: .check-saw-name ## Run governance interceptor demo
 test: ## Run headless E2E test (auto-detects provider from ~/values-secret.yaml)
 	@$(SCRIPTS_DIR)/e2e-test.sh
 
+test-harness-e2e: ## Verify the harness bundle live (OPENSHELL_SAW_NAME=, E2E_ARGS=--revoke-drill)
+	@$(SCRIPTS_DIR)/e2e-harness.sh $(E2E_ARGS)
+
 # --- Teardown ---
 
 openshell-saw-delete: sandbox-pre-delete ## Uninstall a sandbox and its namespace
