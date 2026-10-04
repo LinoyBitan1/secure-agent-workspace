@@ -91,7 +91,13 @@ user's `values` on top. Nested maps merge; the user's keys win.
 {{- if hasKey $user "profiles" -}}
 {{- $profiles = $user.profiles -}}
 {{- end -}}
-{{- toYaml (dict "profiles" $profiles) -}}
+{{- /* Opt-in demo harness bundle (charts/saw-bom/harness/ds-default).
+     Needs allowDriverConfig=true in the user's openshell-saw `values`. */ -}}
+{{- $bomValues := dict "profiles" $profiles -}}
+{{- if $user.demoHarness -}}
+{{- $_ := set $bomValues "demoHarness" true -}}
+{{- end -}}
+{{- toYaml $bomValues -}}
 {{- end -}}
 
 {{- define "saw-users.vaultPrefix" -}}

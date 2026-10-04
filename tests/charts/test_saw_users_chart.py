@@ -272,3 +272,9 @@ def test_rendered_machine_values_validate_in_the_shipped_installer(tmp_path):
     config = json.loads(installer["data"]["config.json"])
     assert config["vmName"] == "alice"
     assert config["ownerSubject"] == ""
+
+
+def test_a_user_can_opt_into_the_demo_harness(tmp_path):
+    docs = docs_from(render_file(tmp_path, [dict(ALICE, demoHarness=True)]))
+    assert helm_values(app(docs, "saw-alice-bom")) == {
+        "profiles": ["data-science"], "demoHarness": True}
