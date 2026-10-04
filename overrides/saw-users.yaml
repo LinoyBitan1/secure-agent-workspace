@@ -6,3 +6,5 @@ users:
   - name: alice
     profiles:
       - data-science
+    # TEMPORARY for live harnessEnabled drill - REVERT.
+    harnessEnabled: true
