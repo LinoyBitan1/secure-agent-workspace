@@ -7,6 +7,8 @@ permission error, to test error paths.
 """
 import json
 import os
+import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -15,8 +17,8 @@ args = sys.argv[1:]
 with open(state_dir / "openshell.log", "a") as log:
     log.write(json.dumps(args) + "\n")
 
-path = state_dir / "openshell.json"
-state = json.loads(path.read_text()) if path.exists() else {
+state_file = state_dir / "openshell.json"
+state = json.loads(state_file.read_text()) if state_file.exists() else {
     "gateways": [], "selected": None, "workspaces": ["default"], "members": [],
     "providers": {}, "sandboxes": {}, "inference": {}, "system_inference": None}
 deny = json.loads((state_dir / "deny.json").read_text()) if (state_dir / "deny.json").exists() else []
@@ -25,7 +27,7 @@ no_profiles = (json.loads((state_dir / "no-profiles.json").read_text())
 
 
 def save():
-    path.write_text(json.dumps(state))
+    state_file.write_text(json.dumps(state))
 
 
 def opt(name, default=None):
@@ -302,6 +304,34 @@ elif op == "sandbox exec":
         return {}
 
     script = args[-1] if args else ""
+    if "openclaw config set " in script:
+        m = re.search(r"openclaw config set (\S+)\s+(.*)", script)
+        if m:
+            key, rest = m.group(1), m.group(2).strip()
+            try:
+                tokens = shlex.split(rest)
+                val = json.loads(tokens[0]) if tokens else None
+            except (ValueError, json.JSONDecodeError):
+                val = rest.strip("'\"")
+            if key.startswith(("plugins.load", "skills.load")):
+                sb.setdefault("openclawConfig", {})[key] = val
+            save()
+            sys.exit(0)
+    if "openclaw config unset " in script:
+        m = re.search(r"openclaw config unset (\S+)", script)
+        if m:
+            (sb.get("openclawConfig") or {}).pop(m.group(1), None)
+            save()
+            sys.exit(0)
+    if "openclaw config get " in script:
+        m = re.search(r"openclaw config get (\S+)", script)
+        if m:
+            val = (sb.get("openclawConfig") or {}).get(m.group(1))
+            if val is None:
+                sys.exit(1)
+            print(json.dumps(val))
+            save()
+            sys.exit(0)
     if "openclaw mcp list" in script:
         try:
             servers = json.loads(harness_files().get("mcp.json", "{}")).get("mcpServers") or {}
