@@ -69,17 +69,10 @@ jobs:
       - name: Check the bundle
         run: |
           set -euo pipefail
-          dir="harness-bundles/${{ matrix.bundle }}"
-          [[ -f "$dir/harness.yaml" ]] || { echo "::error::$dir has no harness.yaml"; exit 1; }
-          # Every mcp.json server needs a type OpenClaw accepts.
-          if [[ -f "$dir/mcp.json" ]]; then
-            jq -e '.mcpServers | to_entries | all(.value.type == "stdio" or .value.type == "streamable-http" or .value.type == "sse")' \
-              "$dir/mcp.json" >/dev/null || { echo "::error::$dir/mcp.json: every server needs type stdio, streamable-http or sse"; exit 1; }
-          fi
-          # No links: the installer refuses them when it unpacks the image.
-          if find "$dir" -type l | grep -q .; then
-            echo "::error::$dir contains symbolic links"; exit 1
-          fi
+          # Same describe_harness_tree rules the installer uses (types, secrets,
+          # plugin.json, symlinks).
+          python charts/openshell-saw/files/installer/apply_bom.py check-bundle \
+            "harness-bundles/${{ matrix.bundle }}"
 
       - uses: docker/setup-buildx-action@v3
 

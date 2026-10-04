@@ -92,11 +92,12 @@ cannot read it.
 
 3. Have the server read the profile's env var (`BRAVE_API_KEY`) and call only
    the profile's endpoints. OpenShell gives every process started in the
-   sandbox the placeholder; whether OpenClaw passes its whole environment to
-   a stdio server is not confirmed yet, so if the server does not see it,
-   name the variable in its `mcp.json` entry:
-   `"env": {"BRAVE_API_KEY": "${BRAVE_API_KEY}"}`. A provider attached to a
-   running sandbox reaches OpenClaw after its gateway restarts.
+   sandbox the placeholder; name the variable in its `mcp.json` entry as
+   exactly `${VAR}` (or `Bearer ${VAR}` for Authorization headers):
+   `"env": {"BRAVE_API_KEY": "${BRAVE_API_KEY}"}`. Any other value is refused
+   so a literal secret cannot ship in the bundle, ConfigMap or image. A
+   provider attached to a running sandbox reaches OpenClaw after its gateway
+   restarts.
 
 The installer refuses a bundle whose governed server or plugin names a profile
 the gateway does not serve in that workspace, or one the sandbox has no
