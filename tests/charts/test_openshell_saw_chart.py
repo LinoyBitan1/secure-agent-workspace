@@ -811,6 +811,13 @@ def test_signing_mode_defaults_to_warn(default_docs):
     assert unit.index("saw-stage-installer") < unit.index("apply_bom.py install")
 
 
+@pytest.mark.parametrize("ttl", [0, 120, 300])
+def test_harness_signature_cache_ttl_reaches_installer(ttl):
+    docs = render("--set", f"harness.cosign.cacheTtlSeconds={ttl}")
+    cfg = json.loads(installer_data(docs)["config.json"])
+    assert cfg["harness"]["cosign"]["cacheTtlSeconds"] == ttl
+
+
 def test_enforce_without_trust_material_fails_at_render():
     err = render_error("--set", "signing.mode=enforce")
     assert "signing.mode enforce requires" in err

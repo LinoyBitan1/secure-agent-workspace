@@ -5,6 +5,7 @@ OpenShell's example interceptor before building it, so both must carry the
 same patches or a cluster-built image silently loses them.
 """
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -28,8 +29,8 @@ PATCH_LINES = [
     "&& grep -q 'let gate = validate_driver_config(' src/main.rs",
     "'fn validate_driver_config('",
     "'const HARNESS_ADMIN_ROLE: &str = \"openshell-admin\";'",
-    "'        return deny(\"driver config may only be submitted by a platform admin identity\");'",
-    "'            return deny(\"driver config mounts must each set read_only: true\");'",
+    "'        return deny(\"driver config may only be submitted by a platform admin mTLS identity\");'",
+    "'        return deny(\"driver config must be a read-only saw-harness volume at /sandbox/harness\");'",
 ]
 
 
@@ -54,7 +55,7 @@ def test_buildconfig_carries_every_source_patch(line):
 def test_the_guard_runs_before_the_build():
     """A patch appended after `cargo build` would never reach the binary."""
     text = DOCKERFILE.read_text()
-    assert text.index("validate_driver_config") < text.index("RUN cargo build")
+    assert text.index("validate_driver_config") < text.index("RUN cargo test")
 
 
 def test_the_guard_admin_role_is_the_role_the_saw_gateways_grant():
@@ -66,3 +67,133 @@ def test_the_guard_admin_role_is_the_role_the_saw_gateways_grant():
     assert f"'const HARNESS_ADMIN_ROLE: &str = \"{role}\";'" in DOCKERFILE.read_text()
     installer = (ROOT / "charts" / "openshell-saw" / "files" / "installer" / "apply_bom.py").read_text()
     assert f'ADMIN_CERT_SUBJECT = "/O=openshell/OU={role}/CN=saw-installer"' in installer
+
+
+RUST_BEHAVIOR_TESTS = r'''#[cfg(test)]
+mod harness_driver_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn admin() -> HashMap<String, String> {
+        HashMap::from([("kind".into(), "user".into()), ("provider".into(), "mtls".into()),
+            ("roles".into(), "viewer, openshell-admin".into())])
+    }
+    fn mount() -> Value {
+        json!({"podman":{"mounts":[{"type":"volume", "source":"saw-harness-default-notebook-12345678",
+            "target":"/sandbox/harness", "read_only":true}]}})
+    }
+    #[test]
+    fn accepts_installer_and_absent_or_empty_config() {
+        assert!(validate_driver_config(Some(&mount()), &admin()).allowed);
+        assert!(validate_driver_config(None, &HashMap::new()).allowed);
+        assert!(validate_driver_config(Some(&json!({})), &HashMap::new()).allowed);
+    }
+    #[test]
+    fn rejects_oidc_admin_and_nonadmin_mtls() {
+        let mut principal = admin();
+        principal.insert("provider".into(), "oidc".into());
+        assert!(!validate_driver_config(Some(&mount()), &principal).allowed);
+        principal = admin();
+        principal.insert("roles".into(), "viewer".into());
+        assert!(!validate_driver_config(Some(&mount()), &principal).allowed);
+        principal = admin();
+        principal.insert("kind".into(), "service".into());
+        assert!(!validate_driver_config(Some(&mount()), &principal).allowed);
+    }
+    #[test]
+    fn rejects_bind_wrong_source_target_and_mode() {
+        for (key, value) in [("type", json!("bind")), ("source", json!("other")),
+            ("source", json!("saw-harness-")), ("source", json!("")),
+            ("target", json!("/other")), ("read_only", json!(false)), ("read_only", json!("true"))] {
+            let mut config = mount();
+            config["podman"]["mounts"][0][key] = value;
+            assert!(!validate_driver_config(Some(&config), &admin()).allowed, "accepted {config}");
+        }
+        let mut config = mount();
+        config["podman"]["mounts"][0].as_object_mut().unwrap().remove("read_only");
+        assert!(!validate_driver_config(Some(&config), &admin()).allowed);
+    }
+    #[test]
+    fn rejects_other_drivers_options_and_extra_mounts() {
+        for config in [json!({"docker":{"mounts":[]}}), json!({"podman":{"mounts":[]}}),
+            json!({"podman":{}}), json!({"podman":{"privileged":true}})] {
+            assert!(!validate_driver_config(Some(&config), &admin()).allowed, "accepted {config}");
+        }
+        let mut config = mount();
+        config["podman"]["privileged"] = json!(true);
+        assert!(!validate_driver_config(Some(&config), &admin()).allowed);
+        config = mount();
+        config["podman"]["mounts"][0]["options"] = json!(["rw"]);
+        assert!(!validate_driver_config(Some(&config), &admin()).allowed);
+        config = mount();
+        let duplicate = config["podman"]["mounts"][0].clone();
+        config["podman"]["mounts"].as_array_mut().unwrap().push(duplicate);
+        assert!(!validate_driver_config(Some(&config), &admin()).allowed);
+    }
+    #[test]
+    fn rejects_malformed_envelopes() {
+        for config in [json!(null), json!(true), json!("bad"), json!([]),
+            json!({"podman":null}), json!({"podman":{"mounts":null}}),
+            json!({"podman":{"mounts":[null]}})] {
+            assert!(!validate_driver_config(Some(&config), &admin()).allowed, "accepted {config}");
+        }
+    }
+}
+'''
+
+
+def appended_rust(text):
+    block = text.split("RUN printf '%s\\n'", 1)[1].split(">> src/main.rs", 1)[0]
+    return "\n".join(re.findall(r"^\s*'(.*)'(?: \\)?$", block, re.MULTILINE)) + "\n"
+
+
+@pytest.mark.parametrize("builder", ["dockerfile", "buildconfig"])
+def test_exact_embedded_guard_behavior(builder, tmp_path):
+    if not shutil.which("cargo"):
+        pytest.skip("cargo is required to execute the embedded Rust guard tests")
+    if builder == "buildconfig" and not HELM:
+        pytest.skip("helm is required to render the BuildConfig")
+    text = DOCKERFILE.read_text() if builder == "dockerfile" else inline_dockerfile()
+    guard = appended_rust(text)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "Cargo.toml").write_text('[package]\nname="guard-test"\nversion="0.1.0"\nedition="2021"\n[dependencies]\nserde_json="1"\n')
+    (tmp_path / "src/lib.rs").write_text(
+        "use std::collections::HashMap;\nuse serde_json::Value;\n"
+        "struct InterceptorResult { allowed: bool }\n"
+        "fn allow() -> InterceptorResult { InterceptorResult { allowed: true } }\n"
+        "fn deny(_: &str) -> InterceptorResult { InterceptorResult { allowed: false } }\n"
+        + guard + ("" if "mod harness_driver_tests" in guard else RUST_BEHAVIOR_TESTS))
+    result = subprocess.run(["cargo", "test", "--offline", "--manifest-path", str(tmp_path / "Cargo.toml")],
+                            capture_output=True, text=True)
+    if result.returncode and ("no matching package named" in result.stderr
+                              or "attempting to make an HTTP request, but --offline was specified" in result.stderr):
+        pytest.skip("serde_json dependencies are not cached; full image builders execute these tests in CI")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_builder_pins_and_runs_embedded_tests():
+    values = yaml.safe_load((CHART / "values.yaml").read_text())
+    assert values["source"]["git"]["ref"] == "v0.1.2"
+    assert "ARG OPENSHELL_REF=v0.1.2" in DOCKERFILE.read_text()
+    texts = [DOCKERFILE.read_text()]
+    if HELM:
+        texts.append(inline_dockerfile())
+    for text in texts:
+        assert RUST_BEHAVIOR_TESTS in appended_rust(text)
+        assert "cargo test --locked --release --target-dir /out harness_driver_tests" in text
+        assert "cargo build --locked --release --target-dir /out" in text
+
+
+def test_pr_builds_are_unauthenticated_and_check_pin():
+    action = yaml.safe_load((ROOT / ".github/actions/build-push-image/action.yml").read_text())
+    steps = action["runs"]["steps"]
+    login = next(step for step in steps if step.get("uses", "").startswith("docker/login-action"))
+    build = next(step for step in steps if step.get("uses", "").startswith("docker/build-push-action"))
+    assert login["if"] == build["with"]["push"]
+    workflow = (ROOT / ".github/workflows/build-governance-interceptor.yml").read_text()
+    assert "test \"$REF\" = \"$DEFAULT_REF\"" in workflow
+    assert ".github/workflows/build-governance-interceptor.yml" in workflow
+    assert ".github/actions/build-push-image/**" in workflow
+    assert "file: ${{ runner.temp }}/governance-build.Dockerfile" in workflow
+    assert "target: builder" in workflow
+    assert "push: false" in workflow

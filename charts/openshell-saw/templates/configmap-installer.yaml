@@ -51,7 +51,8 @@ changes here reach an existing VM after a restart (unlike cloud-init).
       "signing" (dict "mode" $signMode "trustKeys" $trustKeys "identity" $signIdentity "issuer" $signIssuer)
       "harness" (dict "cosign" (dict
           "identity" (.Values.harness.cosign.identity | default "")
-          "issuer" (.Values.harness.cosign.issuer | default "https://token.actions.githubusercontent.com")))
+          "issuer" (.Values.harness.cosign.issuer | default "https://token.actions.githubusercontent.com")
+          "cacheTtlSeconds" (.Values.harness.cosign.cacheTtlSeconds)))
       "prune" (dict "mode" $pruneMode "sandboxes" (.Values.prune.sandboxes | default false))
       "secrets" (include "openshell-sandbox.providerSecrets" . | fromJsonArray)
       "sandboxUi" (include "openshell-sandbox.sandboxUi" . | fromJsonArray)

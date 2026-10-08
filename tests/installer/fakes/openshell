@@ -376,9 +376,13 @@ elif op == "sandbox exec":
             except ValueError:
                 decl = {}
             servers = sorted(decl)
-        print("MCP servers:")
-        for name in servers:
-            print(name)
+        if "--json" in script:
+            print(json.dumps({"plugin": {"id": bundle, "status": "loaded", "enabled": True},
+                              "mcpServers": [{"name": name} for name in servers], "diagnostics": []}))
+        else:
+            print("MCP servers:")
+            for name in servers:
+                print(name)
         save()
         sys.exit(0)
     if "openclaw plugins list --json" in script:

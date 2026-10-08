@@ -126,6 +126,10 @@ harness:
   cosign:
     identity: ""
     issuer: "https://token.actions.githubusercontent.com"
+    # Reuse successful digest verification for at most five minutes. Identity
+    # or issuer changes invalidate it immediately; 0 checks every apply.
+    # Expired verification requires registry/Sigstore access and fails closed.
+    cacheTtlSeconds: 300
 
 # Dropping an object from a SAW-BOM profile. report only logs what would be
 # deleted. on deletes it. Sandboxes are kept unless sandboxes is true, because
@@ -224,9 +228,11 @@ dashboard:
 # gateway keeps resource admission on and bind mounts off, so a caller can
 # only attach a podman volume labelled openshell.ai/sandbox-attachable for
 # its own workspace (the installer labels each harness volume that way);
-# image and host-path mounts stay refused. Default off: turning it on lets
-# any signed-in user attach a labelled volume to a sandbox they create, so
-# set true only when a selected profile has a sandbox with a harnessRef
+# image and host-path mounts stay refused. With governance enabled, the
+# interceptor additionally requires an mTLS admin and exactly the installer's
+# read-only harness volume/target. Keep governance fail-closed when enabling
+# this switch; without it the gateway switch applies to all callers.
+# Default off: set true only when a selected profile has a harnessRef
 # (e.g. saw-bom's harnessEnabled). The installer fails fast with a clear error
 # if a harnessRef is applied while this is off.
 allowDriverConfig: false

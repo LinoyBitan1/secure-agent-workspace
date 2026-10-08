@@ -46,7 +46,7 @@ import tarfile
 import tempfile
 import time
 import traceback
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -419,7 +419,20 @@ def load_config(path):
                 raise InstallerError(f"installer config: dashboard.{key} is required when the dashboard is enabled")
     merged["sandboxUi"], merged["sandboxUiProxy"] = check_sandbox_ui(
         merged.get("sandboxUi"), merged.get("sandboxUiProxy"))
+    harness_signature_cache_ttl(merged)
     return merged
+
+
+def harness_signature_cache_ttl(cfg):
+    """Bound the grace period for an already verified digest to five minutes."""
+    harness = cfg.get("harness") or {}
+    sig = (harness.get("cosign") or {}) if isinstance(harness, dict) else None
+    if not isinstance(sig, dict):
+        raise InstallerError("installer config: harness.cosign must be an object")
+    ttl = sig.get("cacheTtlSeconds", 300)
+    if type(ttl) is not int or not 0 <= ttl <= 300:
+        raise InstallerError("installer config: harness.cosign.cacheTtlSeconds must be an integer from 0 to 300")
+    return ttl
 
 
 HOST_RE = re.compile(r"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")
@@ -953,6 +966,33 @@ def openclaw_harness_config(info):
     if paths:
         config["plugins.load.paths"] = paths
     return config
+
+
+def mcp_registration_failures(output, declared):
+    """Inspect reports configuration registration, never MCP process readiness.
+
+    Kept pure so the E2E script can apply the same checks to inspection JSON.
+    Names in descriptions or diagnostics are not evidence of registration.
+    """
+    try:
+        report = json.loads(output)
+        plugin = report["plugin"]
+        servers = report["mcpServers"]
+        diagnostics = report.get("diagnostics") or []
+        if not isinstance(plugin, dict) or not isinstance(servers, list) or not isinstance(diagnostics, list):
+            raise ValueError("invalid inspection shape")
+        if plugin.get("status") != "loaded" or plugin.get("enabled") is False or plugin.get("error"):
+            return ["OpenClaw bundle runtime inspection reports an error or disabled bundle"]
+        if any(isinstance(d, dict) and d.get("level") == "error" for d in diagnostics):
+            return ["OpenClaw bundle runtime inspection reports error diagnostics"]
+        registered = {entry["name"] for entry in servers
+                      if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+                      and not entry.get("unsupported")}
+    except (ValueError, TypeError, KeyError):
+        return ["could not parse OpenClaw MCP registration inspection JSON"]
+    missing = sorted(set(declared) - registered)
+    return ([f"OpenClaw does not list MCP server(s) {', '.join(missing)} as registered"]
+            if missing else [])
 
 
 def parse_harness_files(files):
@@ -2423,23 +2463,40 @@ class ProfileApplier:
         return self.sh.run(["podman", *args], **kw)
 
     def verify_harness_image(self, image):
-        """Fail closed unless `image` is signed by cfg harness.cosign.
-
-        Digest pin is not enough: anyone with registry write can push that
-        digest. CI already signs with cosign; this is the check at pull.
-        """
+        """Fail closed, with bounded reuse of successful digest verification."""
         sig = (self.cfg.get("harness") or {}).get("cosign") or {}
         identity, issuer = sig.get("identity") or "", sig.get("issuer") or ""
+        ttl = harness_signature_cache_ttl(self.cfg)
         if not identity or not issuer:
             raise InstallerError(
                 f"harness image {image} has no cosign identity/issuer configured; "
                 "refusing to use it")
+        policy = {"identity": identity, "issuer": issuer}
+        now = time.time()
+        cache = self.ledger.data.get("harnessSignatures", {}) if self.ledger is not None else {}
+        if not isinstance(cache, dict):
+            cache = {}
+        entry = cache.get(image)
+        if ttl and isinstance(entry, dict) and entry.get("policy") == policy:
+            verified_at = entry.get("verifiedAt")
+            if type(verified_at) in (int, float) and 0 <= now - verified_at < ttl:
+                log(f"Harness signature for {image}: using verified digest cache "
+                    f"(age {int(now - verified_at)}s, maximum {ttl}s)")
+                return
         result = self.sh.run(
             ["cosign", "verify", "--certificate-identity", identity,
              "--certificate-oidc-issuer", issuer, image],
             check=False, quiet=True, force=True, timeout=120)
         if not result.ok:
+            if self.ledger is not None and not self.sh.dry_run:
+                cache.pop(image, None)
+                self.ledger.data["harnessSignatures"] = cache
+                self.ledger.save()
             raise InstallerError(f"harness image {image} is not signed by {identity}")
+        if self.ledger is not None and not self.sh.dry_run and ttl:
+            cache[image] = {"policy": policy, "verifiedAt": now}
+            self.ledger.data["harnessSignatures"] = cache
+            self.ledger.save()
 
     def image_tree(self, image):
         """The bundle tree of a harness image (with file modes). Pulled by
@@ -2468,7 +2525,7 @@ class ProfileApplier:
     def sandbox_harness_mount(self, ws, sb):
         """(type, source, writable) of what the sandbox's container mounts at
         HARNESS_MOUNT; None when it mounts nothing there; False when there
-        is no container to look at.
+        is no container to look at or its mounts cannot be inspected.
 
         Read from podman, which OpenShell's podman driver runs the sandbox
         container in:
@@ -2496,11 +2553,15 @@ class ProfileApplier:
         name = found
         got = self._podman("inspect", "--format", "{{json .Mounts}}", name[0],
                            check=False, quiet=True)
+        if not got.ok:
+            return False
         try:
-            mounts = json.loads(got.out) if got.ok else []
+            mounts = json.loads(got.out)
         except ValueError:
-            mounts = []
-        for mount in mounts or []:
+            return False
+        if not isinstance(mounts, list) or any(not isinstance(m, dict) for m in mounts):
+            return False
+        for mount in mounts:
             if mount.get("Destination") == HARNESS_MOUNT:
                 kind = (mount.get("Type") or "").lower()
                 source = mount.get("Name") if kind == "volume" else mount.get("Source")
@@ -2603,15 +2664,30 @@ class ProfileApplier:
         if source is None:
             return None
         if bundle is None:
-            # Every apply, not only the one that fills the volume: a volume
-            # already holding the image is no evidence the image is still
-            # trusted, so revoking the signing identity has to bite on the
-            # next apply. Runs under --dry-run too (force, via cfg lookup
-            # which needs no shell call) before any tree from the volume or
-            # a pull is trusted. Verified before it joins harness_images: an
+            # Check trust before using a cached tree or pulling an image.
+            # A successful signature may be reused for the bounded cache
+            # period; changed signing policy invalidates it immediately.
+            # Verified before it joins harness_images: an
             # image that fails here must not be kept, or cleanup_harness_images
             # (previous - self.harness_images) would never remove it.
-            self.verify_harness_image(source)
+            try:
+                self.verify_harness_image(source)
+            except InstallerError:
+                # Refusing a new apply is insufficient when revoked code is
+                # still mounted in an existing sandbox. Recreate without it;
+                # keep the requested source refused so a later apply must
+                # pass verification before restoring the mount.
+                seen = None if self.sh.dry_run else self.sandbox_harness_mount(ws, sb)
+                # False means the container inspection was inconclusive;
+                # an existing sandbox cannot keep running untrusted code
+                # merely because podman inspection failed.
+                if seen is not None and (seen is not False or self.sandbox_state(ws, sb) != "missing"):
+                    log(f"Removing untrusted harness from sandbox '{sb.name}'")
+                    self.delete_sandbox_and_wait(ws, sb)
+                    self.harness_info.pop((ws.name, sb.name), None)
+                    self.harness_refilled.pop((ws.name, sb.name), None)
+                    self.apply_sandbox(ws, replace(sb, harness_ref={}))
+                raise
             self.harness_images.add(source)
         volume = harness_volume_name(ws.name, sb.name)
         self.harness_volumes.add(volume)
@@ -2960,31 +3036,24 @@ class ProfileApplier:
             return [f"OpenClaw does not list enabled plugin(s) {', '.join(missing)} "
                     f"from {source}"]
         if info["mcpServers"]:
-            # `mcp status` only lists servers added via `mcp add`/`mcp set`,
-            # never ones a bundle declares in its own mcp.json; `plugins
-            # inspect <bundle>` names them instead.
+            plugin_id = bundle.get("id") or bundle.get("name") or info["name"]
             listed = self.cli(*exec_cmd, "sh", "-c",
                               f"{OPENCLAW_EXEC_ENV} openclaw plugins inspect "
-                              f"{info['name']} --runtime",
+                              f"{shlex.quote(plugin_id)} --runtime --json",
                               check=False, quiet=True)
-            if not listed.ok or not (listed.out or "").strip():
-                log(f"WARN: harness '{info['name']}': sandbox '{sb.name}' does not answer "
-                    "`openclaw plugins inspect`; MCP servers checked by bundle capability only")
+            detail = (listed.err + "\n" + listed.out).lower()
+            unsupported = (not listed.ok and any(marker in detail for marker in (
+                "unknown command", "unknown option", "unexpected argument")))
+            if unsupported:
+                log(f"WARN: harness {info['name']!r}: sandbox {sb.name!r} "
+                    "does not support runtime plugin inspection; MCP registration is unverified "
+                    "and MCP process readiness is not checked")
+            elif not listed.ok:
+                return ["could not inspect OpenClaw MCP registration"]
             else:
-                # Whole-token match: a plain substring check would call a
-                # declared server "present" when it is only a fragment of a
-                # different, unrelated server's name in the output (e.g.
-                # declared "search" matching listed "search-internal"). `\b`
-                # alone does not catch this: `-` is a non-word character, so
-                # `\bsearch\b` still matches inside "search-internal". Server
-                # names are kebab-case, so a hyphen must not count as a
-                # boundary either.
-                missing_servers = [s for s in info["mcpServers"]
-                                   if not re.search(rf"(?<![\w-]){re.escape(s)}(?![\w-])",
-                                                    listed.out)]
-                if missing_servers:
-                    return [f"OpenClaw does not list MCP server(s) {', '.join(missing_servers)} "
-                            f"from {source}"]
+                failures = mcp_registration_failures(listed.out, info["mcpServers"])
+                if failures:
+                    return [f"{failure} from {source}" for failure in failures]
         desired = openclaw_harness_config(info)
         for key in HARNESS_CONFIG_KEYS:
             got = self.cli(*exec_cmd, "sh", "-c",
@@ -3032,6 +3101,10 @@ class ProfileApplier:
             if self._podman("rmi", image, check=False, quiet=True).ok:
                 log(f"Removed harness image {image}; no sandbox uses it any more")
         self.ledger.data["harnessImages"] = sorted(self.harness_images)
+        cache = self.ledger.data.get("harnessSignatures", {})
+        if isinstance(cache, dict):
+            self.ledger.data["harnessSignatures"] = {
+                image: entry for image, entry in cache.items() if image in self.harness_images}
         self.ledger.save()
 
     def install_keepalive(self, ws, sb):
