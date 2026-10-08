@@ -37,3 +37,25 @@ The workshop cluster already contained an Option A deployment and Alice's runnin
 Earlier broader installer/chart run: 622 passed, 6 failed. Four gateway tests reproduced on the unchanged original PR head; the other two passed individually. These are not reported as a green full suite. Final full script suite: 134 passed, including the live-discovered regression cases. No live Helm-controller drill or PR68 firewall deployment is claimed.
 
 Test-only `overrides/pr78-validation.yaml` is a separate commit and must not be transferred to the PR branch. Credentials and test client keys are stored outside the repository and omitted from this report.
+
+## Agent-driven skill and MCP validation
+
+Follow-up validation ran on the temporary deployment branch, against the restored inline harness in the isolated `saw-pr78/pr78` VM's `default/notebook` sandbox. No production code or provider configuration was changed.
+
+- OpenClaw 2026.9.6 reported `pattern-author` eligible and model-visible, with no missing requirements. Its sample content only describes the managed skill; this proves loading and consumption, not execution of a substantive authoring workflow.
+- An actual gateway agent turn used the configured `nvidia/nemotron-3-super-120b-a12b` model. Session: `pr78-live-harness-20261008`; run: `80655850-02f7-4222-a8b5-9c309672560a`.
+- Prompt: “For this validation, use the installed pattern-author skill: read its SKILL.md and report its purpose. Then invoke the harness MCP mcp_echo tool with message pr78-agent-proof-20261008. Do not simulate the tool result or use exec to run the MCP server manually. Return the actual tool result and skill path; if the tool is unavailable say so.”
+- The execution receipt recorded successful `read`, `tool_search`, `saw-mcp-echo__mcp_echo`, and `tool_call`, with zero tool failures, no model fallback, and status `ok`.
+- The agent returned the skill's actual purpose and `saw-mcp-echo: pr78-agent-proof-20261008`. The gateway's skill path was `/home/openclaw/.openclaw/plugin-skills/pattern-author/SKILL.md`; CLI skill inspection resolves its projected path under `/sandbox/.openclaw/plugin-skills`.
+- OpenClaw's persisted, redacted session trajectory independently confirmed `read` call/result at 10:56:44 UTC, tool discovery at 10:56:46, actual `saw-mcp-echo__mcp_echo` call/result at 10:56:52, and successful session completion at 10:56:55. This is agent invocation evidence, separate from the earlier direct JSON-RPC probe.
+- Container process inspection confirmed the notebook's running gateway and its `node /sandbox/harness/mcp/echo-server.mjs` process. No `--deliver` option or external messaging channel was used.
+
+Invocation inside the sandbox:
+
+```sh
+OPENCLAW_HOME=/sandbox openclaw agent \
+  --session-id pr78-live-harness-20261008 \
+  --message '<prompt above>' --timeout 180 --verbose on --json
+OPENCLAW_HOME=/sandbox openclaw sessions tail \
+  --session-key agent:main:explicit:pr78-live-harness-20261008 --tail 25
+```
