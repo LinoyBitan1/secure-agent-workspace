@@ -213,7 +213,8 @@ def test_helm_restores_original_false_flag(tmp_path):
 
 
 @pytest.mark.parametrize('message,expected',[
-    ('Config path is valid but unset: plugins.load.paths. The runtime default applies.',0),
+    ('Config path is valid but unset: plugins.load.paths. The runtime default applies until you set an authored value with openclaw config set plugins.load.paths <value>.',0),
+    ('Config path is valid but unset: plugins.load.paths. The runtime default applies until you set an authored value with openclaw config set plugins.load.paths <value>.\ngateway connection failed',1),
     ('gateway connection failed',1),
 ])
 def test_drill_accepts_unset_path_but_not_inspection_failure(tmp_path,message,expected):

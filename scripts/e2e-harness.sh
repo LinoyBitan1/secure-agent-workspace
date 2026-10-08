@@ -374,7 +374,7 @@ if [[ "${REVOKE_DRILL}" == "yes" ]]; then
       if [[ "${have}" == "${want}" ]]; then
         local paths
         if ! paths=$(sb_exec sh -c 'OPENCLAW_HOME=/sandbox openclaw config get plugins.load.paths' 2>&1); then
-          if [[ "${want}" == "gone" ]] && echo "${paths}" | grep -q '^Config path is valid but unset: plugins\.load\.paths\.'; then
+          if [[ "${want}" == "gone" && "${paths}" == 'Config path is valid but unset: plugins.load.paths. The runtime default applies until you set an authored value with openclaw config set plugins.load.paths <value>.' ]]; then
             paths='[]'
           else
             continue

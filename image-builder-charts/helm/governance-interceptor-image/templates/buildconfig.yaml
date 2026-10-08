@@ -29,17 +29,22 @@ spec:
       # a driver_config envelope or what mount mode it asks for
       # (crates/openshell-core/src/resource_admission.rs). The interceptor sees both,
       # so only an mTLS platform admin may mount one read-only saw-harness volume
-      # at /sandbox/harness. CreateSandboxTemplate is bound too, because
-      # workload_template resolves after the interceptor seam.
-      RUN grep -q '"govern-create-provider"' src/main.rs \
-          && perl -0pi -e 's#                binding\(\n                    "govern-create-provider",#                binding(\n                    "govern-create-sandbox-template",\n                    "CreateSandboxTemplate",\n                    &[GatewayInterceptorPhase::Validate],\n                ),\n                binding(\n                    "govern-create-provider",#' src/main.rs \
-          && grep -q '"govern-create-sandbox-template"' src/main.rs
+      # at /sandbox/harness. Template-based creates are refused because
+      # workload_template resolves after the seam and template RPCs are not interceptable.
       RUN grep -q 'Ok(validate_create_sandbox(' src/main.rs \
-          && perl -0pi -e 's#            \("CreateSandbox", interceptor_evaluation::Phase::Validate\(_\)\) => \{\n                Ok\(validate_create_sandbox\(#            ("CreateSandboxTemplate", interceptor_evaluation::Phase::Validate(_)) => {\n                Ok(validate_driver_config(\n                    operation\n                        .pointer("/template/spec/driverConfig")\n                        .or_else(|| operation.pointer("/template/spec/driver_config")),\n                    &evaluation.principal,\n                ))\n            }\n            ("CreateSandbox", interceptor_evaluation::Phase::Validate(_)) => {\n                let gate = validate_driver_config(\n                    operation\n                        .pointer("/spec/template/driverConfig")\n                        .or_else(|| operation.pointer("/spec/template/driver_config")),\n                    &evaluation.principal,\n                );\n                if !gate.allowed {\n                    return Ok(gate);\n                }\n                Ok(validate_create_sandbox(#' src/main.rs \
-          && grep -q 'let gate = validate_driver_config(' src/main.rs
+          && perl -0pi -e 's#            \("CreateSandbox", interceptor_evaluation::Phase::Validate\(_\)\) => \{\n                Ok\(validate_create_sandbox\(#            ("CreateSandbox", interceptor_evaluation::Phase::Validate(_)) => {\n                let gate = validate_sandbox_driver_config(&operation, &evaluation.principal);\n                if !gate.allowed {\n                    return Ok(gate);\n                }\n                Ok(validate_create_sandbox(#' src/main.rs \
+          && grep -q 'let gate = validate_sandbox_driver_config(' src/main.rs
       RUN printf '%s\n' \
       '' \
       'const HARNESS_ADMIN_ROLE: &str = "openshell-admin";' \
+      'fn validate_sandbox_driver_config(operation: &Value, principal: &HashMap<String, String>) -> InterceptorResult {' \
+      '    if operation.get("workloadTemplate").or_else(|| operation.get("workload_template"))' \
+      '        .and_then(Value::as_str).is_some_and(|name| !name.is_empty()) {' \
+      '        return deny("workload templates are not allowed: driver config cannot be verified before template resolution");' \
+      '    }' \
+      '    validate_driver_config(operation.pointer("/spec/template/driverConfig")' \
+      '        .or_else(|| operation.pointer("/spec/template/driver_config")), principal)' \
+      '}' \
       '' \
       '/// Admit only the installer identity and its single read-only harness volume.' \
       'fn validate_driver_config(' \
@@ -98,6 +103,23 @@ spec:
       '    fn mount() -> Value {' \
       '        json!({"podman":{"mounts":[{"type":"volume", "source":"saw-harness-default-notebook-12345678",' \
       '            "target":"/sandbox/harness", "read_only":true}]}})' \
+      '    }' \
+      '    #[test]' \
+      '    fn rejects_unresolved_workload_templates() {' \
+      '        for key in ["workloadTemplate", "workload_template"] {' \
+      '            let mut operation = json!({});' \
+      '            operation[key] = json!("stored-template");' \
+      '            assert!(!validate_sandbox_driver_config(&operation, &admin()).allowed);' \
+      '            assert!(!validate_sandbox_driver_config(&operation, &HashMap::new()).allowed);' \
+      '            operation[key] = json!("");' \
+      '            assert!(validate_sandbox_driver_config(&operation, &HashMap::new()).allowed);' \
+      '        }' \
+      '        for key in ["driverConfig", "driver_config"] {' \
+      '            let mut operation = json!({"spec":{"template":{}}});' \
+      '            operation["spec"]["template"][key] = mount();' \
+      '            assert!(validate_sandbox_driver_config(&operation, &admin()).allowed);' \
+      '            assert!(!validate_sandbox_driver_config(&operation, &HashMap::new()).allowed);' \
+      '        }' \
       '    }' \
       '    #[test]' \
       '    fn accepts_installer_and_absent_or_empty_config() {' \

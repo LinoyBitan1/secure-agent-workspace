@@ -360,6 +360,10 @@ requires `oc`, Python with PyYAML, the deployment controller's tooling, and
   an mTLS platform admin and permits only the installer's read-only podman
   harness volume at `/sandbox/harness`. OIDC admins, bind mounts, writable
   mounts, other targets and other driver options are refused at creation.
+  OpenShell 0.1.2 does not support intercepting `CreateSandboxTemplate`;
+  template-based `CreateSandbox` requests are refused because the gateway
+  resolves their driver config after interception. Templates may be stored,
+  but cannot be used to create sandboxes while this guard is enabled.
   The installer also detects existing writable/remapped mounts and recreates
   the sandbox on the next apply.
   Stronger drift protection comes from the combination: RO by default,

@@ -271,10 +271,6 @@ rpc = "openshell.v1.OpenShell/CreateSandbox"
 phases = ["modify_operation", "validate"]
 
 [[openshell.gateway.interceptors.bindings]]
-rpc = "openshell.v1.OpenShell/CreateSandboxTemplate"
-phases = ["validate"]
-
-[[openshell.gateway.interceptors.bindings]]
 rpc = "openshell.v1.OpenShell/CreateProvider"
 phases = ["validate"]
 

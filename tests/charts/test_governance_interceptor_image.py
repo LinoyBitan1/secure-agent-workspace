@@ -26,8 +26,7 @@ PATCH_LINES = [
     # Existing workaround for NVIDIA/OpenShell#3929.
     "! grep -q 'insert(PROFILE_HASH_ANNOTATION' src/main.rs",
     # Harness driver-config guard: admin-only driver config, read-only mounts.
-    '&& grep -q \'"govern-create-sandbox-template"\' src/main.rs',
-    "&& grep -q 'let gate = validate_driver_config(' src/main.rs",
+    "&& grep -q 'let gate = validate_sandbox_driver_config(' src/main.rs",
     "'fn validate_driver_config('",
     "'const HARNESS_ADMIN_ROLE: &str = \"openshell-admin\";'",
     "'        return deny(\"driver config may only be submitted by a platform admin mTLS identity\");'",
@@ -71,7 +70,7 @@ def test_the_guard_admin_role_is_the_role_the_saw_gateways_grant():
 
 
 @pytest.mark.skipif(not HELM, reason="helm is not installed")
-def test_gateway_allows_both_driver_config_guard_bindings():
+def test_gateway_allows_driver_guard_without_noninterceptable_template_rpc():
     out = subprocess.run(
         [HELM, "template", "guard-test", str(ROOT / "charts/openshell-saw"),
          "--set", "global.clusterDomain=example.test"],
@@ -82,8 +81,8 @@ def test_gateway_allows_both_driver_config_guard_bindings():
     governance = next(i for i in gateway["interceptors"] if i["name"] == "governance")
     assert governance["binding_policy"] == "allowlist"
     bindings = {b["rpc"]: b["phases"] for b in governance["bindings"]}
-    for method in ("CreateSandbox", "CreateSandboxTemplate"):
-        assert "validate" in bindings[f"openshell.v1.OpenShell/{method}"]
+    assert "validate" in bindings["openshell.v1.OpenShell/CreateSandbox"]
+    assert "openshell.v1.OpenShell/CreateSandboxTemplate" not in bindings
 
 
 RUST_BEHAVIOR_TESTS = r'''#[cfg(test)]
@@ -98,6 +97,23 @@ mod harness_driver_tests {
     fn mount() -> Value {
         json!({"podman":{"mounts":[{"type":"volume", "source":"saw-harness-default-notebook-12345678",
             "target":"/sandbox/harness", "read_only":true}]}})
+    }
+    #[test]
+    fn rejects_unresolved_workload_templates() {
+        for key in ["workloadTemplate", "workload_template"] {
+            let mut operation = json!({});
+            operation[key] = json!("stored-template");
+            assert!(!validate_sandbox_driver_config(&operation, &admin()).allowed);
+            assert!(!validate_sandbox_driver_config(&operation, &HashMap::new()).allowed);
+            operation[key] = json!("");
+            assert!(validate_sandbox_driver_config(&operation, &HashMap::new()).allowed);
+        }
+        for key in ["driverConfig", "driver_config"] {
+            let mut operation = json!({"spec":{"template":{}}});
+            operation["spec"]["template"][key] = mount();
+            assert!(validate_sandbox_driver_config(&operation, &admin()).allowed);
+            assert!(!validate_sandbox_driver_config(&operation, &HashMap::new()).allowed);
+        }
     }
     #[test]
     fn accepts_installer_and_absent_or_empty_config() {
