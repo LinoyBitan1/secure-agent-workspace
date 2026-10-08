@@ -305,7 +305,7 @@ if [[ -n "${STATUS_JSON}" ]] && command -v virtctl >/dev/null 2>&1; then
     --identity-file="${SSH_KEY_PATH}" \
     --local-ssh-opts=-oStrictHostKeyChecking=no \
     --local-ssh-opts=-oUserKnownHostsFile=/dev/null \
-    --command="podman volume inspect saw-harness-${WORKSPACE}-${SANDBOX}-* --format '{{.Labels}}' 2>/dev/null" 2>/dev/null || true)
+    --command="podman volume ls --filter name=^saw-harness-${WORKSPACE}-${SANDBOX}- --format '{{.Name}}' | xargs -r podman volume inspect --format '{{.Labels}}' 2>/dev/null" 2>/dev/null || true)
   if echo "${LABELS}" | grep -q "sandbox-attachable"; then
     pass "harness volume carries admission labels"
   else
