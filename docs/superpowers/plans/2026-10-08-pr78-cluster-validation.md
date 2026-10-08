@@ -59,3 +59,9 @@ OPENCLAW_HOME=/sandbox openclaw agent \
 OPENCLAW_HOME=/sandbox openclaw sessions tail \
   --session-key agent:main:explicit:pr78-live-harness-20261008 --tail 25
 ```
+
+### Combined skill, native plugin and MCP question
+
+A second fresh session, `pr78-all-components-20261008`, asked the agent: “Can you demonstrate the harness capabilities for me? Use the installed pattern-author skill and explain its purpose. Send pr78-plugin-proof-20261008 through the saw_echo native plugin tool, then send pr78-mcp-proof-20261008 through the MCP echo tool. Return the real results from both tools and identify which came from the plugin and which from MCP. Do not simulate results or run the server manually.”
+
+Run `29e32b23-3263-41cd-8143-f32bf7372475` completed successfully with the same configured model. The persisted trajectory records four initial read/list errors, followed by successful directory discovery and `read` at 11:02:35 UTC. Native `saw_echo` call/result succeeded at 11:02:45; `saw-mcp-echo__mcp_echo` call/result succeeded at 11:02:48. Actual returned values were `saw-echo: pr78-plugin-proof-20261008` and `saw-mcp-echo: pr78-mcp-proof-20261008`. Session completion was successful at 11:02:54. Thus both invocation paths work; this run is not reported as having zero failed attempts. The agent's skill explanation added claims about `.mjs` tools beyond the minimal skill text, so that explanation is not evidence of a substantive skill workflow.
