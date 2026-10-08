@@ -61,7 +61,9 @@ elif cmd=='openshell':
    out({'plugin':{'status':d.get('runtime_status','loaded')},'mcpServers':[{'name':d.get('server','search'),'unsupported':d.get('unsupported_entry',False)}],'diagnostics':d.get('diagnostics',[])})
   elif 'mcp status' in text: print('search-extra: error mentioning search')
   elif 'cat /sandbox/harness/mcp.json' in text: out({'mcpServers':{'search':{}}})
-  elif 'plugins.load.paths' in text: print('/sandbox/harness' if d['enabled'] else '[]')
+  elif 'plugins.load.paths' in text:
+   if not d['enabled'] and d.get('config_error'): print(d['config_error'],file=sys.stderr);sys.exit(1)
+   print('/sandbox/harness' if d['enabled'] else '[]')
   elif 'harness.yaml' in text: print('spec: {}')
 '''
 
@@ -208,3 +210,14 @@ def test_helm_restores_original_false_flag(tmp_path):
     result=run(env,'--revoke-drill')
     assert result.returncode == 0,result.stdout+result.stderr
     assert json.loads(path.read_text())['enabled'] is False
+
+
+@pytest.mark.parametrize('message,expected',[
+    ('Config path is valid but unset: plugins.load.paths. The runtime default applies.',0),
+    ('gateway connection failed',1),
+])
+def test_drill_accepts_unset_path_but_not_inspection_failure(tmp_path,message,expected):
+    path,_,env=fixture(tmp_path,controller='argo',config_error=message)
+    result=run(env,'--revoke-drill')
+    assert result.returncode==expected,result.stdout+result.stderr
+    assert json.loads(path.read_text())['enabled'] is True

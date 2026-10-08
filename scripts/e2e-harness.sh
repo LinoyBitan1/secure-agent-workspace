@@ -373,7 +373,13 @@ if [[ "${REVOKE_DRILL}" == "yes" ]]; then
       have=$(sb_exec sh -c 'if test -d /sandbox/harness; then printf present; else printf gone; fi' 2>/dev/null) || continue
       if [[ "${have}" == "${want}" ]]; then
         local paths
-        paths=$(sb_exec sh -c 'OPENCLAW_HOME=/sandbox openclaw config get plugins.load.paths' 2>/dev/null) || continue
+        if ! paths=$(sb_exec sh -c 'OPENCLAW_HOME=/sandbox openclaw config get plugins.load.paths' 2>&1); then
+          if [[ "${want}" == "gone" ]] && echo "${paths}" | grep -q '^Config path is valid but unset: plugins\.load\.paths\.'; then
+            paths='[]'
+          else
+            continue
+          fi
+        fi
         if [[ "${want}" == "gone" ]] && echo "${paths}" | grep -q "/sandbox/harness"; then continue; fi
         if [[ "${want}" == "present" ]] && ! echo "${paths}" | grep -q "/sandbox/harness"; then continue; fi
         return 0
