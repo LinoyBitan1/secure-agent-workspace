@@ -8,6 +8,7 @@ same patches or a cluster-built image silently loses them.
 import re
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,22 @@ def test_the_guard_admin_role_is_the_role_the_saw_gateways_grant():
     assert f"'const HARNESS_ADMIN_ROLE: &str = \"{role}\";'" in DOCKERFILE.read_text()
     installer = (ROOT / "charts" / "openshell-saw" / "files" / "installer" / "apply_bom.py").read_text()
     assert f'ADMIN_CERT_SUBJECT = "/O=openshell/OU={role}/CN=saw-installer"' in installer
+
+
+@pytest.mark.skipif(not HELM, reason="helm is not installed")
+def test_gateway_allows_both_driver_config_guard_bindings():
+    out = subprocess.run(
+        [HELM, "template", "guard-test", str(ROOT / "charts/openshell-saw"),
+         "--set", "global.clusterDomain=example.test"],
+        capture_output=True, text=True, check=True).stdout
+    config = next(d["data"]["gateway.toml"] for d in yaml.safe_load_all(out)
+                  if d and "gateway.toml" in d.get("data", {}))
+    gateway = tomllib.loads(config)["openshell"]["gateway"]
+    governance = next(i for i in gateway["interceptors"] if i["name"] == "governance")
+    assert governance["binding_policy"] == "allowlist"
+    bindings = {b["rpc"]: b["phases"] for b in governance["bindings"]}
+    for method in ("CreateSandbox", "CreateSandboxTemplate"):
+        assert "validate" in bindings[f"openshell.v1.OpenShell/{method}"]
 
 
 RUST_BEHAVIOR_TESTS = r'''#[cfg(test)]
