@@ -66,7 +66,7 @@
 - [x] Review each task's diff for spec and quality, then review the combined changes.
 - [x] Run the harness and chart suites plus script regressions; compare pre-existing gateway process test failures against pinned base when needed.
 - [x] Record final build evidence, test counts, and cluster-only limitations in this plan. Do not claim live cluster validation unless executed.
-- [x] Leave all changes uncommitted for user review.
+- [x] Leave the initial implementation uncommitted for review; subsequent user authorization permits temporary-branch testing and final PR push.
 
 ## Execution ledger
 
@@ -83,4 +83,8 @@
 - Both exact embedded Rust guards pass behavioral tests in the chart suite. Patched full OpenShell v0.1.2 source passes **5 Rust guard tests** and the locked release build. Both builder paths are compiled/tested in PR CI.
 - Bash syntax, installer/helper Python compilation, and `git diff --check`: passed. Task and combined reviews: passed with no remaining actionable findings.
 - Limits: no live Helm/Argo/VM drill, and Docker daemon access prevented local full container assembly. Signature verification reuse has a documented maximum five-minute revocation grace; set `cacheTtlSeconds: 0` for every-apply verification. Required Sigstore/registry hosts are documented for PR #68.
-- All seven review fixes are implemented; changes remain uncommitted and unpushed. The pre-existing nested checkout is untouched.
+- All seven initial review fixes were implemented before cluster testing. The user then authorized commits and pushes to a temporary branch. The pre-existing nested checkout remains untouched.
+
+## Live validation refinement
+
+See [cluster validation](2026-10-08-pr78-cluster-validation.md). Real deployment showed that `CreateSandboxTemplate` exists but is not interceptable in OpenShell 0.1.2. The final guard rejects template-based `CreateSandbox` before its driver config resolves, rather than installing an unsupported RPC binding. Both builders execute six Rust tests. Live testing also corrected volume-name enumeration and the exact unset-config response in H9.
