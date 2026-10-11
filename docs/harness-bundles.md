@@ -60,6 +60,54 @@ spec:
       governanceProfile: local-mcp
 ```
 
+#### In-cluster MCP Services
+
+Start with your MCP server deployed as a Kubernetes Service that the gateway
+VM can reach. Add `charts/governance-policy/profiles/local-mcp.yaml`:
+
+```yaml
+id: local-mcp
+display_name: Local MCP
+description: In-cluster MCP Service
+category: other
+endpoints:
+  - host: my-mcp.mcp-servers.svc.cluster.local
+    port: 8080
+    protocol: mcp
+    enforcement: enforce
+    mcp:
+      versions: ["2025-06-18", "2025-11-25"]
+      allow_all_known_mcp_methods: true
+binaries: [/usr/bin/node, /usr/bin/node-*, /usr/local/bin/node]
+```
+
+Replace the host, port, binary paths, and MCP versions with your server's
+values. A missing negotiated version can cause `403 policy_denied`.
+Deploy the profile through Helm or Argo, then create and attach its provider
+from a CLI session connected to the sandbox's gateway/workspace:
+
+```bash
+openshell provider create --name local-mcp --type local-mcp
+openshell sandbox provider attach notebook local-mcp --wait
+```
+
+These commands assume no API key. Use the profile ID for both provider name
+and type. The profile alone does not authorize access; attachment is required.
+Configure the connection directly, replacing the URL with your Service:
+
+```bash
+openshell sandbox exec --name notebook -- \
+  env OPENCLAW_HOME=/sandbox SQLITE_TMPDIR=/sandbox/.openclaw/state \
+  openclaw config set mcp.servers.local-mcp \
+  '{"transport":"streamable-http","url":"http://my-mcp.mcp-servers.svc.cluster.local:8080/mcp"}'
+```
+
+The native connection above does not require editing `mcp.json`.
+
+For a keyed server, follow the credential setup below and add
+`"headers":{"Authorization":"Bearer ${MCP_API_KEY}"}` to the native entry.
+Never put the real key in the bundle or sandbox.
+
 #### Servers that need an API key
 
 A server that calls a keyed service gets its key the same way OpenClaw gets
