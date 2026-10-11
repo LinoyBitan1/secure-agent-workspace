@@ -8,6 +8,7 @@ spec:
     type: nvidia
     model: nvidia/nemotron-3-super-120b-a12b
     credentialSecret: inference
+    nemoclawProvider: build
   - name: incluster-mcp-probe
     type: incluster-mcp-probe
     credentialFree: true
