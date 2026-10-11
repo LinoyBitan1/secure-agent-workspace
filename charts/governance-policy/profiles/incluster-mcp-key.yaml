@@ -1,0 +1,25 @@
+id: incluster-mcp-key
+display_name: Keyed in-cluster MCP validation
+description: Credential-free MCP Service in the isolated test namespace
+category: other
+endpoints:
+- host: saw-mcp-key-probe.saw-pr78.svc.cluster.local
+  port: 8080
+  protocol: mcp
+  enforcement: enforce
+  mcp:
+    versions:
+    - '2025-06-18'
+    - '2025-11-25'
+    allow_all_known_mcp_methods: true
+binaries:
+- /usr/bin/node
+- /usr/bin/node-*
+- /usr/local/bin/node
+credentials:
+- name: api_key
+  env_vars:
+  - MCP_API_KEY
+  required: true
+  auth_style: bearer
+  header_name: authorization

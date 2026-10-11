@@ -138,6 +138,54 @@
           ]
         }
       ]
+    },
+    "mcp-validation": {
+      "description": "Isolated Option A MCP validation; test branch only",
+      "secrets": {
+        "inference": {
+          "fields": [
+            {
+              "key": "api_key",
+              "kind": "secret",
+              "required": true,
+              "title": "API key"
+            }
+          ],
+          "provider": "nvidia",
+          "providers": [
+            "nvidia"
+          ]
+        },
+        "mcp-optiona-key": {
+          "fields": [
+            {
+              "key": "api_key",
+              "kind": "secret",
+              "required": true,
+              "title": "API key"
+            }
+          ],
+          "provider": "incluster-mcp-key",
+          "providers": [
+            "incluster-mcp-key"
+          ]
+        }
+      },
+      "workspaces": [
+        {
+          "description": "Isolated Option A MCP validation; test branch only",
+          "enabled": true,
+          "name": "default",
+          "sandboxes": [
+            {
+              "enabled": true,
+              "name": "notebook",
+              "type": "openclaw",
+              "uiRoute": false
+            }
+          ]
+        }
+      ]
     }
   }
 }

@@ -1,0 +1,17 @@
+apiVersion: saw.redhat.com/v1alpha1
+kind: Providers
+metadata:
+  profile: mcp-validation
+spec:
+  providers:
+  - name: nvidia
+    type: nvidia
+    model: nvidia/nemotron-3-super-120b-a12b
+    credentialSecret: inference
+  - name: incluster-mcp-probe
+    type: incluster-mcp-probe
+    credentialFree: true
+  - name: incluster-mcp-key
+    type: incluster-mcp-key
+    credentialEnv: MCP_API_KEY
+    credentialSecret: mcp-optiona-key
