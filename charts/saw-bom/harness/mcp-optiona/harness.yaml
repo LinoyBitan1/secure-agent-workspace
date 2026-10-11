@@ -1,0 +1,12 @@
+apiVersion: saw.redhat.com/v1alpha1
+kind: HarnessBundle
+metadata:
+  name: mcp-optiona
+spec:
+  agent: openclaw
+  version: 0.1.0
+  mcpServers:
+  - name: no-key
+    governanceProfile: incluster-mcp-probe
+  - name: with-key
+    governanceProfile: incluster-mcp-key
