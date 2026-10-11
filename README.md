@@ -399,7 +399,7 @@ Every SAW gateway calls a fail-closed governance service. By default that is the
 - Check that you can pull:
   ```bash
   docker login ghcr.io -u <github-user> --password-stdin < ~/.ghcr-token
-  docker pull ghcr.io/mkhaas/apf/apf-policy-gateway:0.2.0
+  docker pull ghcr.io/mkhaas/apf/apf-policy-gateway:0.1.0
   ```
 
 **2. Create your signing key and bundle.** This repository ships no key and no bundle. Each deployment makes its own, so no deployment trusts someone else's key.

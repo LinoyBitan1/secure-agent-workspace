@@ -11,7 +11,7 @@ bundle, and writes a JSONL audit trail.
 | | `interceptor` (default) | `apf` |
 |---|---|---|
 | Serves | `governance-policy` ConfigMaps | signed bundle built from the same files |
-| Images | `quay.io/rh-ai-quickstart/governance-interceptor` (public) | `ghcr.io/mkhaas/apf/*:0.2.0` (private) |
+| Images | `quay.io/rh-ai-quickstart/governance-interceptor` (public) | `ghcr.io/mkhaas/apf/*:0.1.0` (private; chart 0.2.0) |
 | Policy change | edit `charts/governance-policy`, push | edit, **re-sign** (`make apf-bundle`), push |
 | Runtime `openshell policy update` | validated | refused: "policy is managed by APF" |
 | Gateway bindings | 4 RPCs (`allowlist`) | APF's own declarations (`dynamic`): 10 RPCs, incl. post-commit audit |
@@ -120,15 +120,17 @@ byte, so no private image or Docker is needed to sign.
 
 ## Check on a cluster
 
-These depend on APF 0.2.0 behaviour the chart and README do not spell out, so confirm them on the
+These depend on APF behaviour the chart and README do not spell out, so confirm them on the
 first install:
 
 - The gateway starts with APF's bindings (the VM's gateway log: `interceptors initialized`); in
   `dynamic` mode every post-commit binding must come with `fail_open` from APF's manifest.
 - **OpenShell 0.1.x (the SAW's BOM since v0.1.2-rhaiv.0).** The gateway negotiates the extension
   protocol (`PeerMetadata`, protocol 1.0) with every interceptor and stops at startup when an
-  interceptor does not speak it, so APF must be a release built for OpenShell 0.1.x; 0.2.0 was
-  built against 0.0.x and is not verified with it.
+  interceptor does not speak it ("did not provide protocol metadata"), so APF must be a build for
+  OpenShell 0.1.x. That is why `apf.values` sets the 0.1.0 images: the APF chart's own 0.2.0
+  images were built against 0.0.x and a 0.1.2 gateway refuses them (seen live). 0.1.0 is APF's
+  crate version and its first 0.1.x build; the chart stays at 0.2.0.
 - **Profile annotations ([NVIDIA/OpenShell#3929](https://github.com/NVIDIA/OpenShell/issues/3929)).**
   0.1.x hashes provider-profile annotations in map order, so a profile served with more than one
   annotation makes every sandbox with that provider fail ("Startup configuration did not

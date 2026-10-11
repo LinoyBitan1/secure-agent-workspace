@@ -86,6 +86,18 @@ apf:
     bundle:
       manifest: bundle.yaml
     tier: 1
+    # APF 0.1.0 is the first build for OpenShell 0.1.x: its Describe returns
+    # the extension protocol metadata (PeerMetadata, protocol 1.0) the SAW
+    # gateways require. The 0.2.0 images the chart pins by default were built
+    # for OpenShell 0.0.x, and a 0.1.x gateway refuses them at startup ("did
+    # not provide protocol metadata"). 0.1.0 is APF's crate version, not an
+    # older release; the chart (0.2.0 above) works with these images.
+    gateway:
+      image: ghcr.io/mkhaas/apf/apf-policy-gateway:0.1.0
+    policyService:
+      image: ghcr.io/mkhaas/apf/apf-policy-service:0.1.0
+    compile:
+      image: ghcr.io/mkhaas/apf/apf-compile:0.1.0
 
 # Where the APF Application object is created. The pattern injects
 # global.vpArgoNamespace; argo.namespace is the fallback.

@@ -118,6 +118,12 @@ def test_apf_replaces_the_interceptor(apf_chart):
     assert values["trustRoot"] == {"existingConfigMap": "governance-apf-trust"}
     # Never the dev key baked into the APF chart.
     assert values["signing"] == {"existingSecret": "governance-apf-signing"}
+    # The 0.1.0 images: the first APF build that speaks OpenShell 0.1.x's
+    # extension protocol (the chart's own 0.2.0 images are refused by a 0.1.x
+    # gateway at startup, seen live). Same pull secret.
+    assert values["gateway"]["image"] == "ghcr.io/mkhaas/apf/apf-policy-gateway:0.1.0"
+    assert values["policyService"]["image"] == "ghcr.io/mkhaas/apf/apf-policy-service:0.1.0"
+    assert values["compile"]["image"] == "ghcr.io/mkhaas/apf/apf-compile:0.1.0"
     # A new bundle restarts the APF pod (its chart only watches inputs it renders).
     import hashlib
     files = apf_chart / "files" / "apf"
