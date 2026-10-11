@@ -83,7 +83,7 @@ Switching back is the reverse, plus deleting the `governance-apf` Application.
 make apf-keys apf-bundle                  # your own key and bundle, not committed upstream
 helm uninstall governance-interceptor -n openshell-agents    # if the interceptor is installed
 GHCR_USER=<github-user> GHCR_TOKEN=<token> make governance-apf
-make openshell-saw-create OPENSHELL_SAW_NAME=alice GOVERNANCE_ENGINE=apf ...
+make saw-create OPENSHELL_SAW_NAME=alice GOVERNANCE_ENGINE=apf ...
 ```
 
 `make governance-apf` creates the two Secrets, installs `charts/governance-interceptor` as

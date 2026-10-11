@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Secure Agent Workspace (SAW) deploys a per-user AI agent sandbox running inside a KubeVirt virtual machine on OpenShift. The deployment is fully GitOps-driven via Red Hat Validated Patterns and ArgoCD.
+The Secure Agent Workspace (SAW) deploys a per-user AI agent sandbox running inside a KubeVirt virtual machine on OpenShift. The deployment is fully GitOps-driven via Red Hat Validated Patterns and ArgoCD. For Alice and Bob test account passwords and separate browser sign-in steps, see [Keycloak test users](../README.md#keycloak-test-users).
 
 Each sandbox provides an OpenShell gateway with OIDC authentication, governance policy enforcement, and a web-based agent interface — all managed declaratively from Git.
 
@@ -65,9 +65,9 @@ The `openshell-gateway-image` BuildConfig creates a Fedora 44 qcow2 image with:
 - Systemd user service for the OpenShell gateway (`openshell-gateway.service`)
 - First-boot setup service (`openshell-gateway-setup.service`) that starts the container runtime, enables the gateway, and configures mTLS certs
 
-The image is pushed to an internal ImageStream (`openshell-gateway:latest`) and used as a DataSource for cloning VM disks.
+The image is pushed to an internal ImageStream (`openshell-gateway:latest`). CDI imports it into each VM disk by default. A DataSource can be used for cloning instead.
 
-Build trigger: `make build-gateway-docker` (Docker variant) or `make build-gateway-podman` (Podman variant), or automatically via ArgoCD.
+Build trigger: `make gateway-build-docker` (Docker variant) or `make gateway-build-podman` (Podman variant), or automatically via ArgoCD.
 
 ### Phase 2: Keycloak + OIDC
 
@@ -106,6 +106,9 @@ Most clusters need nothing here. A certificate that is not from a public CA does
 - **An external issuer (`oidc.issuerUrl`) with a private CA, or the quickstart.** Set `oidc.caBundle` yourself. See [Setting oidc.caBundle](#setting-oidccabundle).
 
 Before installing, `make check-oidc-ca` tells you which case you are in. It looks at the default IngressController's certificate and verifies `*.apps` against public CAs only. Run `make check-oidc-ca ISSUER=<url>` for an external issuer. If something was missed, the installer in each VM checks the issuer before starting the gateway and fails with the fix (`install: Failed - cannot verify the OIDC issuer's certificate …; set oidc.caBundle …`).
+
+`make prereqs-check` also runs this CA check as a warning. It does not change
+the cluster, but the CA check can save `ingress-ca.pem` in the current directory.
 
 To check from inside a VM (`make openshell-saw-vm-ssh` or `virtctl ssh`):
 
@@ -182,7 +185,7 @@ The `governance-interceptor` chart deploys the interceptor pod, which mounts bot
 
 ### Phase 5: VM Boot + In-guest installer
 
-The VM boots from a clone of the golden image. Nothing logs in over SSH to install it. See [Versioned BOM installer](versioned-bom-installer.md).
+The VM boots from a disk imported from the golden image. Nothing logs in over SSH to install it. See [Versioned BOM installer](versioned-bom-installer.md).
 
 #### Cloud-init
 
@@ -190,7 +193,7 @@ Cloud-init runs once and writes the static files: the mount script, the `saw-ins
 
 #### Root disk
 
-There is no prepare Job: nothing runs in the SAW's namespace but the VM. The VM's disk template makes its root disk once, when it does not exist: by default CDI imports the golden image from the internal registry (`<source.dataSourceNamespace>/openshell-gateway:latest`, from `make copy-images` or the image build) with `pullMethod: node`, so each node pulls the image once and caches it. Set `source.registryURL` to import another image (pin it by digest), or `source.dataSource` to clone a golden image DataSource that already exists. Changing the source later does not change an existing VM's disk. Keycloak redirect URIs are registered by the redirect registrar in Keycloak's namespace, or by an administrator ([Web UI redirect URIs](#web-ui-redirect-uris)).
+There is no prepare Job: nothing runs in the SAW's namespace but the VM. The VM's disk template makes its root disk once, when it does not exist: by default CDI imports the golden image from the internal registry (`<source.dataSourceNamespace>/openshell-gateway:latest`, from `make images-mirror` or the image build) with `pullMethod: node`, so each node pulls the image once and caches it. Set `source.registryURL` to import another image (pin it by digest), `source.httpURL` (or the older `source.goldenImageURL`) to download a qcow2 over HTTP, or `source.dataSource` to clone a golden image DataSource that already exists. An `http://` or `https://` disk URL is added to the namespace egress firewall on its own host and port; a host already allowed on that port is not listed twice. Changing the source later does not change an existing VM's disk. Keycloak redirect URIs are registered by the redirect registrar in Keycloak's namespace, or by an administrator ([Web UI redirect URIs](#web-ui-redirect-uris)).
 
 #### Guest
 
@@ -245,6 +248,38 @@ sandboxes.
 | `<name>-dashboard` | 18789 | Edge | OpenClaw agent web UI; the dashboard Route does not reach the OpenClaw UI on OpenShell 0.1.x, see [OpenClaw UI and the dashboard Route](#openclaw-ui-and-the-dashboard-route) |
 | `<name>-webui` | 8080 | Edge | OpenShell Dashboard (via oauth2-proxy) |
 
+### Egress from the VM
+
+Each sandbox namespace has an `EgressFirewall` (`k8s.ovn.org/v1`, name `default`) rendered by the `openshell-saw` chart. It needs OVN-Kubernetes. On another network plugin the kind is unknown and the Argo CD sync fails. It is independent of OpenShell's sandbox allowlist: a process on the VM that skips the sandbox proxy still cannot open a connection to a host that is not listed.
+
+The source of truth is `egress.allow` in [`charts/openshell-saw/values.yaml`](../charts/openshell-saw/values.yaml). That list includes the registries the VM pulls from and every exact host in [`charts/governance-policy/profiles/`](../charts/governance-policy/profiles/). A chart test fails if a shipped profile adds a host that is not on the firewall. The chart also allows the Keycloak route host taken from the OIDC issuer URL, using the URL's port (443 when the URL has none).
+
+Node addresses are allowed only on TCP 443 and 80, for the ingress router. The VM does not call the Kubernetes API, so 6443 is not open. Kubelet, SSH, and NodePorts are not either. If the ingress is a load balancer address rather than a node IP, this rule does not cover it. The Keycloak host is what the VM uses for login.
+
+Everything else on the public internet is denied, for IPv4 and IPv6. Pods and services inside the cluster, including DNS, the governance interceptor, and the internal registry, are not filtered by this object.
+
+Hostnames are exact. A name such as `*.quay.io` is rejected at render time, because matching a wildcard needs the `DNSNameResolver` feature gate. Gemini's `*-aiplatform.googleapis.com` cannot be written as a `dnsName` rule. Add the regional host you use under `extraAllow` (for example `us-central1-aiplatform.googleapis.com`).
+
+Quay serves image layers from `cdn01.quay.io` through `cdn06.quay.io`. Those names are on the list. Their addresses change often, and OVN resolves them itself, which can disagree with the VM's own resolver. On cluster-mx8z2, `podman pull quay.io/quay/busybox` succeeded three times in a row and `https://cdn01.quay.io/` returned HTTP 403 (the name is reachable; Quay refuses a bare GET). `registry.npmjs.org` is on the list too, and from that same VM it still timed out: the guest resolved Cloudflare addresses that OVN had not installed for the name. Public NTP (UDP 123) is denied. The guest clock stays on kvm-clock; chrony will not see public pool servers.
+
+Anything that installs npm packages in a sandbox (OpenClaw plugins, NemoClaw onboarding) can fail intermittently for that reason: the timeout is OVN's DNS view disagreeing with the guest's, not a missing entry. If a sandbox flow needs npm reliably, set `egress.enabled: false` for that workspace, or point it at an npm mirror inside the cluster (`*.svc` needs no entry).
+
+With harness bundles on (`allowDriverConfig: true`, which saw-users sets with `harnessEnabled`), `egress.harnessAllow` is added as well: `ghcr.io` and `pkg-containers.githubusercontent.com` for the image, `rekor.sigstore.dev` and `tuf-repo-cdn.sigstore.dev` for the keyless cosign verification the installer repeats on every apply. Without them the first apply fails verification and removes the harness from the sandbox. A harness image on another registry needs that registry, and its blob host, under `egress.extraAllow`. `signing.mode: enforce` adds the same two Sigstore hosts even when no harness is on. `warn` only logs, so it does not.
+
+An external disk download (`source.httpURL`, or `source.goldenImageURL` / `source.registryURL` when it is `http://` or `https://`) is allowed automatically. So is a `docker://` image on a registry outside the cluster when `source.pullMethod` is `pod` (its registry host and port). With `pullMethod: node`, the default, the node's container runtime pulls the image, outside this firewall, so nothing is added. A registry that serves blobs from a CDN host needs that host under `egress.extraAllow`. The internal registry is never added. Any other host outside the cluster, including a custom inference endpoint, still has to be listed.
+
+To let one deployment reach another host (an enterprise system, or a custom inference endpoint outside the cluster), add it in Git under `egress.extraAllow`. On the pattern path, set that under `defaults.openshellSaw` in [`charts/saw-users/values.yaml`](../charts/saw-users/values.yaml), or on one user. A host inside the cluster (`*.svc`) needs no entry.
+
+```yaml
+egress:
+  extraAllow:
+    - vllm.example.net
+```
+
+`egress.enabled: false` removes the firewall. Leave it on.
+
+**Upgrading an existing sandbox.** The next sync turns this firewall on. A custom-inference URL that is outside the cluster lives only in Vault, so the chart cannot see it. Before upgrading, put that host in `egress.extraAllow`, or set `egress.enabled: false` on that user until you do. Calls to that URL time out. OpenShell does not report a policy denial.
+
 ### Internal Connectivity
 
 | From | To | Protocol | Purpose |
@@ -265,23 +300,27 @@ sandboxes.
 ### Prerequisites
 
 ```bash
-make check-prereqs          # Verify operators and CLI tools
+make quickstart-prereqs-check # Verify operators and the CLI version against the gateway BOM
 ```
+
+Install `uv` before either prerequisite check. The quickstart uses it for
+Keycloak user management, redirect registration, and sandbox UI values.
 
 ### Initial Setup
 
 ```bash
-make generate-keys           # Create SSH keypair
-make ssh-secret              # Create Kubernetes secrets from keys
-make build-gateway-docker    # Build Docker golden VM image (or: make copy-images)
-make keycloak                # Deploy Keycloak (if not via ArgoCD)
+make ssh-key-generate           # Create SSH keypair
+make images-mirror               # Mirror the prebuilt golden image
+make gateway-build               # Or build with CONTAINER_RUNTIME=podman|docker
+make keycloak-deploy             # Deploy Keycloak (if not via Argo CD)
+make governance-deploy           # Deploy governance policy and interceptor
 ```
 
 ### Sandbox Lifecycle
 
 ```bash
 # Create
-make openshell-saw-create OPENSHELL_SAW_NAME=my-saw
+make saw-create OPENSHELL_SAW_NAME=my-saw
 
 # Access — NemoClaw sandbox
 OPENSHELL_SAW_NAME=my-saw SANDBOX_NAME=cuda-sandbox make nemoclaw-tui
@@ -292,43 +331,142 @@ OPENSHELL_SAW_NAME=my-saw SANDBOX_NAME=notebook make openclaw-tui
 OPENSHELL_SAW_NAME=my-saw SANDBOX_NAME=notebook GUI_PORT=18790 make openclaw-gui
 
 # SSH into a sandbox
-make openshell-saw-ssh OPENSHELL_SAW_NAME=my-saw
+make saw-ssh OPENSHELL_SAW_NAME=my-saw
 make login OPENSHELL_SAW_NAME=my-saw
 
 # Monitor
-make openshell-saw-list
-make openshell-saw-logs OPENSHELL_SAW_NAME=my-saw
+make saw-list
+make saw-logs OPENSHELL_SAW_NAME=my-saw
 make status
 
 # Delete
-make openshell-saw-delete OPENSHELL_SAW_NAME=my-saw
-make delete-all              # Remove everything
+make saw-delete OPENSHELL_SAW_NAME=my-saw
+make quickstart-delete              # Remove Keycloak and image releases after SAWs
 ```
 
 ### Governance
 
 ```bash
 make governance-demo OPENSHELL_SAW_NAME=my-saw
-make governance-list-profiles OPENSHELL_SAW_NAME=my-saw
-make governance-add-profile OPENSHELL_SAW_NAME=my-saw PROFILE_NAME=github
-make governance-remove-profile OPENSHELL_SAW_NAME=my-saw PROFILE_NAME=github
-make governance-create-profile OPENSHELL_SAW_NAME=my-saw \
+make governance-profile-list OPENSHELL_SAW_NAME=my-saw
+make governance-profile-add OPENSHELL_SAW_NAME=my-saw PROFILE_NAME=github
+make governance-profile-remove OPENSHELL_SAW_NAME=my-saw PROFILE_NAME=github
+make governance-profile-create OPENSHELL_SAW_NAME=my-saw \
   PROFILE_NAME=jira PROFILE_FILE=/path/to/jira.yaml
 ```
 
-The `add`, `remove`, and `create` targets edit `charts/governance-policy/profiles/`, commit, and run `git push origin HEAD`, then wait for Argo CD to sync the `governance-policy` application. On the quickstart path, where governance-policy is installed with Helm rather than Argo CD, edit the profiles and re-run `helm upgrade --install governance-policy charts/governance-policy --namespace openshell-agents` instead. `OPENSHELL_SAW_NAME` selects the gateway that `governance-list-profiles` queries (default `openshell-saw`). See [governance-interceptor.md](governance-interceptor.md#applying-profile-changes).
+The `add`, `remove`, and `create` targets edit `charts/governance-policy/profiles/`, commit, and run `git push origin HEAD`, then wait for Argo CD to sync the `governance-policy` application. On the quickstart path, where governance-policy is installed with Helm rather than Argo CD, edit the profiles and re-run `make governance-deploy` instead. `governance-profile-list` lists repository profiles when no SAW name is set. Set `OPENSHELL_SAW_NAME` to query a gateway or to change a profile. See [governance-interceptor.md](governance-interceptor.md#applying-profile-changes).
 
 ### Testing
 
 ```bash
-make test                    # Headless E2E test
+make lint                   # Lint all 13 charts
+make test                   # Run local Python tests through uv
+make test-deployment        # Run the dedicated live-cluster test
 ```
+
+### Live deployment test
+
+Run this test only after the file changes are reviewed and the exact tested
+commit is pushed. Use a dedicated OpenShift cluster. The runner checks the
+current `oc` context and the pushed commit before it changes cluster state.
+It requires a new manual SAW name and a separate token directory for a
+second user. The pattern SAW name must match a user in
+`overrides/saw-users.yaml`. Do not use a production namespace.
+
+Set `TEST_CLUSTER_CONTEXT` to the result of `oc config current-context`.
+Set `TEST_OWNER_SUBJECT` to the test owner's OIDC subject. Set
+`TEST_SECOND_TOKEN_DIR` to a different local directory that already has a
+second user's `token.json`. Keep credentials in files or environment
+variables; do not add them to a command line. The data-science profile
+needs `WEB_SEARCH_API_KEY`. The pattern also needs its inference and
+web-search keys in Vault before the test. For example:
+
+```bash
+export TEST_CLUSTER_CONTEXT=<dedicated-oc-context>
+export TEST_SAW_NAME=review-01
+export TEST_PATTERN_SAW_NAME=alice
+export TEST_OWNER=alice
+export TEST_OWNER_SUBJECT=<alice-oidc-subject>
+export TEST_SECOND_TOKEN_DIR=<second-user-token-directory>
+export TARGET_BRANCH=<pushed-test-branch>
+export TARGET_ORIGIN=origin
+export PROVIDER=build
+export MODEL=nvidia/nemotron-3-super-120b-a12b
+read -r API_KEY < "$HOME/.nvidia-api-key"
+export API_KEY
+read -r WEB_SEARCH_API_KEY < "$HOME/.web-search-api-key"
+export WEB_SEARCH_API_KEY
+export TEST_INFERENCE_CHECK=/absolute/path/check-inference.sh
+export TEST_OWNER_ACCESS_CHECK=/absolute/path/check-owner-access.sh
+# Optional: override the built-in second-user denial check.
+# export TEST_SECOND_USER_DENIED_CHECK=/absolute/path/check-second-user-denied.sh
+make test-deployment
+unset API_KEY WEB_SEARCH_API_KEY
+```
+
+Each check must be an executable script that sends a real request and
+verifies the response. The runner sets `TEST_ACTIVE_SAW_NAME` and
+`TEST_ACTIVE_SAW_NS` for each manual or pattern SAW. It also passes the
+owner's `OIDC_TOKEN_DIR` and `TEST_SECOND_TOKEN_DIR`. The inference check
+must return a JSON object such as `{"result":"accepted","status_code":200}`.
+The owner check must return `{"result":"allowed","status_code":200}`.
+The built-in second-user check uses `TEST_SECOND_TOKEN_DIR` and requires a
+403 response from the active SAW gateway. An override must return
+`{"result":"denied","status_code":403}`.
+Return a nonzero exit code when a request fails. Do not print tokens or
+response bodies. The runner records the status code and a SHA-256 hash of
+the output. These checks are required; a typed confirmation cannot replace
+them.
+
+The uninstall cleanup ownership markers assume pattern
+`secure-agent-workspace` and cluster group `prod`. Update the tracking IDs
+and cleanup marker logic before using a different pattern or cluster group.
+
+The runner checks prerequisites, creates or recovers keys, mirrors the
+gateway image, deploys Keycloak and governance, signs in, creates a SAW,
+and waits up to 2400 seconds for both installer phases to be `Done`.
+It exercises `saw-list`, `saw-status`, `saw-configure`, VM SSH, and a
+deprecated alias. A person verifies logs, sandbox SSH, TUI, and GUI.
+Enter `yes` after each interactive check passes. The three executable
+checks send an inference request, verify owner access, and verify denial
+for the second user. Each must return the expected status code. A failed
+check stops the runner with a nonzero exit code.
+
+The runner repeats setup and checks that credentials and Helm release
+counts stay stable. It deletes the manual SAW twice, then installs the
+Validated Pattern through `pattern.sh`, checks Argo CD health and installer
+status, uninstalls twice, and reinstalls. Argo CD must report the tested
+commit as the synced revision for all three user applications. The default
+`pruneOnRemove: false` leaves the user namespace after pattern uninstall.
+The runner verifies the pattern ownership labels, checks that the VM is
+gone, then deletes only that test namespace. It mirrors the gateway image
+again before reinstall because Pattern uninstall removes the managed image
+stream. It performs a final uninstall
+and cleanup after the reinstall. It records ISO 8601 timestamps,
+commit SHA, cluster context, component versions, initial resource state,
+check names, and exit codes in a local TSV
+file under `local-docs/`. The runner creates this directory when needed.
+If a check fails, it attempts cleanup of resources that it created and
+records cleanup results.
+
+If a step fails, keep the evidence file and inspect the reported resource.
+Fix the fault, use a new manual SAW name when needed, and rerun the affected
+checks. A mock or local test result does not replace this live test.
 
 ## Quickstart notes
 
 ### Operators for the quickstart
 
 The quickstart installs operators from OperatorHub. OpenShift Virtualization needs one extra resource: after its operator is running, create a `HyperConverged` so the operator deploys the virtualization components and a node can run VMs. Option A (the validated pattern) creates this for you; the quickstart does not.
+
+With local Keycloak, `make saw-create` reads the selected SAW-BOM profiles
+and creates an owner-restricted Route for each enabled sandbox with
+`ui.route: true`. It sets the cluster domain from OpenShift ingress so the
+VM's proxy can use the assigned host. Run `make sandbox-ui` after the
+installer reaches `Done` to list these routes. An external OIDC issuer needs
+its own redirect registration, so the quickstart does not create these
+routes for that mode.
 
 ```yaml
 apiVersion: hco.kubevirt.io/v1beta1
@@ -343,13 +481,41 @@ External Secrets is only required for Option A, which syncs the pattern's secret
 
 ### Golden image tag
 
-`make copy-images` mirrors the prebuilt images into the cluster. For each image it tries the `OPENSHELL_VERSION` tag first, then `v<version>`, and finally falls back to the `latest` tag, using the first that exists and storing it under the requested version (it also tags the result `latest`). If the golden image predates bundle signing, as the prebuilt images do, it ships no `verify-bundle`, so `saw-stage-installer` stages the installer tree without verification; the default signing mode `warn` still boots the VM, while `enforce` would refuse.
+`make images-mirror` mirrors the prebuilt images into the cluster. For each image it tries the `OPENSHELL_VERSION` tag first, then `v<version>`, and finally falls back to the `latest` tag, using the first that exists and storing it under the requested version (it also tags the result `latest`). If the golden image predates bundle signing, as the prebuilt images do, it ships no `verify-bundle`, so `saw-stage-installer` stages the installer tree without verification; the default signing mode `warn` still boots the VM, while `enforce` would refuse.
+
+`OPENSHELL_VERSION` defaults to `0.0.116` and selects a prebuilt gateway
+disk image tag. The `openshell-saw` chart has a separate in-VM BOM that
+pins OpenShell `0.1.2-rhaiv.0` images by digest. Changing a mirror tag does
+not upgrade the in-VM runtime. See [Versioned BOM installer](versioned-bom-installer.md).
+
+The default VM disk source is the `openshell-gateway:latest` image in the
+internal registry. To use another registry image, a DataSource, or an HTTP
+source, set one of these values in an override file for `charts/openshell-saw`:
+
+```yaml
+source:
+  registryURL: docker://quay.io/example/openshell-gateway:tag
+```
+
+```yaml
+source:
+  dataSource: openshell-gateway
+  dataSourceNamespace: openshell-agents
+```
+
+```yaml
+source:
+  httpURL: https://example.com/openshell-gateway.qcow2
+```
+
+Set only one source mode. Keep `source.dataSourceNamespace` at
+`openshell-agents` when using the shared golden image.
 
 ### OpenClaw UI and the dashboard Route
 
 The `<name>-dashboard` Route forwards to the gateway Service on VM port 18789, but OpenClaw listens inside the sandbox container, which on OpenShell 0.1.x runs in its own network namespace with only loopback (network mode `none`, no port mappings). The Route therefore does not reach the OpenClaw UI and answers 503. Each sandbox has its own namespace, so several OpenClaw sandboxes all listen on 18789 without conflict.
 
-On the pattern path (Option A, including workspaces created in the self-service portal), a sandbox whose profile sets `ui: {route: true}` gets its own Route instead, `<user>-<workspace>-<sandbox>-ui.apps.<domain>`, signed in through Keycloak and open only to the workspace owner. It reaches OpenClaw through `openshell forward`, so it works on 0.1.x; see [Opening a sandbox UI](rhdh-architecture.md#opening-a-sandbox-ui). On the quickstart path (Option B) no such Routes are created: use `make openclaw-gui` (or `make nemoclaw-gui`), which port-forwards to the sandbox UI.
+On the pattern path (Option A, including workspaces created in the self-service portal), a sandbox whose profile sets `ui: {route: true}` gets its own Route, `<user>-<workspace>-<sandbox>-ui.apps.<domain>`, signed in through Keycloak and open only to the workspace owner. The local-Keycloak quickstart path (Option B) also creates these Routes for enabled profile UIs. They reach OpenClaw through `openshell forward`, so they work on 0.1.x; see [Opening a sandbox UI](rhdh-architecture.md#opening-a-sandbox-ui). Use `make sandbox-ui` to list them. `make openclaw-gui` and `make nemoclaw-gui` port-forward to the sandbox UI as another access method.
 
 ### Web search in the default sandbox
 

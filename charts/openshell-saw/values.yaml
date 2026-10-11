@@ -1,13 +1,13 @@
 # Required — must be set at install time. Maximum 19 characters (OpenShell limit).
 sandboxName: ""
-# Operator SSH access (used by `make openshell-saw-configure-gateway` to fetch
+# Operator SSH access (used by `make saw-configure` to fetch
 # the gateway CA). Provisioning does not use SSH. Keys are provisioned
 # dynamically by KubeVirt accessCredentials through the qemu guest agent:
 # updating the Secret updates cloud-user's authorized_keys in the running VM.
 # https://kubevirt.io/user-guide/user_workloads/accessing_virtual_machines/
 #
 # The chart creates an empty <name>-ssh-pubkey Secret for this;
-# `make openshell-saw-vm-ssh` adds your key to it when you need a shell.
+# `make saw-vm-ssh` adds your key to it when you need a shell.
 # Or name an existing Secret instead (every value in it is a public key):
 sshPublicKeySecret: ""
 # Optional: seed the chart-created Secret with one key (key1).
@@ -19,7 +19,7 @@ sshPublicKey: ""
 #
 # 1. Registry (default): import the golden image into the VM's own disk.
 #    Without registryURL, the internal registry's
-#    <dataSourceNamespace>/openshell-gateway:latest (make copy-images, or the
+#    <dataSourceNamespace>/openshell-gateway:latest (make images-mirror, or the
 #    openshell-gateway-image build); the namespace may pull it from there.
 #      source:
 #        registryURL: "docker://quay.io/rh-ai-quickstart/openshell-gateway@sha256:<digest>"
@@ -30,8 +30,13 @@ sshPublicKey: ""
 #        dataSource: openshell-gateway
 #        dataSourceNamespace: openshell-agents
 #
-# 3. HTTP: download a qcow2 disk image from a URL (the VM's namespace must
-#    reach that host; see egress).
+# 3. HTTP: download a qcow2 disk image from a URL. An http(s) host is added
+#    to the namespace egress firewall unless that host and port are already
+#    allowed. A host inside the cluster needs no entry. A docker:// image on
+#    an outside registry with pullMethod: pod gets its registry host added
+#    the same way (pullMethod: node pulls on the node, outside the firewall);
+#    a registry that serves blobs from a CDN host needs that host under
+#    egress.extraAllow.
 #      source:
 #        httpURL: "https://example.com/openshell-gateway.qcow2"
 source:
@@ -225,7 +230,7 @@ sandboxUiProxy:
   # asking for its gateway token, and approves their UI devices. Only
   # requests from `cidrs` are trusted; the forward arrives over loopback.
   # The CLI and TUI in the sandbox use the gateway secret as a password.
-  # Off: the UI asks for the token (make sandbox-ui prints it).
+  # Off: the UI asks for its token. make sandbox-ui lists routes only.
   trustedProxy:
     enabled: true
     cidrs: ["127.0.0.1/32", "::1/128"]
@@ -308,4 +313,64 @@ job:
 
 # Each SAW is installed into its own namespace (the release namespace), e.g.
 # saw-<name>. Label that namespace openshell.pattern/saw=true so the shared
-# governance interceptor accepts its VM (make openshell-saw-create does this).
+# governance interceptor accepts its VM (make saw-create does this).
+
+# Default-deny egress for every pod in the sandbox namespace, including the
+# VM. Needs OVN-Kubernetes (k8s.ovn.org/v1 EgressFirewall, the OpenShift
+# default); on another network plugin set egress.enabled: false, or the
+# workspace's sync fails on the unknown kind. OpenShell's own allowlist is a separate layer and does not replace this.
+# Exact hostnames only: a wildcard needs the DNSNameResolver feature gate.
+# The Keycloak route host is added automatically from the OIDC issuer URL.
+# Add an enterprise system or a custom inference host under extraAllow
+# (pattern: defaults.openshellSaw.egress.extraAllow, or one user's values).
+# A host inside the cluster (*.svc) needs no entry.
+egress:
+  enabled: true
+  allow:
+    # Registries the VM pulls from. Quay redirects blobs to the cdn hosts.
+    - quay.io
+    - cdn.quay.io
+    - cdn01.quay.io
+    - cdn02.quay.io
+    - cdn03.quay.io
+    - cdn04.quay.io
+    - cdn05.quay.io
+    - cdn06.quay.io
+    - registry.fedoraproject.org
+    # Exact hosts from charts/governance-policy/profiles. A test fails if a
+    # shipped profile grows a host that is not listed here.
+    # *-aiplatform.googleapis.com is not here: a dnsName rule cannot express it.
+    - integrate.api.nvidia.com
+    - api.search.brave.com
+    - api.openai.com
+    - api.tavily.com
+    - registry.npmjs.org
+    - github.com
+    - api.github.com
+    - api-1.github.com
+    - slack.com
+    - generativelanguage.googleapis.com
+    - cloudcode-pa.googleapis.com
+    - accounts.google.com
+    - oauth2.googleapis.com
+    - www.googleapis.com
+    - iamcredentials.googleapis.com
+    # The personal-assistant demo's Gmail provider.
+    - gmail.googleapis.com
+  # Added when harness bundles are on (allowDriverConfig): the installer
+  # re-verifies a harness image's cosign signature on every apply (keyless:
+  # Sigstore's Rekor and TUF root) and pulls the image (GHCR serves blobs
+  # from pkg-containers.githubusercontent.com). Without them the first apply
+  # fails verification and the harness is removed from the sandbox. A harness
+  # image on another registry needs that registry under extraAllow.
+  harnessAllow:
+    - ghcr.io
+    - pkg-containers.githubusercontent.com
+    - rekor.sigstore.dev
+    - tuf-repo-cdn.sigstore.dev
+  # Added when signing.mode is enforce. warn only logs, so it needs nothing.
+  # The OpenShell images are already on Quay; a keyless check talks to Sigstore.
+  signingAllow:
+    - rekor.sigstore.dev
+    - tuf-repo-cdn.sigstore.dev
+  extraAllow: []
