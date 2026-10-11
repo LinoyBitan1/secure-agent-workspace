@@ -98,8 +98,33 @@ the signature and that the bundle matches `charts/governance-policy`; with the p
 the test suite runs the same check, so a policy change without a re-signed bundle fails CI.
 Only holders of the seed can change policy: that is the point of signing.
 
-APF reads the bundle at start: the chart restarts the APF pod when the ConfigMap changes.
-Gateways pick up the provider catalog when they restart.
+APF reads the bundle at start: the chart restarts the APF pod when the ConfigMap changes
+(its log says `bundle verified and loaded … counter=<policy_revision>`). Gateways pick up the
+provider catalog when they restart.
+
+APF puts the policy on a sandbox when it is created, and refuses changes afterwards. A sandbox
+created before the new bundle keeps the old policy; recreate it to get the new one. Each sandbox
+records which bundle it got in its `apf.nvidia.com/*` annotations (`bundle-id`,
+`document-digest`, `policy-version`, and a `provenance-token` signed with your seed).
+
+Example, verified live: `network_policies` in `charts/governance-policy/policy.yaml` let a
+sandbox without providers reach a host. Before the change, `git clone https://github.com/...` in a
+new sandbox was refused; after adding this, re-signing and pushing, a new sandbox cloned, while the
+one created before still could not:
+
+```yaml
+network_policies:
+  github_clone:
+    name: github-clone
+    endpoints:
+      - { host: github.com, port: 443 }
+    binaries:
+      - { path: /usr/bin/git }
+      - { path: /usr/lib/git-core/git-remote-http }   # what git uses for HTTPS (git-remote-https links to it)
+```
+
+`binaries` are the real executables: check them in the sandbox image with
+`readlink -f $(command -v git)` and `readlink -f $(git --exec-path)/git-remote-https`.
 
 ## Keys
 
@@ -120,8 +145,10 @@ byte, so no private image or Docker is needed to sign.
 
 ## Check on a cluster
 
-These depend on APF behaviour the chart and README do not spell out, so confirm them on the
-first install:
+Verified on OpenShift with OpenShell `0.1.2-rhaiv.0` and APF `0.1.0`: the gateway starts with
+APF's 14 bindings (`gateway interceptors initialized bindings=14`), provider creation is validated,
+the SAW profiles are served (except `gemini`, below), new sandboxes carry APF's provenance, and a
+re-signed bundle changes new sandboxes' policy. Confirm these on a new install:
 
 - The gateway starts with APF's bindings (the VM's gateway log: `interceptors initialized`); in
   `dynamic` mode every post-commit binding must come with `fail_open` from APF's manifest.
