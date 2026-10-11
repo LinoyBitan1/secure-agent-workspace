@@ -15,7 +15,7 @@ spec:
   - name: incluster-mcp-key
     type: incluster-mcp-key
     credentialEnv: MCP_API_KEY
-    credentialSecret: mcp-optiona-final-key
+    credentialSecret: mcp-optiona-key
   - name: external-deepwiki
     type: external-deepwiki
     credentialFree: true
