@@ -75,12 +75,14 @@ HARNESS = ROOT / "charts" / "saw-bom" / "harness"
 
 
 def harness_files():
-    """Flatten charts/saw-bom/harness exactly like templates/configmap-bom.yaml
+    """Flatten the default ds-default bundle like templates/configmap-bom.yaml
     (content-addressed keys plus a path map per bundle), but as raw bytes (the
     ConfigMap value is the base64 of these bytes)."""
     files = {}
     maps = {}
-    for path in sorted(HARNESS.rglob("*")):
+    # These unit-test inputs select data-science and index only ds-default.
+    # Other deployment fixtures must not add unindexed bundles to this tree.
+    for path in sorted((HARNESS / "ds-default").rglob("*")):
         if path.is_file():
             parts = path.relative_to(HARNESS).parts
             bundle, rel = parts[0], "/".join(parts[1:])
