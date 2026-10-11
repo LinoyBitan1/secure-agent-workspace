@@ -1,0 +1,16 @@
+id: incluster-mcp-probe
+display_name: In-cluster MCP probe
+description: Credential-free MCP Service in the isolated test namespace
+category: other
+endpoints:
+  - host: saw-incluster-mcp-probe.saw-pr78.svc.cluster.local
+    port: 8080
+    protocol: mcp
+    enforcement: enforce
+    mcp:
+      versions: ["2025-06-18", "2025-11-25"]
+      allow_all_known_mcp_methods: true
+binaries:
+  - /usr/bin/node
+  - /usr/bin/node-*
+  - /usr/local/bin/node

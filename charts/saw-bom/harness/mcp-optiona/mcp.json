@@ -1,0 +1,16 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "no-key": {
+      "type": "streamable-http",
+      "url": "http://saw-incluster-mcp-probe.saw-pr78.svc.cluster.local:8080/mcp"
+    },
+    "with-key": {
+      "type": "streamable-http",
+      "url": "http://saw-mcp-key-probe.saw-pr78.svc.cluster.local:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_KEY}"
+      }
+    }
+  }
+}
