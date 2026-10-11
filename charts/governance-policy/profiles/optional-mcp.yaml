@@ -1,0 +1,25 @@
+id: optional-mcp
+display_name: Optional credential MCP validation
+description: Optional credential transition validation
+category: other
+endpoints:
+- host: saw-incluster-mcp-probe.saw-pr78.svc.cluster.local
+  port: 8080
+  protocol: mcp
+  enforcement: enforce
+  mcp:
+    versions:
+    - '2025-06-18'
+    - '2025-11-25'
+    allow_all_known_mcp_methods: true
+binaries:
+- /usr/bin/node
+- /usr/bin/node-*
+- /usr/local/bin/node
+credentials:
+- name: api_key
+  env_vars:
+  - MCP_OPTIONAL_KEY
+  required: false
+  auth_style: bearer
+  header_name: authorization

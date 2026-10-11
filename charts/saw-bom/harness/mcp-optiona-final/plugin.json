@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "mcp-optiona-final",
+  "version": "0.1.0",
+  "description": "Isolated in-cluster MCP authentication validation"
+}

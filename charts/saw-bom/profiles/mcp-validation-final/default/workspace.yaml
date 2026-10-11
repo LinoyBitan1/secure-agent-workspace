@@ -1,0 +1,7 @@
+apiVersion: saw.redhat.com/v1alpha1
+kind: Workspace
+metadata:
+  name: default
+  description: Isolated Option A MCP validation; test branch only
+spec:
+  enabled: true

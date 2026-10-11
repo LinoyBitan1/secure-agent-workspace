@@ -1,0 +1,18 @@
+id: external-deepwiki
+display_name: External DeepWiki validation
+description: Public external MCP validation
+category: other
+endpoints:
+- host: mcp.deepwiki.com
+  port: 443
+  protocol: mcp
+  enforcement: enforce
+  mcp:
+    versions:
+    - '2025-06-18'
+    - '2025-11-25'
+    allow_all_known_mcp_methods: true
+binaries:
+- /usr/bin/node
+- /usr/bin/node-*
+- /usr/local/bin/node
