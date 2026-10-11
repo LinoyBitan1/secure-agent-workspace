@@ -18,10 +18,7 @@
     },
     "optional-key": {
       "type": "streamable-http",
-      "url": "http://saw-incluster-mcp-probe.saw-pr78.svc.cluster.local:8080/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MCP_OPTIONAL_KEY}"
-      }
+      "url": "http://saw-incluster-mcp-probe.saw-pr78.svc.cluster.local:8080/mcp"
     }
   }
 }

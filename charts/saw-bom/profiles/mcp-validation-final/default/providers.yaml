@@ -21,5 +21,4 @@ spec:
     credentialFree: true
   - name: optional-mcp
     type: optional-mcp
-    credentialEnv: MCP_OPTIONAL_KEY
-    credentialSecret: mcp-optiona-key
+    credentialFree: true
