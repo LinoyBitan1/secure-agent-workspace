@@ -36,6 +36,50 @@ def cli_ops(fake_env):
     return [" ".join(c[:2]) for c in fake_env.openshell_calls()]
 
 
+@pytest.mark.parametrize("keyed", [False, True])
+def test_custom_mcp_creation_and_reapply(ab, fake_env, config, profiles, creds, keyed):
+    ws = profiles[0].workspaces[0]
+    p = ab.Provider(name="local-mcp", type="local-mcp", credential_free=not keyed,
+                    credential_env="MCP_API_KEY" if keyed else "",
+                    credential_secret="local-mcp" if keyed else "")
+    ws.providers.insert(0, p)
+    ws.sandboxes[0].providers.insert(0, p.name)
+    entries = [{"id": "local-mcp", "credentials":
+                [{"name": "api_key", "env_vars": ["MCP_API_KEY"], "required": True}] if keyed else [],
+                "endpoints": [{"host": "mcp-service.ns.svc.cluster.local"}]}]
+    (fake_env.state / "catalog.json").write_text(json.dumps(entries))
+    if keyed:
+        creds[ws.name][p.name] = "test-mcp-secret"
+    applier = make_applier(ab, config, creds)
+    applier.apply_provider(ws, p)
+    make_applier(ab, config, creds).apply_provider(ws, p)
+    state = fake_env.openshell_state()["providers"][f"{ws.name}/{p.name}"]
+    assert state["credential"] == ("MCP_API_KEY=test-mcp-secret" if keyed else None)
+    calls = [c for c in fake_env.openshell_calls() if c[:1] == ["provider"] and p.name in c]
+    assert all("test-mcp-secret" not in " ".join(c) for c in calls)
+    assert any(c[:2] == ["provider", "update"] for c in calls) is keyed
+    assert all(("--credential" in c) is keyed for c in calls)
+    ws.providers[1].model = ""  # MCP must not be the fallback model provider either.
+    assert applier.find_provider(ws, [p.name, "nvidia"]).name == "nvidia"
+    assert applier.find_provider(ws, [p.name]) is None
+
+
+@pytest.mark.parametrize("catalog, keyed, message", [
+    ([], False, "not served"),
+    ([{"id": "local-mcp", "credentials": [{"env_vars": ["MCP_API_KEY"], "required": True}]}], False, "requires credentials"),
+    ([{"id": "local-mcp", "credentials": [{"env_vars": ["OTHER_KEY"], "required": True}]}], True, "credentialEnv.*not declared"),
+])
+def test_custom_mcp_requires_matching_served_profile(ab, fake_env, config, profiles, creds, catalog, keyed, message):
+    ws = profiles[0].workspaces[0]
+    p = ab.Provider(name="local-mcp", type="local-mcp", credential_free=not keyed,
+                    credential_env="MCP_API_KEY" if keyed else "")
+    creds[ws.name][p.name] = "test-mcp-secret"
+    (fake_env.state / "catalog.json").write_text(json.dumps(catalog))
+    with pytest.raises(ab.InstallerError, match=message):
+        make_applier(ab, config, creds).apply_provider(ws, p)
+    assert not [c for c in fake_env.openshell_calls() if c[:2] == ["provider", "create"]]
+
+
 def test_fresh_apply_creates_everything(ab, fake_env, config, profiles, creds):
     applier = make_applier(ab, config, creds)
     applier.apply(profiles)

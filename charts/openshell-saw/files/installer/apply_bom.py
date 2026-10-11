@@ -530,6 +530,13 @@ class Provider:
     model_secret_key: str = ""
     inference_timeout: int = 0
     base_url: str = ""
+    credential_free: bool = False
+    credential_env: str = ""
+
+    @property
+    def model_provider(self):
+        # Custom governed services provide permissions/credentials, not inference.
+        return self.type in PROVIDER_CRED_MAP and not self.credential_free
 
 
 @dataclass
@@ -919,21 +926,22 @@ def describe_harness_tree(files, inline=False):
     }
 
 
-def parse_profile_catalog(output):
-    """{profile id: set of endpoint hosts} from
-    `openshell provider list-profiles -o json` (checked on OpenShell 0.0.116)."""
+def parse_profile_entries(output):
+    """Profile declarations from `openshell provider list-profiles -o json`."""
     try:
         doc = json.loads(output or "")
     except ValueError:
         raise InstallerError("openshell provider list-profiles -o json did not return JSON") from None
     if isinstance(doc, dict):
         doc = doc.get("profiles") or doc.get("items") or []
-    catalog = {}
-    for item in doc if isinstance(doc, list) else []:
-        if isinstance(item, dict) and item.get("id"):
-            catalog[item["id"]] = {e.get("host") for e in item.get("endpoints") or []
-                                   if isinstance(e, dict) and e.get("host")}
-    return catalog
+    return {item["id"]: item for item in doc if isinstance(item, dict) and item.get("id")} if isinstance(doc, list) else {}
+
+
+def parse_profile_catalog(output):
+    """{profile id: set of endpoint hosts} served by the gateway."""
+    return {pid: {e.get("host") for e in item.get("endpoints") or []
+                  if isinstance(e, dict) and e.get("host")}
+            for pid, item in parse_profile_entries(output).items()}
 
 
 def host_allowed(host, patterns):
@@ -1129,6 +1137,8 @@ def parse_profiles(files):
                         nemoclaw_provider=p.get("nemoclawProvider", ""),
                         credential_secret=p.get("credentialSecret", ""),
                         credential_secret_key=p.get("credentialSecretKey", "api_key"),
+                        credential_free=p.get("credentialFree", False),
+                        credential_env=p.get("credentialEnv", ""),
                         model=p.get("model", ""),
                         base_url_secret_key=p.get("baseUrlSecretKey", ""),
                         model_secret_key=p.get("modelSecretKey", ""),
@@ -1265,9 +1275,22 @@ def validate_profiles(profiles):
         for p in ws.providers:
             if not p.enabled:
                 continue
-            if p.type not in PROVIDER_CRED_MAP:
+            if type(p.credential_free) is not bool:
+                errors.append(f"{where}: provider '{p.name}' credentialFree must be a boolean")
+            if not isinstance(p.credential_env, str) or (p.credential_env and not re.fullmatch(r"[A-Z_][A-Z0-9_]*", p.credential_env)):
+                errors.append(f"{where}: provider '{p.name}' has an invalid credentialEnv")
+            if p.type not in PROVIDER_CRED_MAP and not (p.credential_free is True or p.credential_env):
                 errors.append(f"{where}: provider '{p.name}' has unsupported type '{p.type}'")
-            if not p.credential_secret:
+            if not isinstance(p.name, str) or not NAME_RE.fullmatch(p.name) or len(p.name) > OPENSHELL_NAME_LIMIT:
+                errors.append(f"{where}: provider name must be a DNS label of at most {OPENSHELL_NAME_LIMIT} characters")
+            if not isinstance(p.type, str) or not NAME_RE.fullmatch(p.type):
+                errors.append(f"{where}: provider '{p.name}' type must be a DNS label")
+            if p.credential_free is True:
+                if p.type in PROVIDER_CRED_MAP:
+                    errors.append(f"{where}: provider type '{p.type}' requires credentials")
+                if p.credential_secret or p.credential_env:
+                    errors.append(f"{where}: provider '{p.name}' credentialFree conflicts with credentialSecret or credentialEnv")
+            elif not p.credential_secret:
                 errors.append(f"{where}: provider '{p.name}' has no credentialSecret")
             elif not SECRET_NAME_RE.match(p.credential_secret):
                 errors.append(f"{where}: provider '{p.name}' has an invalid credentialSecret name")
@@ -1282,6 +1305,10 @@ def validate_profiles(profiles):
                               f"(supported: {', '.join(sorted(BASE_URL_CONFIG_KEYS))})")
             if p.inference_timeout < 0:
                 errors.append(f"{where}: provider '{p.name}' has a negative inferenceTimeout")
+            if not p.model_provider and (p.model or p.model_secret_key or p.base_url_secret_key or p.base_url or p.nemoclaw_provider or p.inference_timeout):
+                errors.append(f"{where}: custom MCP provider '{p.name}' cannot have model settings")
+            if p.type in PROVIDER_CRED_MAP and p.credential_env and p.credential_env != PROVIDER_CRED_MAP[p.type]:
+                errors.append(f"{where}: provider '{p.name}' credentialEnv must be {PROVIDER_CRED_MAP[p.type]}")
         sandbox_names = set()
         for s in ws.sandboxes:
             if not s.enabled:
@@ -1298,6 +1325,10 @@ def validate_profiles(profiles):
                     errors.append(f"{where}: sandbox '{s.name}' uses provider '{ref}' which is not an enabled provider in this workspace")
             if s.type in ("openclaw", "nemoclaw") and not provider_names:
                 errors.append(f"{where}: {s.type} sandbox '{s.name}' needs at least one provider")
+            elif s.type in ("openclaw", "nemoclaw") and not any(
+                    p.enabled and p.model_provider and (not s.providers or p.name in s.providers)
+                    for p in ws.providers):
+                errors.append(f"{where}: {s.type} sandbox '{s.name}' needs a model provider besides its MCP providers")
     if errors:
         raise InstallerError("invalid profiles:\n  - " + "\n  - ".join(errors))
 
@@ -1340,7 +1371,7 @@ def resolve_credentials(profiles, secrets_dir):
     creds = {}
     for _, ws in enabled_workspaces(profiles):
         for p in ws.providers:
-            if not p.enabled:
+            if not p.enabled or p.credential_free is True:
                 continue
             base = secrets_dir / p.credential_secret
             key_file = base / p.credential_secret_key
@@ -2457,6 +2488,7 @@ class ProfileApplier:
         self.harness = harness or {"bundles": {}}
         self.volumes = HarnessVolume(shell)
         self.catalogs = {}            # workspace -> {profile id: endpoint hosts}
+        self.catalog_profiles = {}    # workspace -> full live profile declarations
         self.harness_info = {}        # (workspace, sandbox) -> describe_harness_tree()
         self.harness_refilled = {}    # (workspace, sandbox) -> volume was (re)filled this apply
         self.harness_volumes = set()  # volumes this apply wants to keep
@@ -2571,15 +2603,26 @@ class ProfileApplier:
         `--credential NAME` (no value) makes the CLI read the key from the
         environment variable NAME, so the key never appears in argv
         (/proc/<pid>/cmdline) or in logs."""
-        credential = self.creds[ws.name][provider.name]
-        env_name = PROVIDER_CRED_MAP[provider.type]
-        env = {env_name: credential}
+        if provider.type not in PROVIDER_CRED_MAP:
+            self.governance_catalog(ws)
+            served = self.catalog_profiles[ws.name].get(provider.type)
+            if served is None:
+                raise InstallerError(f"provider profile '{provider.type}' is not served in workspace '{ws.name}'")
+            declarations = served.get("credentials") or []
+            if provider.credential_free:
+                if any(c.get("required") for c in declarations):
+                    raise InstallerError(f"provider profile '{provider.type}' requires credentials; cannot use credentialFree")
+            elif provider.credential_env not in {v for c in declarations for v in c.get("env_vars") or []}:
+                raise InstallerError(f"provider '{provider.name}' credentialEnv is not declared by profile '{provider.type}'")
+        env_name = provider.credential_env or PROVIDER_CRED_MAP.get(provider.type)
+        env = {} if provider.credential_free else {env_name: self.creds[ws.name][provider.name]}
+        credential_args = () if provider.credential_free else ("--credential", env_name)
         # A custom endpoint is recorded on the provider; start_openclaw
         # points the agent at it.
         config = (("--config", f"{BASE_URL_CONFIG_KEYS[provider.type]}={provider.base_url}")
                   if provider.base_url else ())
         create = ("provider", "create", "--name", provider.name, "--type", provider.type,
-                  *ws_args(ws.name), "--credential", env_name, *config)
+                  *ws_args(ws.name), *credential_args, *config)
         created = self.cli(*create, env=env, ok_if_exists=True, check=False)
         if (not created.ok and NO_PROFILE_RE.search(created.out + " " + created.err)
                 and provider.type in self.provider_profiles):
@@ -2600,7 +2643,7 @@ class ProfileApplier:
         if not created.ok:
             raise InstallerError(f"could not create provider '{provider.name}' in workspace "
                                  f"'{ws.name}' (openshell provider create failed)")
-        if created.existed:
+        if created.existed and not provider.credential_free:
             updated = self.cli("provider", "update", provider.name, *ws_args(ws.name),
                                "--credential", env_name, *config, env=env, check=False)
             if not updated.ok:
@@ -2639,7 +2682,7 @@ class ProfileApplier:
         sandbox's own providers, preferring one with a model. Never another
         provider of the workspace: found live, a skipped `custom` provider
         made OpenClaw onboard with `brave` and a default NVIDIA model."""
-        usable = self.usable(ws)
+        usable = [p for p in self.usable(ws) if p.model_provider]
         if names:
             usable = [p for n in names for p in usable if p.name == n]
         return next((p for p in usable if p.model), usable[0] if usable else None)
@@ -2830,6 +2873,7 @@ class ProfileApplier:
                                      "list-profiles failed); refusing to fill a harness "
                                      "without a governance check")
             self.catalogs[ws.name] = parse_profile_catalog(listed.out)
+            self.catalog_profiles[ws.name] = parse_profile_entries(listed.out)
         return self.catalogs[ws.name]
 
     def check_harness_governance(self, ws, sb, info):
