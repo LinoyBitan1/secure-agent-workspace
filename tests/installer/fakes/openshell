@@ -160,7 +160,9 @@ elif op == "provider list-profiles":
                    "web-search": ["api.tavily.com", "api.search.brave.com", "registry.npmjs.org"],
                    "brave": ["api.search.brave.com"], "nvidia": ["integrate.api.nvidia.com"],
                    "github": ["api.github.com"]})
-    print(json.dumps([{"id": pid, "endpoints": [{"host": h, "port": 443} for h in hosts]}
+    # Tests may also supply full profile objects, including credentials.
+    print(json.dumps(catalog if isinstance(catalog, list) else
+                     [{"id": pid, "endpoints": [{"host": h, "port": 443} for h in hosts]}
                       for pid, hosts in sorted(catalog.items())]))
 elif op == "provider profile" and head[2] == "import":
     # Like the gateway: needs an `id`, scoped to the workspace, reserved if present.

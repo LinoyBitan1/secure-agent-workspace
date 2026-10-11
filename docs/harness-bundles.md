@@ -60,6 +60,156 @@ spec:
       governanceProfile: local-mcp
 ```
 
+#### In-cluster MCP Services
+
+OpenShell v0.1.2 can reach a Kubernetes Service through its exact DNS name,
+including when that name resolves to a private address. The VM must first
+be able to resolve and reach the Service. A governance profile in the catalog
+alone does not authorize a sandbox: attach a provider of that profile's type
+to the sandbox so its endpoint and binary rules enter the effective policy.
+This also applies to a Service that needs no credentials.
+
+For the `local-mcp` example above, add
+`charts/governance-policy/profiles/local-mcp.yaml`:
+
+```yaml
+id: local-mcp
+display_name: Local MCP
+description: MCP Service in the mcp-servers namespace
+category: other
+endpoints:
+  - host: my-mcp.mcp-servers.svc.cluster.local
+    port: 8080
+    protocol: mcp
+    enforcement: enforce
+    mcp:
+      versions: ["2025-06-18", "2025-11-25"]
+      allow_all_known_mcp_methods: true
+binaries:
+  - /usr/bin/node
+  - /usr/bin/node-*
+  - /usr/local/bin/node
+```
+
+Use the versions the server actually negotiates. OpenShell's default MCP
+version is `2025-11-25`; a server negotiating `2025-06-18` needs that version
+listed explicitly. This example allows all known MCP methods at this single
+endpoint; use MCP method/tool rules when finer restrictions are required.
+`protocol: mcp` does not accept REST `access` presets.
+
+For a Service that needs no API key, declare the provider in the selected
+SAW-BOM workspace's `providers.yaml`:
+
+```yaml
+spec:
+  providers:
+    - name: local-mcp
+      type: local-mcp
+      credentialFree: true
+```
+
+Keep the existing model provider in that file. Attach both providers in
+`sandbox.yaml`:
+
+```yaml
+spec:
+  sandboxes:
+    - name: notebook
+      type: openclaw
+      providers: [nvidia, local-mcp]
+      harnessRef: {name: my-bundle}
+```
+
+Use the profile ID for both the provider's `name` and `type` with the
+governance interceptor enabled; its sandbox creation guard checks attached
+provider names against the vended profile IDs.
+
+The installer creates this provider without credentials and verifies its
+profile is served in the workspace and does not require a key. The flag is
+explicit: omitting a Secret never silently enables credential-free access.
+Known keyed types such as `nvidia` and `brave` still require Secrets. Custom
+MCP providers supply policy and optional credentials; they are not selected
+for the agent's model onboarding.
+
+An internal Service can require an API key just like an external server.
+For such a custom provider, omit `credentialFree` and use:
+
+```yaml
+spec:
+  providers:
+    - name: local-mcp
+      type: local-mcp
+      credentialEnv: MCP_API_KEY
+      credentialSecret: local-mcp-credentials
+      credentialSecretKey: api_key
+```
+
+Mount `local-mcp-credentials` through the openshell-saw chart's
+`additionalProviderSecrets` (retain any other Secrets):
+
+```yaml
+additionalProviderSecrets:
+  - web-search
+  - local-mcp-credentials
+```
+
+Add this declaration to `local-mcp.yaml`:
+
+```yaml
+credentials:
+  - name: api_key
+    env_vars: [MCP_API_KEY]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+```
+
+`credentialEnv` must match the served profile's `env_vars`. The Secret stays
+on the VM/gateway; the installer passes its value through the CLI environment,
+never argv. Profile endpoint and binary rules govern credential replacement.
+These provider settings apply to
+both internal and external MCP servers; location does not choose the
+authentication mode. A custom provider supports one Secret credential;
+profiles requiring multiple credentials need additional installer support.
+
+**OpenClaw 2026.9.6 HTTP bundle limitation:** its bundle transport sends
+`${MCP_API_KEY}` literally in headers. A provider can be correctly installed
+while such a request returns `401` from the MCP server. Adding `env` to an
+Agent Plugins HTTP entry is also unsupported. For this version, keep only
+placeholders in the bundle and configure the matching server in OpenClaw's
+native MCP configuration, whose config loader expands environment references:
+
+```bash
+openshell sandbox exec --name notebook -- \
+  env OPENCLAW_HOME=/sandbox SQLITE_TMPDIR=/sandbox/.openclaw/state \
+  openclaw config set mcp.servers.local-mcp \
+  '{"transport":"streamable-http","url":"http://my-mcp.mcp-servers.svc.cluster.local:8080/mcp","headers":{"Authorization":"Bearer ${MCP_API_KEY}"}}'
+```
+
+Use the bundle's exact MCP server name and URL. The expansion yields an
+OpenShell placeholder, not the real Secret value. Verified with an actual
+agent tool call and an authenticated Service receipt. This native entry is
+an additional manual setting; SAW-BOM provisions the provider, but the harness
+installer does not manage this override. Remove it with
+`openclaw config unset mcp.servers.local-mcp` when removing that MCP server,
+since native entries exist independently of the bundle. The upstream
+[HTTP launch code](https://github.com/openclaw/openclaw/blob/v2026.9.6/src/agents/mcp-http.ts)
+and [Agent Plugins schema handling](https://github.com/openclaw/openclaw/blob/v2026.9.6/src/plugins/bundle-mcp.ts)
+show these version-specific restrictions.
+
+Check `openshell policy get <sandbox> --full -o json` for the
+composed endpoint, port, MCP versions, and real executable path. The
+installer checks profile attachment and hostname; runtime enforcement also
+checks the port, calling binary, and MCP protocol permissions.
+
+For a denial, inspect
+`openshell logs notebook --since 5m --source sandbox -n 300`. An
+`engine:opa` denial identifies network authorization; an `engine:l7-mcp`
+denial identifies MCP request enforcement. For example, an unlisted
+negotiated version produces `MCP protocol version ... is not allowed by
+endpoint policy`, even though initialization and TCP access succeeded.
+Do not diagnose every `403 policy_denied` as an in-cluster routing failure.
+
 #### Servers that need an API key
 
 A server that calls a keyed service gets its key the same way OpenClaw gets
