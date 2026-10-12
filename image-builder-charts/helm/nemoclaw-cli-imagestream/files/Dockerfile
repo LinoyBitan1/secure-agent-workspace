@@ -9,13 +9,20 @@ COPY package.json package-lock.json ./
 COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json nemoclaw/tsconfig.shared.json ./nemoclaw/
 RUN npm ci --ignore-scripts && cd nemoclaw && npm ci --ignore-scripts
 COPY . .
-RUN git rev-parse HEAD > .source-revision 2>/dev/null || echo "0000000000000000000000000000000000000000" > .source-revision
+ARG NEMOCLAW_VERSION
+ARG SOURCE_REVISION
+# The build context need not retain Git metadata, and package.json is not the release version.
+RUN printf '%s\n' "$SOURCE_REVISION" | grep -Eq '^[0-9a-f]{40}$' \
+    && printf '%s\n' "$NEMOCLAW_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+    && printf '%s\n' "$SOURCE_REVISION" > .source-revision \
+    && printf '%s\n' "$NEMOCLAW_VERSION" > .version
 RUN npm run build:cli
 
 FROM ${NODE_IMAGE}
 ARG MAX_OPENSHELL_VERSION=0.0.116
 WORKDIR /opt/nemoclaw
 COPY --from=builder /opt/nemoclaw/package.json /opt/nemoclaw/package-lock.json ./
+COPY --from=builder /opt/nemoclaw/.version /opt/nemoclaw/.source-revision ./
 RUN npm ci --omit=dev --ignore-scripts
 COPY --from=builder /opt/nemoclaw/dist/ ./dist/
 COPY --from=builder /opt/nemoclaw/bin/ ./bin/

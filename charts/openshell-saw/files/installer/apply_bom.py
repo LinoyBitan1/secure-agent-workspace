@@ -3001,8 +3001,9 @@ class ProfileApplier:
             # Mounts are fixed at create: a sandbox created before its
             # harnessRef, one that still mounts a harness it no longer has,
             # or one that mounts another volume there is created again.
-            # /sandbox/persist and other data volumes are kept by OpenShell;
-            # the rest is not.
+            # OpenShell 0.1.x deletes the per-sandbox /sandbox workspace
+            # volume, including /sandbox/persist. Preserve needed files
+            # separately before a recreation; the harness volume is distinct.
             want = self.desired_harness_mount(ws, sb)
             log(f"Sandbox '{sb.name}' " + (f"does not mount its harness volume {want}"
                                            if want else "still mounts a removed harness")

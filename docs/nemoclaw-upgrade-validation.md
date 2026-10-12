@@ -8,10 +8,17 @@ cluster passwords, provider keys, tokens, or Keycloak passwords in evidence.
 The upgrade pins both builds to NemoClaw `v0.0.132`, commit
 `95d6505265ba1f2cb05355f83786353e654de096`, and its matching sandbox base.
 Run `make cli-build` and `make sandbox-build`. Both must reach Complete; record
-the output image digests. Discovery must pass npm audit, signature checks,
+the output image digests. Check `dist/build-identity.json` in the CLI image:
+`nemoclawVersion` must be `0.0.132` and `sourceRevision` must match the pin.
+The image stamps both explicitly because the upstream package version is a
+fallback and the container build need not retain Git metadata. Discovery must pass npm audit, signature checks,
 its HTTP protocol tests, TypeScript, and bundle generation in the cluster.
 Use these new image digests in the deployed InstallerBOM and sandbox profiles;
-prebuilt `latest` images do not prove the upgrade works.
+prebuilt `latest` images do not prove the upgrade works. A running sandbox is
+retained when only its image reference changes, and an unchanged CLI image
+reference can be skipped as already installed. Use new digest references and
+explicitly recreate disposable sandboxes when changing their images. Check
+persistence across that recreation; a VM restart alone is insufficient.
 
 Run `.venv/bin/python -m pytest tests cli/tests -q` and `git diff --check`.
 The discovery TypeScript configuration deliberately covers the discovery
@@ -40,7 +47,10 @@ GitHub and OpenShift use the same configuration and reviewed dependency locks.
 ## Harness and agent tool calls
 
 1. Enable `harnessEnabled: true` for the test user through saw-users; verify
-   its openshell-saw application also sets `allowDriverConfig: true`.
+   its openshell-saw application also sets `allowDriverConfig: true`. Harnesses
+   require `type: openclaw`; do not add a harnessRef to `type: nemoclaw`.
+   To exercise the upgraded runtime with the harness, use the new NemoClaw
+   sandbox image for the default OpenClaw-type notebook in the test fixture.
 2. Run `scripts/e2e-harness.sh --gateway <user> --workspace default`.
    Verify mount immutability, revision marker, skills, plugin loading,
    MCP registration, configuration, governance, and secret exclusion.
@@ -65,3 +75,202 @@ sandbox image pins, sync through Argo, and restart the VM as required by the
 BOM installer. Capture sandbox recreation and persistence behavior explicitly.
 Record PASS, FAIL, BLOCKED, or NOT RUN per case; include timestamp, commit,
 cluster identity, image digests, and redacted diagnostic evidence.
+
+
+## Live continuation, 2026-10-12
+
+Validation is not an all-pass result. Existing uncommitted build-identity
+changes are preserved on `codex/nemoclaw-latest-validation-20261012`.
+The deployed Git commit is `684d8b95dcd1df4db15602a588db976ad5ebbbec`;
+the corrected CLI build also includes the uncommitted version-stamping fix.
+The dedicated cluster API is
+`https://api.cluster-fx7lm.dyn.redhatworkshops.io:6443`.
+
+Exact image identities:
+
+- Corrected CLI: `sha256:a1db39a3228e8f285300ee46b17b2e0be085b74ea002d5ba96c826e379fdb35d`.
+- Upgraded sandbox: `sha256:4424fe33334ba8ad7f052c2bd339a156e8bd07f265551c1e0e55443ddc8ad834`.
+- Discovery build: `sha256:6b5aeb13c5a82ce51384a6f94253ef3d78c17619cb6f0b52f276cffa52c737f4`.
+- Rollback CLI: `ghcr.io/validatedpatterns-sandbox/nemoclaw-cli@sha256:ff70fdedeb94282282f297276609b00fff4d0888b51d23a9f83c2ff6233b8e45`.
+- Rollback sandbox: `ghcr.io/validatedpatterns-sandbox/nemoclaw-sandbox@sha256:e7349d73cbb7576815137762f83942a15f6affb7f6003dac5f6d117a7793a1cf`.
+
+Recorded results before final return from rollback:
+
+- PASS: corrected CLI installed in the VM; `dist/build-identity.json` reports
+  `0.0.132` and `95d6505265ba1f2cb05355f83786353e654de096`.
+- PASS: host regression suite, 1,168 tests in 501.34 seconds. The restricted
+  sandbox run could not create sockets and is not product-failure evidence.
+- PASS: stable read-only harness E2E, with two explicit skips: standalone
+  MCP-process readiness and OCI signatures for the inline ConfigMap bundle.
+  Audit revision, immutable mount, plugin/bundle loading, configuration,
+  secret exclusion, and VM volume labels were checked.
+- PASS: upgraded TUI reply `SAW_TUI_132_RESUME_1012`; CUDA agent reply
+  `SAW_CUDA_132_RESUME_1012`; MCP call returned
+  `saw-mcp-echo: SAW_MCP_132_RESUME_1012`, with recorded tool names and zero
+  tool failures.
+- FAIL: native `saw_echo` was unavailable on the upgraded OpenClaw 2026.9.2
+  sandbox despite a loaded plugin. It subsequently worked on the baseline
+  AIPCC image after Argo reverted the test fixture. The baseline success
+  does not count as upgraded-image validation.
+- PASS: harness-disabled notebook was recreated without `/sandbox/harness`
+  and without its plugin load paths. Harness mount and paths reappeared on
+  restoration. Argo's baseline-image reversion must be excluded from the
+  final upgraded-image restoration checks.
+- FAIL: notebook `/sandbox/persist/resume-probe` was lost during harness
+  recreation. CUDA's marker survived a VM-only restart, then was lost on
+  sandbox deletion/recreation during rollback. Recreation persistence is
+  therefore not demonstrated and must not be advertised as passing.
+- PASS: rollback extracted the cached pre-upgrade CLI and ran the exact old
+  CUDA image (OpenClaw 2026.7.1). Real inference returned `SAW_ROLLBACK_1012`.
+- PASS: allowed NVIDIA endpoint returned HTTP 200; `example.com` could not
+  connect and is absent from the active CUDA policy. This does not by itself
+  identify the exact blocking network layer.
+- PASS: discovery build's high-severity audit gate, registry
+  signatures (98 packages), three HTTP protocol tests, TypeScript, and bundle
+  generation completed. Audit reports three moderate vulnerable packages
+  (`hono`, `ip-address`, `qs`); this is not a zero-vulnerability result.
+- BLOCKED: fresh non-admin developer denial test and credential-bearing
+  Brave search test. Automatic approval review rejected the credential use;
+  explicit approval is pending. Earlier developer denial results are
+  historical evidence only. Bob has `openshell-admin` and is not a valid
+  non-admin denial-test identity.
+- NOT RUN: remote/in-cluster bundle MCP request; this test harness declares
+  only a stdio MCP server.
+
+Final upgraded-image restoration and repeated BOM application completed.
+The corrected CLI and both actual sandbox containers were verified by digest
+after rollback; OpenShell remains `0.1.2-rhaiv.0`. The scoped test BOM image overrides deliberately pause
+`saw-alice-bom` self-healing; its OutOfSync state is expected fixture drift,
+not a claim that all Argo applications are Synced.
+
+
+Final checks on the restored upgraded image:
+
+- PASS: both containers run sandbox digest `4424fe33...`; notebook and CUDA
+  report OpenClaw 2026.9.2. Install/apply service status is Done.
+- PASS: GUI chat returned `SAW_GUI_FINAL_132_1012` at
+  `2026-10-12T20:45:45+03:00`; authenticated CUDA GUI displayed the matching
+  session reply `SAW_CUDA_FINAL_132_1012` from `20:40:04+03:00`.
+- PASS: restored harness E2E; same two explicit skips. Final MCP invocation
+  returned `saw-mcp-echo: SAW_MCP_FINAL_132_1012`; receipt lists the MCP tool
+  and zero tool failures.
+- FAIL: final native-plugin test again reports `saw_echo` unavailable. The
+  loaded plugin's inspection shows no registered tools and an unverified
+  provenance warning. Do not count the separate MCP tool as its replacement.
+- PASS: repeated identical BOM install and apply completed at
+  `2026-10-12T20:47:12+03:00`, skipped unchanged component images, retained
+  both sandbox IDs (`fed52d3b-5bde-4430-bcf3-ce2fda0cb935` and
+  `d425e67b-1112-4b67-bdf6-2ce1ee911641`), retained a user-file probe, and
+  retained GUI/native-test/MCP session history.
+- Resolved test setup failure: the two-hour registry pull token expired
+  during rollback. Renewing the existing service account's short-lived
+  credential restored the authenticated pull and corrected CLI installation.
+  No anonymous registry access or new permission grants were introduced.
+- Observed GUI reload timeouts recovered in a fresh browser tab. VM-local
+  UI and forwarding returned HTTP 200; final browser chat succeeded.
+- All Argo applications are Healthy; `saw-alice-bom` and its `saw-users`
+  parent are OutOfSync because the scoped sandbox-image fixture is retained.
+- Fresh developer denial and Brave search remain BLOCKED pending the
+  requested credential-use approval. Notebook recreation was explicitly
+  authorized and completed. Remote/in-cluster MCP remains NOT RUN for this
+  stdio-only fixture.
+
+GUI screenshot evidence is saved locally at
+`/home/lbitan/.codex/visualizations/2026/10/12/01a1310e-b092-75c0-815d-f66ef5887b44/nemoclaw-gui-final.png`.
+
+Final evidence recorded at 2026-10-12T20:50:15+03:00.
+
+Final MCP session history was expanded in the owner GUI: tool
+`saw-mcp-echo__mcp_echo`, argument `SAW_MCP_FINAL_132_1012`, result
+`saw-mcp-echo: SAW_MCP_FINAL_132_1012`, status Completed. This is a real
+tool event, not only an assistant echo.
+
+FAIL: native NemoClaw onboarding still fails `gateway.port.uncontested`
+(the already-running OpenShell gateway occupies the port). The installer
+continues with plain OpenClaw sandbox creation. The installed blueprint
+also declares a maximum OpenShell version of `0.0.116`, below the actual
+`0.1.2-rhaiv.0` BOM pin. Successful fallback chat is not native onboarding
+success.
+
+
+## Pairing prompt investigation
+
+On 2026-10-12, the newest upstream tag was checked through GitHub's tags
+API and remained `v0.0.132`.
+
+The reported screenshots show Carol's default notebook connected while the
+CUDA/NemoClaw UI requests device pairing. They come from a separate cluster
+(`cluster-bcvkh`); its installed versions have not been inspected here.
+
+The cached pre-upgrade NemoClaw sandbox reproduces the relevant version
+incompatibility: its OpenClaw 2026.7.1 rejects the trusted proxy's
+`deviceAutoApprove` setting. The rollback guest log at
+`2026-10-12T20:30:09+03:00` records the installer warning that it is retrying
+without that setting. This explains why a newer default notebook and an
+older NemoClaw sandbox can present different authentication behavior.
+
+The upgraded sandbox digest recorded above runs OpenClaw 2026.9.2.
+Its live CUDA config was inspected and reports `gateway.auth.mode` as
+`trusted-proxy`, `userHeader` as `x-forwarded-email`, `allowUsers` restricted
+to Alice, loopback forwarding enabled, and `deviceAutoApprove.enabled=true`.
+Both owner-authenticated GUIs were usable without manually approving a
+browser pairing request. CUDA session history showed its real inference
+reply, and notebook GUI chat produced the final marker recorded above.
+This pairing symptom is therefore resolved by the upgraded image in the
+dedicated test deployment, despite the separate native-plugin and
+persistence failures.
+
+A redeploy of repository main alone does not establish that the upgrade was
+loaded: the shipped CUDA profile still references the public `:latest`
+image, and changing an image reference retains an existing sandbox.
+For another deployment, publish/select the tested new CLI and sandbox
+images by immutable digest, preserve the owner-only OIDC/trusted-proxy
+settings, verify the actual running OpenClaw version, and recreate the
+sandbox with explicit authorization and a backup/export of needed files.
+Then test a fresh browser session and a real chat reply. Carol's deployment
+is not claimed fixed until those checks are performed there.
+
+
+## Full-test follow-up
+
+The native plugin failure was isolated to tool policy and stale gateway
+configuration, rather than a broken native plugin. On this NemoClaw image,
+the coding profile had `tools.alsoAllow=["bundle-mcp"]`; adding the exact
+harmless native tool name gives `["bundle-mcp", "saw_echo"]`. Gateway reload
+is disabled, so the gateway must be restarted before evaluating the new
+policy. Do not grant all plugins or change owner authentication to test this.
+
+PASS: after the explicit allowance and confirmed gateway readiness, the
+agent invoked native `saw_echo` with `SAW_NATIVE_RELOADED_READY_132_1012`
+and returned `saw-echo: SAW_NATIVE_RELOADED_READY_132_1012`. Its receipt
+records `saw_echo` and `tool_call`, two calls and zero failures. The previous
+native-tool failures describe the original policy, not this corrected test
+configuration. CLI metadata-only plugin inspection does not prove runtime
+registration; `plugins inspect saw-echo --runtime --json` reports the native
+`saw_echo` registration.
+
+The persistence failure is confirmed at the storage layer: `/sandbox/persist`
+has no independent mount. It is inside
+`openshell-sandbox-<sandbox-id>-workspace`, and the old workspace volume is
+removed by OpenShell sandbox deletion. The installer comment claiming its
+retention was corrected; no data-preservation implementation is claimed.
+VM restart and repeated apply can retain files, while delete/recreate cannot
+meet the preservation acceptance criterion without separate persistent
+storage or an explicit backup/restore workflow.
+
+PASS: a repeated live BOM apply retained the explicit native-tool allowance
+and the existing persistence probe. Fresh CUDA inference returned
+`SAW_CUDA_FULL_132_1012`.
+
+PASS: the follow-up installer and NemoClaw image-build regression run completed
+with **460 passed in 329.66 seconds**. The earlier complete regression run
+remains **1,168 passed**.
+
+UNRESOLVED: the additional VM restart readiness check timed out. At the last
+inspection both installer/apply services were activating and the installer
+was retrying gateway startup. This restart is not recorded as passing;
+post-restart native/MCP calls and the new persistence probe still need checks.
+
+BLOCKED: automatic approval review requires explicit authorization for the
+developer-account cross-workspace denial test and transmission of the
+configured Brave API key to its search API. Neither check is claimed passed.

@@ -66,7 +66,9 @@ def test_cli_builds_share_one_dockerfile_and_values():
     build = next(d for d in yaml.safe_load_all(rendered) if d and d["kind"] == "BuildConfig")
     assert build["spec"]["source"]["dockerfile"].rstrip() == shared.read_text().rstrip()
     args = {a["name"]: a["value"] for a in build["spec"]["strategy"]["dockerStrategy"]["buildArgs"]}
-    assert args == {"NODE_IMAGE": "node:test", "MAX_OPENSHELL_VERSION": "0.0.123"}
+    assert args == {"NODE_IMAGE": "node:test", "MAX_OPENSHELL_VERSION": "0.0.123",
+                    "NEMOCLAW_VERSION": "0.0.132",
+                    "SOURCE_REVISION": "95d6505265ba1f2cb05355f83786353e654de096"}
 
 
 @pytest.mark.skipif(not HELM, reason="helm is not installed")
@@ -159,3 +161,13 @@ def test_discovery_typecheck_scope_is_shared_by_ci_and_openshift():
     assert json.loads(inputs["data"]["tsconfig.json"]) == config
     workflow = (ROOT / ".github/workflows/build-nemoclaw-sandbox.yml").read_text()
     assert "files/discovery-runtime/tsconfig.json" in workflow
+
+
+def test_cli_build_identity_uses_the_pinned_release_and_commit():
+    recipe = (CLI_CHART / "files/Dockerfile").read_text()
+    assert "printf '%s\\n' \"$NEMOCLAW_VERSION\" > .version" in recipe
+    assert "printf '%s\\n' \"$SOURCE_REVISION\" > .source-revision" in recipe
+    assert "0000000000000000000000000000000000000000" not in recipe
+    workflow = (ROOT / ".github/workflows/build-nemoclaw-cli.yml").read_text()
+    assert "SOURCE_REVISION=${{ steps.params.outputs.git_ref }}" in workflow
+    assert "NEMOCLAW_VERSION=${{ steps.params.outputs.nemoclaw_version }}" in workflow

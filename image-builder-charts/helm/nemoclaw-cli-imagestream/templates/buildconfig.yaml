@@ -16,6 +16,10 @@ spec:
     type: Docker
     dockerStrategy:
       buildArgs:
+        - name: NEMOCLAW_VERSION
+          value: {{ .Values.build.nemoclawVersion | quote }}
+        - name: SOURCE_REVISION
+          value: {{ .Values.source.git.ref | quote }}
         - name: NODE_IMAGE
           value: {{ .Values.build.nodeImage | quote }}
         - name: MAX_OPENSHELL_VERSION
