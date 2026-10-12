@@ -113,6 +113,8 @@ PROVIDER_CRED_MAP = {
     "brave": "BRAVE_API_KEY",
     "tavily": "TAVILY_API_KEY",
 }
+INFERENCE_PROVIDERS = {"gemini", "google-vertex-ai", "claude-code", "anthropic",
+                       "codex", "openai", "nvidia", "build"}
 SANDBOX_TYPES = {"generic", "openclaw", "nemoclaw"}
 # Provider config key that records a provider's base URL. OpenShell 0.1.x has
 # no inference router: the agent calls the endpoint itself (see
@@ -534,9 +536,9 @@ class Provider:
     credential_env: str = ""
 
     @property
-    def model_provider(self):
-        # Custom governed services provide permissions/credentials, not inference.
-        return self.type in PROVIDER_CRED_MAP and not self.credential_free
+    def inference_provider(self):
+        # Search and custom governed services provide no inference endpoint.
+        return self.type in INFERENCE_PROVIDERS and not self.credential_free
 
 
 @dataclass
@@ -920,9 +922,11 @@ def describe_harness_tree(files, inline=False):
                     "governanceProfile in harness.yaml spec.mcpServers")
             governance.append({"kind": "MCP server", "name": server,
                                "governanceProfile": profile, "hosts": [host]})
-            # OpenClaw 2026.9.6 expands environment references in native
-            # configuration, but retains bundle HTTP header strings literally.
             if conf.get("headers"):
+                # OpenClaw 2026.9.6 expands environment references in native
+                # configuration, but retains bundle HTTP header strings literally.
+                # Native entries override same-name bundle defaults at runtime;
+                # keep mcp.json, whose presence declares the mcpServers capability.
                 native_mcp_servers[server] = {
                     "transport": conf["type"], "url": conf["url"],
                     "headers": conf["headers"],
@@ -1315,8 +1319,8 @@ def validate_profiles(profiles):
                               f"(supported: {', '.join(sorted(BASE_URL_CONFIG_KEYS))})")
             if p.inference_timeout < 0:
                 errors.append(f"{where}: provider '{p.name}' has a negative inferenceTimeout")
-            if not p.model_provider and (p.model or p.model_secret_key or p.base_url_secret_key or p.base_url or p.nemoclaw_provider or p.inference_timeout):
-                errors.append(f"{where}: custom MCP provider '{p.name}' cannot have model settings")
+            if not p.inference_provider and (p.model or p.model_secret_key or p.base_url_secret_key or p.base_url or p.nemoclaw_provider or p.inference_timeout):
+                errors.append(f"{where}: non-inference provider '{p.name}' cannot have model settings")
             if p.type in PROVIDER_CRED_MAP and p.credential_env and p.credential_env != PROVIDER_CRED_MAP[p.type]:
                 errors.append(f"{where}: provider '{p.name}' credentialEnv must be {PROVIDER_CRED_MAP[p.type]}")
         sandbox_names = set()
@@ -1336,7 +1340,7 @@ def validate_profiles(profiles):
             if s.type in ("openclaw", "nemoclaw") and not provider_names:
                 errors.append(f"{where}: {s.type} sandbox '{s.name}' needs at least one provider")
             elif s.type in ("openclaw", "nemoclaw") and not any(
-                    p.enabled and p.model_provider and (not s.providers or p.name in s.providers)
+                    p.enabled and p.inference_provider and (not s.providers or p.name in s.providers)
                     for p in ws.providers):
                 errors.append(f"{where}: {s.type} sandbox '{s.name}' needs a model provider besides its MCP providers")
     if errors:
@@ -2298,7 +2302,7 @@ class Ledger:
 
     def drop(self, kind, workspace, name):
         workspace = workspace or ""
-        owned = self.data.get("nativeMcpServers", {})
+        owned = self.data.setdefault("nativeMcpServers", {})
         if kind == "sandbox":
             owned.pop(f"{workspace}/{name}", None)
         elif kind == "workspace":
@@ -2624,10 +2628,17 @@ class ProfileApplier:
         if provider.type not in PROVIDER_CRED_MAP:
             # Do not populate the harness catalog before subsequent providers
             # have imported any missing built-in profiles.
-            listed = self.cli("provider", "list-profiles", *ws_args(ws.name), "-o", "json", quiet=True, force=True)
+            listed = self.cli("provider", "list-profiles", *ws_args(ws.name), "-o", "json",
+                              check=False, quiet=True, force=True)
+            if not listed.ok:
+                raise InstallerError("cannot read the gateway's provider profile catalog "
+                                     f"for workspace '{ws.name}' (openshell provider "
+                                     "list-profiles failed); refusing to apply a provider "
+                                     "without a governance check")
             served = parse_profile_entries(listed.out).get(provider.type)
             if served is None:
-                raise InstallerError(f"provider profile '{provider.type}' is not served in workspace '{ws.name}'")
+                self.skip_provider(ws, provider)
+                return
             declarations = served.get("credentials") or []
             if provider.credential_free:
                 if any(c.get("required") for c in declarations):
@@ -2649,16 +2660,7 @@ class ProfileApplier:
             self.import_provider_profile(ws, provider.type)
             created = self.cli(*create, env=env, ok_if_exists=True, check=False)
         if not created.ok and NO_PROFILE_RE.search(created.out + " " + created.err):
-            log(f"WARN: skipping provider '{provider.name}': the gateway has no '{provider.type}' "
-                "provider profile (governed profiles come from the governance interceptor; "
-                "is governance enabled?)")
-            self.skipped.add((ws.name, provider.name))
-            # Remembered even though it is unusable this run: a transient
-            # catalog gap (governance restarting, a brief profile outage)
-            # must not prune a provider that was working a moment ago
-            # (PR #54 review, 6b). finish_prune() also refuses to prune at
-            # all this run once anything lands in self.skipped.
-            self.remember("provider", ws.name, provider.name)
+            self.skip_provider(ws, provider)
             return
         if not created.ok:
             raise InstallerError(f"could not create provider '{provider.name}' in workspace "
@@ -2679,8 +2681,10 @@ class ProfileApplier:
                 raise InstallerError(f"could not inspect credentials of provider '{provider.name}'")
             if keys.group(1).strip() != "<none>":
                 remove = [arg for key in keys.group(1).split(",")
+                          if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key.strip())
                           for arg in ("--credential", f"{key.strip()}=")]
-                self.cli("provider", "update", provider.name, *ws_args(ws.name), *remove)
+                if remove:
+                    self.cli("provider", "update", provider.name, *ws_args(ws.name), *remove)
         self.remember("provider", ws.name, provider.name)
         if provider.type in self.provider_profiles:
             # Keep an imported profile remembered on every run that still
@@ -2691,6 +2695,15 @@ class ProfileApplier:
             # the provider still using it, and the run after that
             # re-imported it (PR #54 review, 6a).
             self.remember("profile", ws.name, provider.type)
+
+    def skip_provider(self, ws, provider):
+        log(f"WARN: skipping provider '{provider.name}': the gateway has no '{provider.type}' "
+            "provider profile (governed profiles come from the governance interceptor; "
+            "is governance enabled?)")
+        self.skipped.add((ws.name, provider.name))
+        # A transient catalog gap must not prune a previously working provider
+        # (PR #54 review, 6b); finish_prune also refuses to prune this run.
+        self.remember("provider", ws.name, provider.name)
 
     def import_provider_profile(self, ws, profile_id):
         """The gateway has no profile for this provider type (governed
@@ -2715,7 +2728,7 @@ class ProfileApplier:
         sandbox's own providers, preferring one with a model. Never another
         provider of the workspace: found live, a skipped `custom` provider
         made OpenClaw onboard with `brave` and a default NVIDIA model."""
-        usable = [p for p in self.usable(ws) if p.model_provider]
+        usable = [p for p in self.usable(ws) if p.inference_provider]
         if names:
             usable = [p for n in names for p in usable if p.name == n]
         return next((p for p in usable if p.model), usable[0] if usable else None)
@@ -3296,8 +3309,6 @@ class ProfileApplier:
                     existing = json.loads(got.out) if got.ok else None
                 except ValueError:
                     raise InstallerError(f"could not read native MCP server '{name}'") from None
-                if not got.ok:
-                    raise InstallerError(f"could not read native MCP server '{name}'")
                 if existing is not None and existing != desired[name]:
                     raise InstallerError(f"native MCP server '{name}' conflicts with an existing manual entry")
         # Record new ownership before writes so a partial failure can be
@@ -3358,7 +3369,7 @@ class ProfileApplier:
             except ValueError:
                 seen = None
             if seen != value:
-                return [f"OpenClaw native MCP server '{name}' does not match the harness"]
+                failures.append(f"OpenClaw native MCP server '{name}' does not match the harness")
         # `mcp list` never shows bundle servers; verify the bundle row of
         # `plugins list --json` instead (mount row loaded, caps when present,
         # native ids enabled).
@@ -3366,12 +3377,12 @@ class ProfileApplier:
                                f"{OPENCLAW_EXEC_ENV} openclaw plugins list --json",
                                check=False, quiet=True)
         if not plugin_json.ok:
-            return [f"could not list OpenClaw plugins for sandbox '{sb.name}'"]
+            return failures + [f"could not list OpenClaw plugins for sandbox '{sb.name}'"]
         try:
             parsed = json.loads(plugin_json.out)
             rows = [p for p in (parsed.get("plugins") or []) if isinstance(p, dict)]
         except (ValueError, AttributeError, TypeError):
-            return [f"could not parse `openclaw plugins list --json` for sandbox '{sb.name}'"]
+            return failures + [f"could not parse `openclaw plugins list --json` for sandbox '{sb.name}'"]
         by_id = {p.get("id") or p.get("name"): p for p in rows}
         # Match the mount row first: a stock plugin could reuse the bundle name.
         # rootDir only: Source may be an origin string ($OPENCLAW_HOME/...),
@@ -3383,7 +3394,7 @@ class ProfileApplier:
             bundle = by_id.get(info["name"])
         if (not isinstance(bundle, dict) or not bundle.get("enabled")
                 or bundle.get("status") != "loaded"):
-            return [f"OpenClaw does not load the harness bundle '{info['name']}' "
+            return failures + [f"OpenClaw does not load the harness bundle '{info['name']}' "
                     f"from {HARNESS_MOUNT} ({source})"]
         caps = bundle.get("bundleCapabilities") or []
         if caps:
@@ -3394,13 +3405,13 @@ class ProfileApplier:
                 need_caps.add("skills")
             missing_caps = sorted(need_caps - set(caps))
             if missing_caps:
-                return [f"OpenClaw bundle '{info['name']}' lacks capability(ies) "
-                        f"{', '.join(missing_caps)} from {source}"]
+                failures.append(f"OpenClaw bundle '{info['name']}' lacks capability(ies) "
+                                f"{', '.join(missing_caps)} from {source}")
         missing = [p for p in info["pluginDirs"]
                    if not by_id.get(p, {}).get("enabled", False)]
         if missing:
-            return [f"OpenClaw does not list enabled plugin(s) {', '.join(missing)} "
-                    f"from {source}"]
+            failures.append(f"OpenClaw does not list enabled plugin(s) {', '.join(missing)} "
+                            f"from {source}")
         if info["mcpServers"]:
             plugin_id = bundle.get("id") or bundle.get("name") or info["name"]
             listed = self.cli(*exec_cmd, "sh", "-c",
@@ -3415,11 +3426,10 @@ class ProfileApplier:
                     "does not support runtime plugin inspection; MCP registration is unverified "
                     "and MCP process readiness is not checked")
             elif not listed.ok:
-                return ["could not inspect OpenClaw MCP registration"]
+                failures.append("could not inspect OpenClaw MCP registration")
             else:
-                failures = mcp_registration_failures(listed.out, info["mcpServers"])
-                if failures:
-                    return [f"{failure} from {source}" for failure in failures]
+                failures.extend(f"{failure} from {source}" for failure in
+                                mcp_registration_failures(listed.out, info["mcpServers"]))
         desired = openclaw_harness_config(info)
         for key in HARNESS_CONFIG_KEYS:
             got = self.cli(*exec_cmd, "sh", "-c",
@@ -3427,15 +3437,15 @@ class ProfileApplier:
                            check=False, quiet=True)
             if key not in desired:
                 if got.ok and got.out.strip() and got.out.strip() not in ("null", "undefined"):
-                    return [f"OpenClaw still has {key} although the harness does not need it"]
+                    failures.append(f"OpenClaw still has {key} although the harness does not need it")
                 continue
             try:
                 seen = json.loads(got.out) if got.ok else None
             except ValueError:
                 seen = None
             if seen != desired[key]:
-                return [f"OpenClaw {key} does not match the harness ({got.out.strip() or 'unset'})"]
-        return []
+                failures.append(f"OpenClaw {key} does not match the harness ({got.out.strip() or 'unset'})")
+        return failures
 
     def cleanup_harness_volumes(self):
         """Remove harness volumes that no enabled sandbox wants any more (a

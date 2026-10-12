@@ -243,6 +243,16 @@ def test_agent_requires_model_provider_besides_custom_mcp(ab, auth):
         ab.validate_profiles(profiles)
 
 
+@pytest.mark.parametrize("search", ["brave", "tavily"])
+@pytest.mark.parametrize("agent", ["openclaw", "nemoclaw"])
+def test_search_provider_does_not_satisfy_agent_inference_requirement(ab, search, agent):
+    profiles = ab.parse_profiles(make_files(
+        providers=[{"name": search, "type": search, "credentialSecret": search}],
+        sandboxes=[{"name": "agent", "type": agent, "providers": [search]}]))
+    with pytest.raises(ab.InstallerError, match="model provider"):
+        ab.validate_profiles(profiles)
+
+
 @pytest.mark.parametrize("name", ["my-existing-inference-provider", "existing_provider"])
 def test_existing_provider_names_remain_compatible(ab, name):
     profiles = ab.parse_profiles(make_files(providers=[{**NVIDIA, "name": name}]))

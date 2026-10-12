@@ -152,6 +152,38 @@ def test_native_headers_dry_run_does_not_read_uncreated_sandbox(ab, fake_env, co
                                  {"nativeMcpServers": {"search": {"transport": "streamable-http"}}})
     assert not fake_env.openshell_calls()
 
+
+def test_native_config_read_failure_defers_to_verify(
+        ab, fake_env, config, profiles, creds, monkeypatch):
+    fake_env.set_images({IMAGE_V1: {"__tree__": keyed_mcp_tree()}})
+    applier = make_applier(ab, config, creds)
+    original = applier.cli
+
+    def cli(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if ab.READ_NATIVE_MCP_JS in args:
+            result.rc = 1
+            result.out = ""
+            result.err = "ENOENT: /sandbox/.openclaw/openclaw.json"
+        return result
+
+    monkeypatch.setattr(applier, "cli", cli)
+    applier.apply(use_ref(profiles, {"image": IMAGE_V1}, ["nvidia", "brave"]))
+    assert any("native MCP" in f for f in applier.verify(profiles))
+
+
+def test_native_drift_does_not_hide_bundle_load_failure(ab, fake_env, config, profiles, creds):
+    fake_env.set_images({IMAGE_V1: {"__tree__": keyed_mcp_tree()}})
+    applier = make_applier(ab, config, creds)
+    applier.apply(use_ref(profiles, {"image": IMAGE_V1}, ["nvidia", "brave"]))
+    state = fake_env.openshell_state()
+    state["sandboxes"]["default/notebook"]["openclawConfig"].pop('mcp.servers["search"]')
+    fake_env.set_openshell_state(state)
+    (fake_env.state / "plugins-list.json").write_text(live_listing(bundle={"status": "error"}))
+    failures = applier.verify(profiles)
+    assert any("native MCP" in f for f in failures)
+    assert any("does not load the harness bundle" in f for f in failures)
+
 def _inline(ab, name, tree):
     """Build content-addressed harness__<name>__<hash> keys plus the
     harness__<name>__map key, exactly like templates/configmap-bom.yaml."""
