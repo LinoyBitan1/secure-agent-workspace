@@ -9,14 +9,25 @@ inside the cluster. Choose by what you can set up: accounts or services.
 Step-by-step walkthrough: [personal-assistant-demo.md](personal-assistant-demo.md)
 (how the briefing works under the hood: [daily-briefing.md](daily-briefing.md)).
 
-- The agent reads real Slack and Gmail, so you need two external demo
+- The agent reads real Slack and Gmail (⚠️ with the Tier 2 limitation below:
+  the token is not injected, so fetches currently return `invalid_auth`),
+  so you need two external demo
   accounts (Slack app, Google Cloud OAuth client): about 30 minutes, once.
 - Quick to run: one workspace, one prompt, a ~10-minute demo.
 - Same platform install, same profile shape: one NemoClaw sandbox with the
   `daily-briefing` harness bundle, NVIDIA inference, read-only Slack and
   Gmail providers, and token placeholders the agent never resolves.
-- Self-service via the Red Hat Developer Hub portal: the user `dana` picks
-  the profile, enters her keys, and gets her own workspace.
+- Self-service via the Red Hat Developer Hub portal: add your demo user
+  (e.g. `dana`) to `overrides/saw-users.yaml` first, then they pick the
+  profile, enter their keys, and get their own workspace.
+- ⚠️ **Current limitation (Tier 2 blockage): the sandbox egress proxy does
+  not inject the real provider token.** The gateway's profile→policy
+  conversion drops the
+  `credentials:` binding (prebuilt gateway limitation), so Slack/Gmail calls
+  return `invalid_auth` and the briefing shows the auth failure instead of
+  real messages — until the gateway fix lands upstream. Full diagnosis and
+  honest scoping: [daily-briefing.md](daily-briefing.md#why-briefings-show-auth-failures-the-gateway-does-not-deliver-provider-credentials-to-the-sandbox-policy-tier-2)
+  Limits. Everything else in the demo works as described.
 
 ## Personal Assistant (Longer Setup) with on-cluster providers: chat, email and calendar
 
@@ -77,3 +88,86 @@ deployment and let Argo auto-sync.
 
 The copies in `charts/governance-policy/profiles/` are the live source the
 cluster's Argo self-heals from; keep them in place.
+
+## Manual remediations: what is still blocked (the two-tier blockage model)
+
+Two distinct kinds of blockage exist. The tiers are deliberately explicit so
+a reader can tell at a glance which tier any failure belongs to:
+
+**Tier 1 — blocked by missing cluster-state fixes; fixed by the manual
+remediations below.** On a cluster setup without the manual remediations in
+this PR, the demo does not work at all:
+
+- **T1a. Gateway startup (npmjs egress):** the OpenClaw gateway refuses to
+  start on a fresh sandbox because the slack provider profile's egress
+  allowlist lacks `registry.npmjs.org`.
+- **T1b. Installer apply (ArgoCD namespace / ServerSideApply):** hand-created
+  Argo CD Applications must land in the cluster's Argo CD namespace
+  (`openshift-gitops`), and the installer ConfigMap exceeds Argo CD's
+  last-applied annotation limit.
+- **T1c. MCP servers loading (harness bundle layout):** the old
+  daily-briefing bundle layout is not loaded by openclaw 2026.7.1, so the
+  briefing's MCP servers never load.
+
+**Tier 2 — blocked by the prebuilt gateway; NOT fixable by any remediation
+or scripting; applies to EVERY cluster (remediated or not).** The gateway
+drops the profile `credentials:` section when converting the profile into
+the sandbox policy, so the supervisor's egress proxy never injects the real
+provider token: MCP tools load and are invocable, but Slack/Gmail calls
+return `invalid_auth`. Full diagnosis:
+[daily-briefing.md](daily-briefing.md#why-briefings-show-auth-failures-the-gateway-does-not-deliver-provider-credentials-to-the-sandbox-policy-tier-2).
+
+A reader on a fresh cluster reaches a working demo (Tier 1 cleared) by doing
+the three remediations by hand:
+
+### T1a. Gateway npm egress (Tier 1)
+
+Symptom: the OpenClaw gateway refuses to start on a fresh sandbox — it logs
+"Failed to install missing configured plugin 'slack' from @openclaw/slack:
+npm view failed", then "startup migrations did not complete cleanly". Cause:
+the slack provider profile's egress allowlist lacks `registry.npmjs.org`
+(OpenClaw auto-installs its configured provider plugins at gateway startup).
+Remediation: add a `registry.npmjs.org` endpoint to BOTH
+`charts/governance-policy/profiles/slack.yaml` AND
+`charts/openshell-saw/files/provider-profiles/slack.yaml` — match the entry
+format in `charts/governance-policy/profiles/slack.yaml` on the consolidated
+`demo` state — re-apply, and let ArgoCD sync; the gateway starts. Full
+detail: [daily-briefing.md](daily-briefing.md) Limits.
+
+### T1b. Installer apply — ArgoCD namespace / ServerSideApply (Tier 1)
+
+Symptom: a hand-created Argo CD Application for the workspace fails to sync,
+or the sync dies on the installer ConfigMap. Two checks:
+
+- Applications must land in the cluster's Argo CD namespace
+  (`openshift-gitops`) — a cluster setup without the manual remediations in
+  this PR has no per-namespace Argo CD, so set `spec.project`/destination
+  accordingly and create the Application in `openshift-gitops`.
+- The openshell-saw installer ConfigMap embeds the BOM disk + harness bundle
+  (~270KB), which exceeds Argo CD's 262144-byte
+  last-applied-configuration annotation limit — the template carries
+  `argocd.argoproj.io/sync-options: ServerSideApply=true` (see
+  `charts/openshell-saw/templates/configmap-installer.yaml` on the
+  consolidated `demo` state). Verify the annotation survives when creating
+  or syncing the Application by hand.
+
+### T1c. Harness bundle layout (Tier 1)
+
+Symptom: the briefing's MCP servers (`slack-reader`, `gmail-reader`) never
+load — `tool_search` finds nothing and the briefing renders as a template
+with empty Slack and Email sections. Cause: a daily-briefing bundle with the
+OLD layout (plain root `plugin.json` + `mcp.json`), which openclaw 2026.7.1
+does NOT load — only the Claude/Codex/Cursor layouts load (manifest at
+`.claude-plugin/plugin.json`, MCP at `.mcp.json`, root placeholder
+`${CLAUDE_PLUGIN_ROOT}`; note `.mcp.json` env values pass as LITERALS, so
+the CA path must be hardcoded). Remediation: add
+`.claude-plugin/plugin.json` (name/version/description) and `.mcp.json` with
+`mcpServers` entries using `${CLAUDE_PLUGIN_ROOT}` args and
+`"NODE_EXTRA_CA_CERTS": "/run/openshell-supervisor-ca/material/ca.crt"`
+(the supervisor-mounted MITM proxy CA inside the sandbox container), then
+restart the gateway. This is a workaround until the bundle fix lands
+upstream. Detail: [daily-briefing.md](daily-briefing.md) Limits.
+
+Tier 2 is not fixed by any of the above: it needs the prebuilt gateway's
+profile→policy construction to emit the credential binding — see
+[daily-briefing.md](daily-briefing.md#why-briefings-show-auth-failures-the-gateway-does-not-deliver-provider-credentials-to-the-sandbox-policy-tier-2).

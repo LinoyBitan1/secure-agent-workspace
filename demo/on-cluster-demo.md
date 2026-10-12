@@ -24,6 +24,55 @@ your own.
 | Self-service portal one-time setup (operators + chart + Vault + client job) | ~20 to 30 minutes, mostly operator CSVs and the backstage dynamic-plugins init |
 | The demo itself | ~12 to 15 minutes |
 
+## Prerequisites beyond the pattern install
+
+`./pattern.sh make install` deploys the platform, but a fresh deployer must
+still do these things by hand, in this order:
+
+1. **Golden image** — run `make copy-images` (mirror the golden image into
+   the cluster's internal registry) **before** the install: the VM cannot
+   boot without it.
+2. **Secrets load ordering** — `./pattern.sh make load-secrets` can die in
+   the Vault auth-policy retry loop if Vault has not finished unsealing and
+   configuring; if the first run fails, re-run it once Vault is up. The
+   fallback is `./scripts/seed-vault.sh` (part of this fork; NOT upstream —
+   it seeds Vault via `oc exec` using the `vault-init` Secret's root
+   token). Run it only on a fresh cluster: a full-file run overwrites every
+   Vault secret the values file names, including writing empty strings for
+   generated fields.
+3. **Keycloak accounts** — the chart cannot create Keycloak users. Add your
+   demo users to `overrides/saw-users.yaml` first (only `alice` is in the
+   file upstream), or run `keycloak-add-user` for each entry.
+4. **Demo services** (Mailpit/Mattermost/Radicale) — NOT installed by the
+   pattern. Deploy them with the standalone helm installs from
+   [README.md](README.md#charts):
+
+```bash
+helm install mailpit demo/charts/mailpit -n openshell-agents
+helm install radicale demo/charts/radicale -n openshell-agents
+helm install mattermost demo/charts/mattermost -n openshell-agents
+```
+
+   Then seed the content the walkthrough prescribes: the Mailpit inbox
+   emails, the Radicale events and the Mattermost channels/messages listed
+   in the [Prerequisites checklist](#prerequisites-checklist-verify-before-presenting)
+   below.
+
+**Order:** `copy-images` → install → secrets → Keycloak users → demo
+services → walkthrough beats.
+
+> **Platform note (shared across demo paths):** hand-created Argo CD
+> Applications must land in the cluster's Argo CD namespace
+> (`openshift-gitops`), and the openshell-saw installer ConfigMap exceeds
+> Argo CD's 262144-byte last-applied-configuration annotation limit, so its
+> template carries `argocd.argoproj.io/sync-options: ServerSideApply=true`
+> (see `charts/openshell-saw/templates/configmap-installer.yaml`). This is
+> the one platform-level item shared by both demo paths — the remaining
+> manual remediations (gateway npm egress, harness bundle layout, token
+> injection) belong to the personal-assistant demo path and are documented in
+> [personal-assistant-demo.md](personal-assistant-demo.md) and the
+> [two-tier blockage model](README.md#manual-remediations-what-is-still-blocked-the-two-tier-blockage-model).
+
 ## Prerequisites checklist (verify before presenting)
 
 - [ ] Set the cluster apps domain (GUID varies per cluster; used throughout
@@ -85,8 +134,7 @@ APPS_DOMAIN=$(oc get ingress.config.openshift.io/cluster -o jsonpath='{.spec.dom
       provider (Brave by default); entered into the portal form; stored to
       Vault.
 - [ ] Governance interceptor Running with profiles loaded: `brave`, `gemini`,
-      `github`, `mailpit`, `mattermost`, `nvidia`, `openai`, `tavily`,
-      `web-search`.
+      `github`, `mailpit`, `mattermost`, `nvidia`, `openai`, `web-search`.
 - [ ] Mattermost on-cluster: server + postgres pods Running in
       `openshell-agents` ns; team `saw` with channels `#ai-platform`
       (channel_id `h115qetq538rfmf6798bxxsg9w` — renamed from research; 5

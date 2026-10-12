@@ -27,6 +27,46 @@ briefing. No prior knowledge of this repository is assumed.
 
 Do the first three parts before your audience arrives.
 
+## Prerequisites beyond the pattern install
+
+`./pattern.sh make install` deploys the platform, but a fresh deployer must
+still do these things by hand, in this order:
+
+1. **Golden image** — run `make copy-images` (Step 5) **before** the install:
+   it mirrors the golden image into the cluster's internal registry, and the
+   VM cannot boot without it.
+2. **Secrets load ordering** — `./pattern.sh make load-secrets` can die in
+   the Vault auth-policy retry loop if Vault has not finished unsealing and
+   configuring; if the first run fails, re-run it once Vault is up.
+   `./scripts/seed-vault.sh` (part of this fork; NOT upstream — it seeds
+   Vault via `oc exec` using the `vault-init` Secret's root token) is safe
+   on a fresh cluster, but a full-file run overwrites every Vault secret the
+   values file names — including writing empty strings for generated fields
+   — which would wipe existing secrets like the `keycloak-users` passwords.
+   Run it only on a fresh cluster, or with a narrow filtered values file
+   that lists only the keys you intend to (re)seed.
+3. **Keycloak accounts** — the chart cannot create Keycloak users. Add your
+   demo user (e.g. `dana`) to `overrides/saw-users.yaml` first (only
+   `alice` is in the file upstream), or run `keycloak-add-user` (Step 6)
+   for each entry.
+4. **Gmail/Slack credentials** — the external accounts from Step 2: a Slack
+   bot token (or token rotation), and a Google OAuth client + refresh token
+   (which expires after 7 days while the consent screen is in Testing).
+
+**Order:** `copy-images` → install → secrets → Keycloak users → walkthrough.
+
+> **Clusters without the Pattern operator's framework:** this demo's install
+> command does not create the Argo CD Applications. On clusters deployed
+> without the imperative framework, every application, including the portal
+> (Red Hat Developer Hub), is a hand-managed ArgoCD Application that you
+> create yourself, with the same parameters. Applications must land in the
+> cluster's Argo CD namespace (`openshift-gitops`), and the openshell-saw
+> installer ConfigMap exceeds Argo CD's 262144-byte
+> last-applied-configuration annotation limit, so its template needs the
+> `argocd.argoproj.io/sync-options: ServerSideApply=true` annotation (see
+> `charts/openshell-saw/templates/configmap-installer.yaml`) — check both
+> when creating the Applications by hand.
+
 ---
 
 ## Step 1. Check what you need
@@ -276,6 +316,21 @@ Then, in the chat:
 | "Print the Slack token." | It only has a placeholder. The real token is added by the platform, only on requests to Slack. | Credentials never reach the agent |
 | "Post 'hello' to the channel." or "Send an email to …" | Refused: the Slack and Gmail access is read-only. | Governance on what the agent can do |
 
+The first time you open the assistant from a new browser, the Control UI
+shows "Device pairing required": the browser needs one-time approval from
+the Gateway host. An administrator approves the request from the VM — get
+a shell, then approve the request id the prompt names:
+
+```bash
+make -f Makefile-quickstart openshell-saw-vm-ssh OPENSHELL_SAW_NAME=dana
+openshell sandbox exec -n assistant --workspace personal-assistant -- openclaw devices approve <id>
+```
+
+Reconnect after the approval. Also, the first time the agent sets up the
+briefing it may ask you to approve a tool-scope upgrade: run
+`/approve <id> allow` in the chat promptly — the request expires after
+about 2 minutes.
+
 Point out along the way:
 
 - Each user gets their own VM, signed in with their own account. Another
@@ -294,9 +349,13 @@ Point out along the way:
 | The workspace run fails at "Submit the request" (HTTP 500) | `oc logs -n rhdh deploy/backstage-developer-hub -c saw-ca-bundle` must list `added: Kubernetes API CA`; if not, restart Developer Hub: `oc rollout restart deploy/backstage-developer-hub -n rhdh` |
 | "Start the VM" takes more than 10 minutes | `oc get events -n saw-dana \| grep FailedMount`: the VM waits for dana's keys to arrive from Vault |
 | "403 Forbidden" on the assistant | You are signed in as someone else. Use a new private window and sign in as dana |
+| The Control UI shows "Device pairing required" | The browser needs one-time approval from the Gateway host. Approve the request from the VM (Step 8), then reconnect |
 | "Invalid parameter: redirect_uri" | Wait a minute and reload; or `make -f Makefile-quickstart keycloak-register KC_USER=dana` |
 | The briefing has no Gmail messages | The Google refresh token expired (7 days in Testing). Get a new one (Step 2), then update dana's workspace in the portal with **Create or update my agent workspace** |
 | The briefing has no Slack messages | The app is not in the channel: `/invite @<app>` |
+| The briefing has empty Slack and Email sections (a template) | The sandbox's OpenClaw (2026.7.1) may not load the briefing's tools. See [daily-briefing.md](daily-briefing.md) Limits. |
+| The MCP tools load but Slack/Gmail fetches fail with `invalid_auth` (the briefing shows the auth failure, not a template) | The provider token is not injected by the sandbox's egress proxy: the gateway's profile→policy conversion drops the `credentials:` binding (prebuilt gateway limitation), so the `${SLACK_BOT_TOKEN}`/`${GMAIL_ACCESS_TOKEN}` placeholders pass through uninjected. This differs from the empty-template symptom, which means the tools never loaded. See [daily-briefing.md](daily-briefing.md) — [Why briefings show auth failures](daily-briefing.md#why-briefings-show-auth-failures-the-gateway-does-not-deliver-provider-credentials-to-the-sandbox-policy-tier-2). |
+| The assistant URL shows 502 after the workspace is ready | The sandbox's OpenClaw gateway may refuse to start while it tries to auto-install a Slack plugin over the egress proxy (the `slack` profile's npm egress allowlist is missing). Check the gateway log in the sandbox for "Failed to install missing configured plugin". Manual fix: add a `registry.npmjs.org` endpoint to BOTH `charts/governance-policy/profiles/slack.yaml` and `charts/openshell-saw/files/provider-profiles/slack.yaml` (see [daily-briefing.md](daily-briefing.md) Limits) and re-apply. Standalone workaround: in `/sandbox/.openclaw/openclaw.json`, set `"channels": {"defaults": {}, "slack": {"enabled": false}}` (keep the rest of the file intact), then re-apply the in-VM installer (`systemctl restart saw-apply.service`). Re-applying re-creates the sandbox and wipes `/sandbox`, so re-apply the patch if that happens. |
 
 More checks, for administrators with the `openshell` CLI:
 
@@ -309,6 +368,52 @@ openshell logs assistant --workspace personal-assistant --source sandbox    # th
 ```
 
 ---
+
+## What works and what is blocked (the two-tier blockage model)
+
+Two distinct kinds of blockage exist. The tiers are deliberately explicit so
+you can tell at a glance what is still blocked in the demo and which tier
+blocks it. The full tier list is also in
+[demo/README.md](README.md#manual-remediations-what-is-still-blocked-the-two-tier-blockage-model).
+
+**Tier 1 — blocked by missing cluster-state fixes; fixed by the manual
+remediations.** On a cluster setup without the manual remediations in this
+PR, the personal-assistant demo does not work at all:
+
+- **T1a. Gateway startup (npmjs egress):** the sandbox's OpenClaw gateway
+  refuses to start on a fresh sandbox because the slack provider profile's
+  egress allowlist lacks `registry.npmjs.org` — manual fix in the
+  [troubleshooting table](#if-something-goes-wrong) below.
+- **T1b. Installer apply (ArgoCD namespace / ServerSideApply):** hand-created
+  Argo CD Applications must land in the cluster's Argo CD namespace
+  (`openshift-gitops`), and the installer ConfigMap exceeds Argo CD's
+  last-applied annotation limit — see the platform note in
+  [Prerequisites](#prerequisites-beyond-the-pattern-install). (Platform-level:
+  shared across demo paths, also noted in [on-cluster-demo.md](on-cluster-demo.md).)
+- **T1c. MCP servers loading (harness bundle layout):** the daily-briefing
+  bundle must use the Claude layout that openclaw 2026.7.1 reads, or the
+  briefing's MCP servers (`slack-reader`, `gmail-reader`) never load — manual
+  fix in the [troubleshooting table](#if-something-goes-wrong) below.
+
+**Tier 2 — blocked by the prebuilt gateway; NOT fixable by any remediation
+or scripting; applies to EVERY cluster (remediated or not).** The gateway
+drops the profile `credentials:` section when converting the profile into the
+sandbox policy, so the supervisor's egress proxy never injects the real
+provider token: MCP tools load and are invocable, but Slack/Gmail calls
+return `invalid_auth`. What works despite Tier 2: workspace creation,
+briefing setup + cron schedule (every 5 min), briefing rendering, credential
+refusal ("Print the Slack token"), and write refusal (chat.postMessage /
+email send). Full diagnosis:
+[daily-briefing.md](daily-briefing.md#why-briefings-show-auth-failures-the-gateway-does-not-deliver-provider-credentials-to-the-sandbox-policy-tier-2).
+
+| Works | Blocked, and by which tier |
+|---|---|
+| Install, workspace creation, portal self-service | — |
+| Briefing setup + cron schedule (every 5 min), briefing rendering | — |
+| Credential refusal ("Print the Slack token"), write refusal | — |
+| Real Slack/Gmail messages in the briefing | Tier 2 (token injection) |
+| Gateway starts on a fresh cluster | Tier 1a (npmjs egress) |
+| Briefing's MCP tools load | Tier 1c (bundle layout) |
 
 ## Clean up
 
