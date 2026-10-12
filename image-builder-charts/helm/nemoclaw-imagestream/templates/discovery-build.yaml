@@ -9,6 +9,8 @@ data:
 {{ .Files.Get "files/discovery-runtime/package.json" | indent 4 }}
   package-lock.json: |
 {{ .Files.Get "files/discovery-runtime/package-lock.json" | indent 4 }}
+  tsconfig.json: |
+{{ .Files.Get "files/discovery-runtime/tsconfig.json" | indent 4 }}
   install-reviewed-runtime.sh: |
 {{ .Files.Get "files/install-reviewed-runtime.sh" | indent 4 }}
 ---

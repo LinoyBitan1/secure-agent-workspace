@@ -133,3 +133,29 @@ def test_discovery_runtime_keeps_vulnerability_and_integrity_checks():
     assert "npm audit --audit-level=high" in script
     assert "npm audit signatures" in script
     assert "skipping npm audit" not in script
+
+
+def test_nemoclaw_upgrade_pins_match_across_builds():
+    sandbox = yaml.safe_load((CHART / "values.yaml").read_text())
+    cli = yaml.safe_load((CLI_CHART / "values.yaml").read_text())
+    revision = "95d6505265ba1f2cb05355f83786353e654de096"
+    assert sandbox["source"]["git"]["ref"] == revision
+    assert cli["source"]["git"]["ref"] == revision
+    assert sandbox["build"]["baseImage"] == "ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.132"
+    # Upstream still refuses OpenShell 0.1.x; don't hide that behind a local override.
+    assert cli["build"]["maxOpenshellVersion"] == "0.0.116"
+
+
+@pytest.mark.skipif(not HELM, reason="helm is not installed")
+def test_discovery_typecheck_scope_is_shared_by_ci_and_openshift():
+    runtime = CHART / "files/discovery-runtime"
+    config = json.loads((runtime / "tsconfig.json").read_text())
+    assert "managed-startup-direct-entry.ts" not in config["include"]
+    assert "mcp-tool-discovery.ts" in config["include"]
+    assert "streamable-http-client.test.ts" in config["include"]
+    rendered = subprocess.check_output([HELM, "template", "image", str(CHART)], text=True)
+    inputs = next(d for d in yaml.safe_load_all(rendered)
+                  if d and d["metadata"]["name"] == "nemoclaw-discovery-build-inputs")
+    assert json.loads(inputs["data"]["tsconfig.json"]) == config
+    workflow = (ROOT / ".github/workflows/build-nemoclaw-sandbox.yml").read_text()
+    assert "files/discovery-runtime/tsconfig.json" in workflow
