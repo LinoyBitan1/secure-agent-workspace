@@ -10,7 +10,7 @@ global:
   #                and charts/governance-interceptor/files/apf needs a signed
   #                bundle you generate (make apf-keys apf-bundle, docs/apf.md).
   governance:
-    engine: interceptor
+    engine: apf
 main:
   clusterGroupName: prod
   multiSourceConfig:
