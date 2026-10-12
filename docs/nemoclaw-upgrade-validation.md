@@ -274,3 +274,56 @@ post-restart native/MCP calls and the new persistence probe still need checks.
 BLOCKED: automatic approval review requires explicit authorization for the
 developer-account cross-workspace denial test and transmission of the
 configured Brave API key to its search API. Neither check is claimed passed.
+
+## Pre-upgrade pairing reproduction
+
+On 2026-10-12 at approximately 22:36 Asia/Jerusalem, the reported difference
+was reproduced on `cluster-fx7lm` using isolated disposable containers in
+Alice's VM, without replacing the existing sandboxes:
+
+- Old NemoClaw: exact rollback sandbox digest `e7349d73...`, OpenClaw
+  **2026.7.1** (`2d2ddc4`).
+- Default notebook: `quay.io/aipcc/base-images/agentic/openclaw@sha256:896d1526ee29b53167034ba65d1c758c8da777f441ed094e19f3bcf6d7445c61`,
+  OpenClaw **2026.9.6** (`eb377ac`).
+
+Both gateways used loopback-only listeners, the same trusted-proxy owner
+`alice`, and the same requested operator scopes. A WebSocket client sent
+the Control UI's `openclaw-control-ui` / `webchat` connection handshake,
+including a newly generated Ed25519 device and a signed challenge. Every
+trial used a fresh device; no pending device was manually approved.
+
+CONFIRMED: the old image rejects the full `deviceAutoApprove` configuration
+with `gateway.auth.trustedProxy: Invalid input`. Removing only that key,
+as the installer fallback does, makes the configuration valid. The default
+notebook accepts the full configuration.
+
+CONFIRMED: the old NemoClaw gateway repeatedly returns `ok=false`,
+`error.code=NOT_PAIRED`, `details.code=PAIRING_REQUIRED`, and
+`pairing required: device is not approved yet`. The default notebook returns
+`ok=true`, `hello-ok`, and the requested operator scopes. This reproduces
+the gateway error responsible for the screenshot's pairing screen.
+
+CONFIRMED control: removing automatic device approval from the default
+notebook makes its fresh-device connection return the same `NOT_PAIRED` /
+`PAIRING_REQUIRED` error. Restoring the owner-scoped setting and restarting
+its gateway restores `hello-ok` for another fresh device. This isolates
+automatic device approval as the decisive configuration difference.
+
+The old isolated image also required initialization of its shipped empty
+legacy `exec-approvals.json` before its startup migration would complete.
+Only the disposable container's file was initialized; existing sandbox
+files were untouched. Connection refusals and `gateway starting` responses
+during setup are excluded from the pairing result.
+
+Scope: this is a real gateway protocol reproduction on the cluster VM,
+with the proxy's owner headers supplied by the test client. It does not
+retest the browser rendering, OIDC ingress chain, or LLM inference. Earlier
+live upgraded GUI/inference evidence remains separate. Carol's
+`cluster-bcvkh` was not accessed.
+
+The existing VM's rootless Podman database now reports corruption:
+`PRAGMA integrity_check` finds an overflow-list error and a wrong entry
+count in `sqlite_autoindex_ContainerState_1`; `podman` reports
+`database disk image is malformed`. Installer/apply services are failed.
+This explains the outstanding restart readiness failure; no container-store
+reset or data-loss repair was performed, and its cause is not established.
