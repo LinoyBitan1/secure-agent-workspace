@@ -61,15 +61,19 @@ helm install mattermost demo/charts/mattermost -n openshell-agents
 **Order:** `copy-images` → install → secrets → Keycloak users → demo
 services → walkthrough beats.
 
-> **Platform note (shared across demo paths):** hand-created Argo CD
-> Applications must land in the cluster's Argo CD namespace
-> (`openshift-gitops`), and the openshell-saw installer ConfigMap exceeds
-> Argo CD's 262144-byte last-applied-configuration annotation limit, so its
-> template carries `argocd.argoproj.io/sync-options: ServerSideApply=true`
-> (see `charts/openshell-saw/templates/configmap-installer.yaml`). This is
-> the one platform-level item shared by both demo paths — the remaining
-> manual remediations (gateway npm egress, harness bundle layout, token
-> injection) belong to the personal-assistant demo path and are documented in
+> **Platform note (shared across demo paths):** the openshell-saw installer
+> ConfigMap exceeds Argo CD's 262144-byte last-applied-configuration
+> annotation limit, so its template carries
+> `argocd.argoproj.io/sync-options: ServerSideApply=true` (see
+> `charts/openshell-saw/templates/configmap-installer.yaml`). This is the one
+> platform-level item shared by both demo paths — it hits any deployment that
+> applies that ConfigMap via Argo CD, framework or not. (Separately, gitops
+> deployments without the pattern framework's imperative installer place
+> their hand-created Argo CD Applications in the cluster's Argo CD namespace,
+> `openshift-gitops`; on the framework path the framework places Applications
+> itself.) The remaining manual remediations (gateway npm egress, harness
+> bundle layout, token injection) belong to the personal-assistant demo path
+> and are documented in
 > [personal-assistant-demo.md](personal-assistant-demo.md) and the
 > [two-tier blockage model](README.md#manual-remediations-what-is-still-blocked-the-two-tier-blockage-model).
 
