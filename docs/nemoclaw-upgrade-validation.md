@@ -495,3 +495,58 @@ a pairing prompt. Screenshot evidence is saved at
 
 This qualifies Carol on the validation branch in `cluster-vqvlk`; it does
 not qualify the manager's `main` deployment in `cluster-bcvkh`.
+
+### PR #98 live reproduction — 2026-10-13
+
+Reviewed upstream PR #98 at exact head
+`93fc557ea38c4697bdd016f1815d635e6e4cbb17`. Its plugin-enable changes are
+absent from this deployment's normal installer. Upstream's three CI checks
+passed; isolated local tests on that exact source passed (60 harness
+contract tests and 38 apply-profile tests). These results are separate from
+the earlier 1,168-test upgrade suite.
+
+Created an additional `default/pr98-repro` sandbox using the existing
+v0.0.133 image and unchanged `ds-default` harness. Existing Alice/Carol
+sandboxes were excluded from the reproduction plan, pruning was disabled,
+and the production installer was not replaced.
+
+**Fresh baseline without PR #98:** verification passed. Both `ds-default`
+and `saw-echo` were enabled and loaded. The fresh v0.0.133 configuration had
+no `plugins.allow` restriction. Thus this fresh-image case did not
+reproduce the reported problem; saying every fresh 2026.9.x harness needs
+this PR was too broad.
+
+**Controlled compatibility case:** set only the reproduction sandbox's
+`plugins.allow` to `["brave", "memory-core", "nemoclaw"]`, the restrictive
+configuration described in the PR. Running the current installer's
+unchanged harness setup then produced disabled `ds-default` and `saw-echo`
+plugins and the actual verification failure:
+`OpenClaw does not load the harness bundle 'ds-default' from /sandbox/harness`.
+This is an intentionally seeded configuration, not a spontaneous failure
+of the fresh image or a reproduction of the manager's whole deployment.
+
+**Exact PR implementation on the same sandbox:** ran the PR's
+`configure_harness` implementation, including
+`openclaw plugins enable <id> --accept-capabilities` and its plain-command
+fallback. Both commands for both plugins returned
+`Plugin "<id>" could not be enabled (blocked by allowlist).`
+Verification still failed, now with the PR's additional `status disabled`
+diagnostic. The runtime identified itself as
+`OpenClaw 2026.9.2 (3928bad)`.
+
+**Review outcome:** do not approve PR #98 as a complete fix for the
+restrictive-allowlist case based on the earlier passing tests. Its claim
+that enable automatically adds a plugin to an existing allowlist did not
+hold on this tested runtime. It needs a fix that retains existing allowed
+IDs while admitting the intended harness IDs, plus a regression test for
+this case. Capability consent on other runtimes remains a separate path.
+No PR comment, review submission, merge, or product-code change was made.
+
+The isolated failed configuration is retained for inspection. VM receipts:
+`/home/cloud-user/pr98-repro-apply.json`,
+`/home/cloud-user/pr98-disabled-plugins.json`,
+`/home/cloud-user/pr98-repro-legacy-policy.json`,
+`/home/cloud-user/pr98-repro-fix.json`, and the corresponding
+`pr98-repro-apply.log`, `pr98-legacy-policy.log`, `pr98-fixed.log`.
+The bounded driver is `/tmp/pr98-live-repro.py` on the workstation and
+`/home/cloud-user/pr98-live-repro.py` on Alice's VM.
