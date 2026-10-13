@@ -428,3 +428,24 @@ is saved at
 `/home/lbitan/.codex/visualizations/2026/10/13/01a13436-9153-7312-84f7-b9a27b83cbea/nemoclaw-fresh-cuda-post-restart.jpg`.
 Generated kubeconfigs and values files remain private and gitignored;
 credentials are excluded from this record.
+
+### Notebook recovery follow-up — 2026-10-13, 12:48 Israel time
+
+The owner notebook browser is now recovered. A fresh browser navigation
+loaded the retained chat, a new request returned
+`SAW_NOTEBOOK_RECOVERED_1013`, and an explicit page reload retained both the
+old and new replies. Authenticated proxy logs confirmed successful asset
+and configuration responses. No additional service restart, sandbox reset,
+or authentication change was made during this follow-up.
+
+The earlier scoped restart of `saw-ui-forward-default-notebook.service`
+occurred at 12:34:34 Israel time. Recovery was first verified afterwards;
+that association does not establish causation. During the original failure,
+oauth2-proxy logged `net/http: timeout awaiting response headers` and the
+connection relay logged unanswered asset/service-worker requests. This
+places the observed failure in the proxy's upstream response path, rather
+than showing lost sandbox data or a failed owner login. The precise cause
+of the intermittent stall, and a durable prevention fix, remain unproven.
+
+Browser evidence:
+`/home/lbitan/.codex/visualizations/2026/10/13/01a13436-9153-7312-84f7-b9a27b83cbea/nemoclaw-notebook-recovered.png`.
