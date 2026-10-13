@@ -38,7 +38,7 @@ correct. See [network troubleshooting](troubleshooting.md).
 
 ## Overview
 
-The Secure Agent Workspace (SAW) deploys a per-user AI agent sandbox running inside a KubeVirt virtual machine on OpenShift. The deployment is fully GitOps-driven via Red Hat Validated Patterns and ArgoCD. For Alice and Bob test account passwords and separate browser sign-in steps, see [Keycloak test users](../README.md#keycloak-test-users).
+The Secure Agent Workspace (SAW) deploys a per-user AI agent sandbox running inside a KubeVirt virtual machine on OpenShift. The deployment is fully GitOps-driven via Red Hat Validated Patterns and ArgoCD. Production has no demo users. For an explicit demo and separate browser sign-in steps, see [Keycloak production and demo users](../README.md#keycloak-production-and-demo-users).
 
 Each sandbox provides an OpenShell gateway with OIDC authentication, governance policy enforcement, and a web-based agent interface — all managed declaratively from Git.
 
@@ -113,7 +113,7 @@ RHBK operator deploys Keycloak. A `KeycloakRealmImport` creates the `openshell` 
   - `openshell-cli` — public client, PKCE with S256, device code flow, 24h token lifetime
     (effective lifetime capped to 10h by the realm's SSO Session Max)
   - `openshell-dashboard` — public client, PKCE, redirect URIs registered by the redirect registrar or an administrator (below)
-- **Users:** developer, admin, alice, bob (test accounts)
+- **Users:** none by default; create real accounts before adding their workspace entries
 - **Roles:** `openshell-user`, `openshell-admin`
 - **Token mappers:** realm roles in access tokens, audience mapper so dashboard tokens are accepted by the gateway
 
@@ -122,6 +122,15 @@ RHBK operator deploys Keycloak. A `KeycloakRealmImport` creates the `openshell` 
 Every web UI has its own route host (each VM's dashboard, and each sandbox UI route), and Keycloak matches redirect URIs exactly apart from a trailing wildcard, so each host has to be registered on `openshell-dashboard`. The routes to register are labelled `saw.redhat.com/oidc-redirect=true` in namespaces labelled `openshell.pattern/saw=true`; their redirect URI is `https://<host>/oauth2/callback` and their web origin `https://<host>`. No pod in a SAW namespace holds Keycloak credentials for it.
 
 By default the redirect registrar registers them (`redirectRegistrar` in `openshell-keycloak`): one Deployment, `saw-redirect-registrar` in Keycloak's namespace, every 15 seconds adds the entries of routes it finds and removes those it added for routes that are gone from every SAW namespace. It keeps an entry while its route still exists (labelled or not), keeps entries it did not add (recorded in the client attribute `saw.redhat.com/managed-redirects`), and on its first run adopts the per-VM entries the prepare Jobs used to add. A failed route list removes nothing. It signs in as its own confidential client, `saw-redirect-registrar`, whose service account has only `manage-clients` in the OpenShell realm; its init container sets that client up with the operator's `<keycloak>-initial-admin` Secret and hands the client secret over in memory, so the registrar container never sees the master admin. It reads routes, namespaces and the ingress domain only, and reaches Keycloak in-cluster (`http://<keycloak>-service.<namespace>.svc:8080`; set `redirectRegistrar.keycloakUrl` for an existing Keycloak without HTTP, and `redirectRegistrar.adminSecret` for another admin Secret name). `manage-clients` still covers every client of the realm; Keycloak's fine-grained admin permissions could narrow it to `openshell-dashboard`.
+
+The Pattern also enables `saw-owner-resolver` in the Keycloak namespace. Its
+separate client has only `realm-management/view-users` in the OpenShell realm.
+It finds each existing account by the exact `users[].name` and writes its
+subject to a dedicated ConfigMap in that user's namespace. A namespaced Role
+permits only `get` and `patch` on that ConfigMap. No Keycloak admin Secret
+reaches a tenant namespace or VM. A missing, disabled, ambiguous, or
+mismatched account gets no membership. The resolver records its state in the
+ConfigMap annotation `saw.redhat.com/owner-resolution`.
 
 With `redirectRegistrar.enabled: false`, nothing in the cluster holds Keycloak admin access for this: an administrator runs `make -f Makefile-quickstart keycloak-register KC_USER=<user>` once the workspace exists (it also creates the Keycloak account if it is new) and `keycloak-redirects-sync` after deleting workspaces (`scripts/keycloak-redirects.py`, with the administrator's `oc` session and Keycloak's admin Secret, like `scripts/keycloak-users.sh`). The script applies the registrar's rules. See the README's [Web UI sign-in](../README.md#web-ui-sign-in-redirect-uris).
 
@@ -234,6 +243,74 @@ There is no prepare Job: nothing runs in the SAW's namespace but the VM. The VM'
 #### Guest
 
 `saw-install` pulls each BOM component by digest and starts the gateway. `saw-apply` reads the mounted profiles and provider Secrets and creates workspaces, providers, and sandboxes, and attaches each sandbox's providers (OpenShell 0.1.x has no inference routes: agents call their provider's own endpoint). The default signature mode is `warn`. The default prune mode is `report` (log `would delete`, delete nothing). Inputs are iso9660 disks unless `vm.liveInputs` is true, in which case virtiofs updates them without a restart.
+
+Pattern owner subjects use a separate `saw-owner-subject` ConfigMap mount over
+virtiofs, even when other inputs use ISO media. The input watcher and timer
+reapply memberships when that subject changes. Account recreation removes
+the old subject before adding the new one. Direct quickstart and portal
+provisioning keep their explicit verified subject input. An external OIDC
+issuer needs `ownerSubject` because the Keycloak resolver cannot query it.
+
+### Existing-install identity migration
+
+A new `KeycloakRealmImport` does not update an existing realm. Use the realm's
+admin console and `make keycloak-harden` for existing settings. Do not use a
+chart render as proof that existing accounts or registration changed.
+
+1. Record the current realm and accounts. Confirm which accounts are real
+   users; do not disable an account only because its name matches a demo
+   name. Establish one real operator with `openshell-admin`. Verify its role
+   claim and recovery access.
+2. Create each real owner account with `make keycloak-add-users` or the realm
+   admin console. Give each ordinary owner `openshell-user` only. Add the
+   account name to `overrides/saw-users.yaml`. Sync the Pattern and check
+   `saw.redhat.com/owner-resolution=resolved` on that owner's
+   `saw-owner-subject` ConfigMap. Verify the owner's workspace list and one
+   bounded create/delete action through the gateway before removing access.
+   For a workspace enrolled before this release, record its previous owner
+   subject before the sync. After the new owner passes these checks, remove
+   the old grant in the VM with
+   `openshell workspace member remove --workspace <workspace> --subject <old-subject>`.
+   Repeat for each workspace. The new membership ledger cannot infer grants
+   that an older installer created. Do not remove the grant if it is still
+   the verified owner's subject.
+3. Run `make keycloak-harden` for the configured realm. In the realm admin
+   console, also verify **Realm settings > Login > User registration** is
+   off. Check password policy and brute-force settings. Do this explicitly:
+   reapplying a `KeycloakRealmImport` does not change an existing realm.
+4. For each confirmed demo-only account, remove it from
+   `accessControl.dashboardSupportUsers` and
+   `sandboxUiProxy.allowedUsers` in every SAW where it has support access.
+   Apply the updated installer configuration and restart those proxies.
+   Then disable the account and revoke its sessions in the realm admin
+   console. A valid oauth2-proxy cookie can outlive Keycloak logout: in a
+   live migration check, logout alone left an existing cookie at HTTP 200;
+   removing the proxy allowance changed it to HTTP 403. Verify that the
+   account's old browser session cannot reach the proxy or gateway. Review
+   and rotate credentials that the account could access. Keep the real
+   operator and owners active.
+5. During rollback, preserve the verified real accounts, their memberships,
+   and operator recovery access. Do not restore demo accounts as a shortcut.
+
+An existing VM installed before the owner resolver needs the new guest input
+watcher. Sync its updated VM specification, then copy the new
+`saw-mount-inputs.sh`, `saw-reconcile`, `saw-reconcile.service`,
+`saw-inputs.path`, and `saw-inputs.timer` from
+`charts/openshell-saw/files/guest/` into that VM with `virtctl scp`.
+Install scripts in `/usr/local/sbin` with mode `0755` and units in
+`/etc/systemd/system` with mode `0644`. Run `systemctl daemon-reload` and
+`systemctl enable --now saw-inputs.path saw-inputs.timer` in the VM. Restart
+the VM once with `make saw-restart OPENSHELL_SAW_NAME=<name>` so KubeVirt
+attaches the new virtiofs ConfigMap. The root disk is retained. Run
+`saw-mount-inputs.sh` and `systemctl start saw-reconcile.service` after the
+restart, then verify membership. A new VM gets these files from cloud-init.
+
+Restart an existing VM after an installer ConfigMap update, including a
+dashboard proxy fix. Argo CD can report Synced while the running VM still
+mounts the old installer script. The restart retains the root disk. After it
+finishes, verify that `/var/lib/saw/verified/installer/setup-dashboard.sh`
+has the new content and that `saw-apply.service` completed. Check the web UI
+route with an owner and a different user before you consider the update done.
 
 A workspace that stays Starting is usually waiting on a provider Secret. The virt-launcher pod is scheduled and sits in ContainerCreating; the kubelet retries the mount, so the VM boots within about 2 minutes of the Secret appearing.
 

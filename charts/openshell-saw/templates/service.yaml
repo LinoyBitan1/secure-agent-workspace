@@ -21,10 +21,6 @@ spec:
       port: 8080
       targetPort: 8080
       protocol: TCP
-    - name: ssh
-      port: 22
-      targetPort: 22
-      protocol: TCP
     {{- range $e := include "openshell-sandbox.sandboxUi" . | fromJsonArray }}
     - name: {{ $e.portName }}
       port: {{ $e.proxyPort }}

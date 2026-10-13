@@ -50,6 +50,7 @@ KEYCLOAK_NS    ?= saw-keycloak
 KEYCLOAK_REALM ?= openshell
 # The Keycloak CR in KEYCLOAK_NS (another name for a Keycloak the cluster already runs)
 KEYCLOAK_NAME  ?= openshell-keycloak
+DEMO_ENABLED   ?= false
 # yes/no: let `make keycloak-deploy` import the realm into an existing Keycloak
 USE_EXISTING_KEYCLOAK ?=
 SCRIPTS_DIR    := scripts
@@ -257,14 +258,14 @@ sandbox-pre-delete: .check-saw-name ## Schedule deletion of a sandbox's VM and d
 ##@ Keycloak and Authentication
 
 keycloak-deploy: ## Deploy Keycloak and its realm in KEYCLOAK_NS
-	@$(SCRIPTS_DIR)/deploy-keycloak.sh
+	@DEMO_ENABLED=$(DEMO_ENABLED) $(SCRIPTS_DIR)/deploy-keycloak.sh
 
 keycloak-passwords: ## List users with passwords stored in Keycloak Secrets
 	@$(SCRIPTS_DIR)/keycloak-users.sh show
 
-keycloak-harden: ## For a realm imported earlier: password policy, brute-force lockout, no self-registration, generated passwords for the test users
-	@$(SCRIPTS_DIR)/keycloak-users.sh ensure
-	@$(SCRIPTS_DIR)/keycloak-users.sh harden
+keycloak-harden: ## Apply password policy, lockout, and no self-registration to an existing realm
+	@DEMO_ENABLED=$(DEMO_ENABLED) $(SCRIPTS_DIR)/keycloak-users.sh ensure
+	@DEMO_ENABLED=$(DEMO_ENABLED) $(SCRIPTS_DIR)/keycloak-users.sh harden
 
 USERS_FILE ?= overrides/saw-users.yaml
 KC_USER    ?=

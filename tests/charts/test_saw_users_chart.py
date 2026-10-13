@@ -294,10 +294,24 @@ def test_nineteen_character_name_is_accepted(tmp_path):
 
 
 def test_shipped_override_renders_alice(tmp_path):
-    result = helm("template", "saw-users", str(CHART), "-f", str(ROOT / "overrides" / "saw-users.yaml"))
+    result = helm("template", "saw-users", str(CHART), "-f", str(ROOT / "overrides" / "saw-users-demo.yaml"))
     docs = docs_from(result)
     assert [doc["metadata"]["name"] for doc in by_kind(docs, "Namespace")] == ["saw-alice"]
     assert helm_values(app(docs, "saw-alice-bom")) == {"profiles": ["data-science"]}
+
+
+def test_owner_resolution_writes_only_a_dedicated_input():
+    result = helm("template", "saw-users", str(CHART), "-f", str(ROOT / "overrides" / "saw-users-demo.yaml"),
+                  "--set", "ownerResolution.enabled=true")
+    docs = docs_from(result)
+    config = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "saw-owner-subject")
+    assert "data" not in config
+    role = next(d for d in docs if d["kind"] == "Role" and d["metadata"]["name"] == "saw-owner-resolver")
+    assert role["rules"] == [{"apiGroups": [""], "resources": ["configmaps"],
+                              "resourceNames": ["saw-owner-subject"], "verbs": ["get", "patch"]}]
+    saw_values = helm_values(app(docs, "saw-alice"))
+    assert saw_values["accessControl"]["owner"] == "alice"
+    assert saw_values["accessControl"]["ownerSubjectSource"] == "resolved"
 
 
 def test_missing_repo_url_fails(tmp_path):

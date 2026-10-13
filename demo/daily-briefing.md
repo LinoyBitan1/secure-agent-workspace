@@ -25,9 +25,8 @@ uses (`harnessRef: {name: daily-briefing}`):
 
 ```
 harness.yaml                    governance: slack-reader -> slack, gmail-reader -> gmail
-.claude-plugin/plugin.json,
-.mcp.json                       Agent Plugins bundle (the Claude layout that openclaw
-                                2026.7.1 reads): OpenClaw loads skills/ and .mcp.json
+plugin.json, mcp.json           Agent Plugins bundle: OpenClaw 2026.9.x loads skills/
+                                and the MCP servers in mcp.json from the bundle root
 skills/daily-briefing/SKILL.md  update, schedule (cron tool, every 5 min), show
 mcp/slack-reader.mjs            tool new_messages: today's messages since the last call
 mcp/gmail-reader.mjs            tool new_messages: today's mail since the last call
@@ -103,16 +102,13 @@ openshell logs assistant --workspace personal-assistant --source sandbox
 
 ## Limits
 
-- The bundle must use the Claude layout openclaw 2026.7.1 reads:
-  `.claude-plugin/plugin.json` + `.mcp.json` at the bundle root, with
-  `${CLAUDE_PLUGIN_ROOT}` in `args`. An earlier version of this bundle used
-  the plain `plugin.json`/`mcp.json`/`${PLUGIN_ROOT}` layout, and the MCP
-  servers (`slack-reader__new_messages`, `gmail-reader__new_messages`)
-  silently NOT loaded — they were not in the gateway's plugin list. That was
-  the earlier "2026.7.1 skew" report; the real cause was the layout (a newer
-  image was never verified to fix it), and the claude-layout bundle now
-  loads both tools. Verify after the first apply with the gateway log or
-  `tool_search`.
+- The bundle needs OpenClaw 2026.9.x (the NemoClaw v0.0.133 image, #101):
+  2026.7.1 loaded only the Claude layout (`.claude-plugin/plugin.json`,
+  `.mcp.json`) and left this bundle's MCP servers unloaded. On 2026.9.x the
+  installer also enables the bundle (#98), which otherwise stays disabled
+  ("not in allowlist"). Verify after the first apply: ask the assistant which
+  Slack and Gmail tools it has; it names `slack-reader__new_messages` and
+  `gmail-reader__new_messages`.
   The schedule uses the agent's `cron` tool; if that OpenClaw has none,
   schedule the update from the OpenClaw UI's cron page.
 - openclaw 2026.7.1 passes `.mcp.json` `env` values through as literals (no
@@ -137,38 +133,19 @@ openshell logs assistant --workspace personal-assistant --source sandbox
   live on disk and survive. Note: re-applying the installer re-creates the
   sandbox if it is broken, which wipes `/sandbox` (the briefing state), not
   the sessions.
-- The egress proxy resets scoped npm URLs (`%2f`), and the `slack` provider
-  profile's egress allowlist lacks the npm registry (T1a blockage — fixed by
-  the manual remediation below): on a fresh sandbox
-  OpenClaw tries to auto-install its configured provider plugins (e.g.
-  `@openclaw/slack`) from `registry.npmjs.org` at gateway startup, and
-  without an allowance the startup migrations fail — the gateway logs
-  "Failed to install missing configured plugin 'slack' from @openclaw/slack:
-  npm view failed" and then "startup migrations did not complete cleanly"
-  (verified on-cluster). Manual remediation: add a
-  `registry.npmjs.org` endpoint to the slack provider profile, matching the
-  entry format in `charts/governance-policy/profiles/slack.yaml` on the
-  consolidated `demo` state:
-
-```yaml
-  - host: registry.npmjs.org
-    port: 443
-    protocol: rest
-    enforcement: enforce
-    access: read-only
-```
-
-  in BOTH `charts/governance-policy/profiles/slack.yaml` AND
-  `charts/openshell-saw/files/provider-profiles/slack.yaml`, then re-apply
-  and let ArgoCD sync — the gateway starts. The standalone workaround is to
-  disable the `slack` channel in `openclaw.json`
-  (`"channels": {"defaults": {}, "slack": {"enabled": false}}`) and restart
-  via the in-VM installer apply (`systemctl restart saw-apply.service`).
-  Re-applying the installer re-creates the sandbox and wipes `/sandbox`.
-- The NemoClaw image (`quay.io/rh-ai-quickstart/nemoclaw-sandbox:latest`,
-  currently 0.0.110, OpenClaw 2026.7.1) has no newer release carrying
-  OpenClaw 2026.9.x yet, so the bundle format's check version is not
-  available.
+- With the Slack provider attached, OpenClaw treats its own `slack` chat
+  channel as configured and, at gateway startup, tries to install
+  `@openclaw/slack` from `registry.npmjs.org`, which the sandbox's egress
+  policy denies; the gateway then does not start and the UI answers 502
+  (verified on-cluster). The installer now sets
+  `channels.slack.enabled: false` in every sandbox with a Slack provider:
+  the provider is for the harness's governed reads, not for an OpenClaw
+  chat channel, so no npm egress is needed.
+- The NemoClaw image (`ghcr.io/validatedpatterns-sandbox/nemoclaw-sandbox:latest`,
+  NemoClaw v0.0.133 since #101) ships OpenClaw 2026.9.2, which loads the
+  bundle's MCP servers; 2026.7.1 loaded only its skills. On 2026.9.x the
+  installer enables the bundle (`openclaw plugins enable`, #98), since a
+  bundle on `plugins.load.paths` stays disabled otherwise.
 - Running processes keep their environment: a provider attached to a running
   sandbox reaches OpenClaw after its gateway restarts, which the installer
   does when the sandbox's providers change.
@@ -181,7 +158,7 @@ openshell logs assistant --workspace personal-assistant --source sandbox
 Symptom: the briefing's MCP tools (`slack-reader`, `gmail-reader`) load and
 are invocable, but Slack/Gmail calls return `invalid_auth`, and the briefing
 shows the auth failure instead of real messages. This differs from the
-empty-template symptom (the tools never loaded — see the Claude-layout limit
+empty-template symptom (the tools never loaded — see the bundle limit
 above).
 
 Root cause (verified on-cluster): the prebuilt OpenClaw gateway binary drops
@@ -227,13 +204,12 @@ blockages — on a cluster setup without the manual remediations in this PR,
 the demo does not work at all (also listed in
 [README.md](README.md#manual-remediations-what-is-still-blocked-the-two-tier-blockage-model)):
 
-1. **T1a. Gateway npm egress** — add `registry.npmjs.org` to both slack
-   provider profile copies (see the npm-egress limit above).
+1. **T1a. Gateway npm egress** — resolved: the installer keeps OpenClaw's
+   own `slack` chat channel off (see the limit above).
 2. **T1b. ArgoCD namespace / ServerSideApply** — see README.
-3. **T1c. Harness bundle layout** — the Claude-layout bundle (see the first
-   limit above); until the layout fix lands upstream, a daily-briefing
-   bundle must add `.claude-plugin/plugin.json` and `.mcp.json` by hand
-   (see README).
+3. **T1c. Harness bundle layout** — resolved: OpenClaw 2026.9.2 in the
+   NemoClaw v0.0.133 image (#101) reads the bundle's own layout, and the
+   installer enables the bundle (#98).
 
 The auth-failure limitation described in the section above is a Tier 2
 blockage: it applies to EVERY cluster (remediated or not), is not fixable by

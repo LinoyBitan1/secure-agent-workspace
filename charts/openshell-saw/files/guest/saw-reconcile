@@ -8,7 +8,7 @@ import hashlib, os
 from pathlib import Path
 root = Path(os.environ.get("SAW_ROOT", "/run/saw"))
 h = hashlib.sha256()
-for name in ("installer", "profiles", "secrets"):
+for name in ("installer", "profiles", "secrets", "owner"):
     base = root / name
     h.update(name.encode())
     h.update(b"\0")

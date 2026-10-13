@@ -98,16 +98,18 @@ a reader can tell at a glance which tier any failure belongs to:
 remediations below.** On a cluster setup without the manual remediations in
 this PR, the demo does not work at all:
 
-- **T1a. Gateway startup (npmjs egress):** the OpenClaw gateway refuses to
-  start on a fresh sandbox because the slack provider profile's egress
-  allowlist lacks `registry.npmjs.org`.
+- **T1a. Gateway startup (npmjs egress):** resolved in the installer. It
+  turns OpenClaw's own `slack` chat channel off when a Slack provider is
+  attached, so the gateway no longer tries to install `@openclaw/slack`
+  from npm; no `registry.npmjs.org` egress is needed.
 - **T1b. Installer apply (ArgoCD namespace / ServerSideApply):** hand-created
   Argo CD Applications must land in the cluster's Argo CD namespace
   (`openshift-gitops`), and the installer ConfigMap exceeds Argo CD's
   last-applied annotation limit.
-- **T1c. MCP servers loading (harness bundle layout):** the old
-  daily-briefing bundle layout is not loaded by openclaw 2026.7.1, so the
-  briefing's MCP servers never load.
+- **T1c. MCP servers loading (harness bundle layout):** resolved. The
+  NemoClaw v0.0.133 image (#101) ships OpenClaw 2026.9.2, which loads the
+  bundle's `plugin.json` and `mcp.json`, and the installer enables the
+  bundle (#98).
 
 **Tier 2 — blocked by the prebuilt gateway; NOT fixable by any remediation
 or scripting; applies to EVERY cluster (remediated or not).** The gateway
@@ -120,19 +122,15 @@ return `invalid_auth`. Full diagnosis:
 A reader on a fresh cluster reaches a working demo (Tier 1 cleared) by doing
 the three remediations by hand:
 
-### T1a. Gateway npm egress (Tier 1)
+### T1a. Gateway npm egress (resolved)
 
-Symptom: the OpenClaw gateway refuses to start on a fresh sandbox — it logs
-"Failed to install missing configured plugin 'slack' from @openclaw/slack:
-npm view failed", then "startup migrations did not complete cleanly". Cause:
-the slack provider profile's egress allowlist lacks `registry.npmjs.org`
-(OpenClaw auto-installs its configured provider plugins at gateway startup).
-Remediation: add a `registry.npmjs.org` endpoint to BOTH
-`charts/governance-policy/profiles/slack.yaml` AND
-`charts/openshell-saw/files/provider-profiles/slack.yaml` — match the entry
-format in `charts/governance-policy/profiles/slack.yaml` on the consolidated
-`demo` state — re-apply, and let ArgoCD sync; the gateway starts. Full
-detail: [daily-briefing.md](daily-briefing.md) Limits.
+Symptom, before the fix: the OpenClaw gateway refused to start on a fresh
+sandbox. It logged "Failed to install missing configured plugin 'slack'
+from @openclaw/slack: npm view failed", and the UI answered 502. Cause:
+with the Slack provider attached, OpenClaw treated its own `slack` chat
+channel as configured and tried to install its plugin from npm. The
+installer now sets `channels.slack.enabled: false` in every sandbox with a
+Slack provider; the provider is only for the harness's governed reads.
 
 ### T1b. Installer apply — ArgoCD namespace / ServerSideApply (Tier 1)
 
@@ -151,22 +149,15 @@ or the sync dies on the installer ConfigMap. Two checks:
   consolidated `demo` state). Verify the annotation survives when creating
   or syncing the Application by hand.
 
-### T1c. Harness bundle layout (Tier 1)
+### T1c. Harness bundle layout (resolved)
 
-Symptom: the briefing's MCP servers (`slack-reader`, `gmail-reader`) never
-load — `tool_search` finds nothing and the briefing renders as a template
-with empty Slack and Email sections. Cause: a daily-briefing bundle with the
-OLD layout (plain root `plugin.json` + `mcp.json`), which openclaw 2026.7.1
-does NOT load — only the Claude/Codex/Cursor layouts load (manifest at
-`.claude-plugin/plugin.json`, MCP at `.mcp.json`, root placeholder
-`${CLAUDE_PLUGIN_ROOT}`; note `.mcp.json` env values pass as LITERALS, so
-the CA path must be hardcoded). Remediation: add
-`.claude-plugin/plugin.json` (name/version/description) and `.mcp.json` with
-`mcpServers` entries using `${CLAUDE_PLUGIN_ROOT}` args and
-`"NODE_EXTRA_CA_CERTS": "/run/openshell-supervisor-ca/material/ca.crt"`
-(the supervisor-mounted MITM proxy CA inside the sandbox container), then
-restart the gateway. This is a workaround until the bundle fix lands
-upstream. Detail: [daily-briefing.md](daily-briefing.md) Limits.
+Symptom, before the fix: the briefing's MCP servers (`slack-reader`,
+`gmail-reader`) never loaded, and the briefing rendered as an empty
+template. Cause: OpenClaw 2026.7.1 read only the Claude layout
+(`.claude-plugin/plugin.json`, `.mcp.json`). The NemoClaw v0.0.133 image
+(#101) ships OpenClaw 2026.9.2, which reads the bundle's own `plugin.json`
+and `mcp.json`; the installer enables the bundle, which 2026.9.x otherwise
+keeps disabled (#98). No hand-made layout is needed.
 
 Tier 2 is not fixed by any of the above: it needs the prebuilt gateway's
 profile→policy construction to emit the credential binding — see

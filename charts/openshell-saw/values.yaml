@@ -198,6 +198,12 @@ oidc:
 accessControl:
   owner: ""
   ownerSubject: ""
+  # resolved: read a dedicated ConfigMap mount written by the central
+  # Keycloak resolver. Direct quickstart and portal paths leave this empty.
+  ownerSubjectSource: ""
+  # Explicit support users for the dashboard. They also need workspace
+  # membership or the platform operator role for gateway operations.
+  dashboardSupportUsers: []
 
 # Expose the sandbox gateway and dashboards via OpenShift Routes.
 route:

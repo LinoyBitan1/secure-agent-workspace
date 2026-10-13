@@ -26,9 +26,14 @@ fi
 : "${DASHBOARD_PROXY_IMAGE:?}"
 : "${DASHBOARD_COOKIE_SECRET:?}"
 : "${DASHBOARD_REDIRECT_URL:?DASHBOARD_REDIRECT_URL not set — was the *-webui route created?}"
+: "${DASHBOARD_ALLOWED_USERS:?DASHBOARD_ALLOWED_USERS must include the owner}"
 DASHBOARD_CLIENT_ID="${DASHBOARD_CLIENT_ID:-openshell-dashboard}"
 
 mkdir -p "${HOME}/.config/systemd/user" "${HOME}/.config/openshell"
+printf '%s\n' "${DASHBOARD_ALLOWED_USERS//,/$'\n'}" > "${HOME}/.config/openshell/dashboard-users"
+# oauth2-proxy runs as a different UID inside Podman.  The mounted file
+# contains account names only; the proxy must be able to read it.
+chmod 644 "${HOME}/.config/openshell/dashboard-users"
 
 # Copy just the CA cert (public, not sensitive — never the private key) to a
 # dedicated, world-readable location instead of exposing the whole TLS dir.
@@ -71,7 +76,8 @@ OAUTH2_PROXY_REDIRECT_URL=${DASHBOARD_REDIRECT_URL}
 OAUTH2_PROXY_COOKIE_SECRET=${DASHBOARD_COOKIE_SECRET}
 OAUTH2_PROXY_PASS_ACCESS_TOKEN=true
 OAUTH2_PROXY_CODE_CHALLENGE_METHOD=S256
-OAUTH2_PROXY_EMAIL_DOMAINS=*
+OAUTH2_PROXY_OIDC_EMAIL_CLAIM=preferred_username
+OAUTH2_PROXY_AUTHENTICATED_EMAILS_FILE=/etc/saw/dashboard-users
 OAUTH2_PROXY_SKIP_PROVIDER_BUTTON=true
 OAUTH2_PROXY_COOKIE_SECURE=true
 OAUTH2_PROXY_SSL_INSECURE_SKIP_VERIFY=${DASHBOARD_INSECURE_SKIP_TLS:-false}
@@ -110,7 +116,7 @@ Description=OpenShell Dashboard Auth Proxy (oauth2-proxy)
 [Service]
 Type=simple
 ExecStartPre=-/usr/bin/${RUNTIME} rm -f openshell-dashboard-proxy
-ExecStart=/usr/bin/${RUNTIME} run --rm --name openshell-dashboard-proxy --network host --env-file=%h/.config/openshell/dashboard-proxy.env ${CA_MOUNT} ${DASHBOARD_PROXY_IMAGE}
+ExecStart=/usr/bin/${RUNTIME} run --rm --name openshell-dashboard-proxy --network host --env-file=%h/.config/openshell/dashboard-proxy.env -v %h/.config/openshell/dashboard-users:/etc/saw/dashboard-users:ro,Z ${CA_MOUNT} ${DASHBOARD_PROXY_IMAGE}
 ExecStop=/usr/bin/${RUNTIME} stop -t 5 openshell-dashboard-proxy
 Restart=on-failure
 RestartSec=5s

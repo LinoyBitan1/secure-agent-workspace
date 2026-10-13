@@ -152,6 +152,35 @@ def test_the_nemoclaw_sandbox_is_created_with_the_bundle_mounted(
     assert """openclaw config set plugins.load.paths '["/sandbox/harness"]'""" in scripts
 
 
+def test_the_bundle_is_enabled_with_capability_consent(
+        ab, fake_env, config, briefing, briefing_secrets, catalog):
+    """Found live on OpenClaw 2026.9.2: a bundle on plugins.load.paths stays
+    disabled ("not in allowlist") until `plugins enable` adds it to NemoClaw's
+    restrictive plugins.allow; older releases may not know the flag."""
+    creds = ab.resolve_credentials(briefing, briefing_secrets)
+    applier(ab, config, creds).apply(briefing)
+    scripts = "\n".join(c[-1] for c in calls(fake_env, "sandbox", "exec") if c[3] == "assistant")
+    assert "openclaw plugins enable daily-briefing --accept-capabilities || " in scripts
+    assert scripts.index("config set plugins.load.paths") < scripts.index("plugins enable")
+
+
+def test_openclaws_own_slack_channel_stays_off(
+        ab, fake_env, config, briefing, briefing_secrets, catalog):
+    """Found live: with the Slack provider attached, the gateway treats its
+    slack channel as configured, tries to install @openclaw/slack from npm at
+    startup (egress denied) and does not start. The provider is for the
+    harness's governed reads, not for an OpenClaw chat channel."""
+    creds = ab.resolve_credentials(briefing, briefing_secrets)
+    applier(ab, config, creds).apply(briefing)
+    execs = [c[-1] for c in calls(fake_env, "sandbox", "exec") if c[3] == "assistant"]
+    scripts = "\n".join(execs)
+    assert "openclaw config set channels.slack.enabled false" in scripts
+    assert "channels.gmail" not in scripts
+    gateway = next(i for i, s in enumerate(execs) if "openclaw gateway run" in s)
+    channel = next(i for i, s in enumerate(execs) if "channels.slack.enabled" in s)
+    assert channel < gateway
+
+
 def test_the_bundle_needs_the_slack_and_gmail_profiles(ab, fake_env, config, briefing,
                                                         briefing_secrets, catalog):
     (fake_env.state / "catalog.json").write_text(json.dumps({"nvidia": ["integrate.api.nvidia.com"]}))

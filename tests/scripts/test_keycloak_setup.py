@@ -147,10 +147,19 @@ def test_no_keycloak_deploys_one(kc):
     assert r.returncode == 0, r.stdout + r.stderr
     (helm,) = kc.calls("helm")
     assert "keycloak.existing" not in " ".join(helm) and "keycloak.realm=openshell" in helm
-    # The test users' passwords are generated before the realm import reads them.
+    log = kc.log()
+    assert not [c for c in log if c[:4] == ["oc", "create", "secret", "generic"]]
+
+
+def test_explicit_demo_generates_passwords_before_import(kc):
+    kc.set(keycloaks=[])
+    r = kc.run("deploy-keycloak.sh", DEMO_ENABLED="true")
+    assert r.returncode == 0, r.stdout + r.stderr
     log = kc.log()
     made = next(i for i, c in enumerate(log)
                 if c[:5] == ["oc", "create", "secret", "generic", "openshell-keycloak-user-passwords"])
     assert made < next(i for i, c in enumerate(log) if c[0] == "helm")
     users = {a.split("=", 2)[1] for a in log[made] if a.startswith("--from-literal=")}
     assert users == {"developer", "admin", "alice", "bob"}
+    (helm,) = kc.calls("helm")
+    assert "demo.enabled=true" in helm

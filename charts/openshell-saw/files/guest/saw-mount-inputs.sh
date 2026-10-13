@@ -45,6 +45,9 @@ mount_disk() {
 
 mount_disk saw-installer "${ROOT}/installer" required
 mount_disk saw-profiles "${ROOT}/profiles" optional
+if grep -q '"ownerSubjectSource": "resolved"' "${ROOT}/installer/config.json"; then
+  mount_disk saw-owner "${ROOT}/owner" required
+fi
 
 # Secret disks saw-sec-0, saw-sec-1, ... in the order of config.json "secrets".
 # An invalid name prints an empty line, so it keeps its disk position.

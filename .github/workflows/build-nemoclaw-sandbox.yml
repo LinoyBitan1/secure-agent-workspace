@@ -90,6 +90,8 @@ jobs:
             "${UPSTREAM_DIR}/tools/mcp-tool-discovery-runtime/"
           cp image-builder-charts/helm/nemoclaw-imagestream/files/discovery-runtime/package*.json \
             "${UPSTREAM_DIR}/tools/mcp-tool-discovery-runtime/"
+          cp image-builder-charts/helm/nemoclaw-imagestream/files/discovery-runtime/tsconfig.json \
+            "${UPSTREAM_DIR}/tools/mcp-tool-discovery-runtime/"
           mkdir -p "${UPSTREAM_DIR}/agents/openclaw/mcporter-runtime"
           cp image-builder-charts/helm/nemoclaw-imagestream/files/mcporter-runtime/package*.json \
             "${UPSTREAM_DIR}/agents/openclaw/mcporter-runtime/"

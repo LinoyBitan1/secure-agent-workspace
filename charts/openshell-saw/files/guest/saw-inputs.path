@@ -5,6 +5,7 @@ Description=Watch SAW virtiofs inputs for changes
 PathChanged=/run/saw/installer
 PathChanged=/run/saw/profiles
 PathChanged=/run/saw/secrets
+PathChanged=/run/saw/owner
 Unit=saw-reconcile.service
 
 [Install]

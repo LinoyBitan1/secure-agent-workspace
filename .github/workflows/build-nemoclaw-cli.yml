@@ -41,6 +41,8 @@ jobs:
             >> "$GITHUB_OUTPUT"
           echo "node_image=$(yq '.build.nodeImage' "$VALUES")" \
             >> "$GITHUB_OUTPUT"
+          echo "nemoclaw_version=$(yq '.build.nemoclawVersion' "$VALUES")" \
+            >> "$GITHUB_OUTPUT"
           echo "max_openshell_version=$(yq '.build.maxOpenshellVersion' "$VALUES")" \
             >> "$GITHUB_OUTPUT"
 
@@ -69,6 +71,8 @@ jobs:
           dockerfile: image-builder-charts/helm/nemoclaw-cli-imagestream/files/Dockerfile
           cache_scope: nemoclaw-cli
           build_args: |
+            NEMOCLAW_VERSION=${{ steps.params.outputs.nemoclaw_version }}
+            SOURCE_REVISION=${{ steps.params.outputs.git_ref }}
             NODE_IMAGE=${{ steps.params.outputs.node_image }}
             MAX_OPENSHELL_VERSION=${{ steps.params.outputs.max_openshell_version }}
           registry_token: ${{ secrets.GITHUB_TOKEN }}

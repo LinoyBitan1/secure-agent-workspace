@@ -113,6 +113,27 @@ def test_no_setup_job_and_no_ssh_provisioning(default_docs):
         assert forbidden not in text, forbidden
 
 
+def assert_gateway_service_ports(docs, extra=()):
+    service = docs[("Service", "saw-test-gateway")]
+    ports = service["spec"]["ports"]
+    assert {(p["port"], p["targetPort"]) for p in ports} == {
+        (17670, 17670), (18789, 18789), (8080, 8080), *extra
+    }
+    assert all(p["port"] != 22 and p["targetPort"] != 22 for p in ports)
+
+
+def test_gateway_service_has_application_ports_without_ssh(default_docs):
+    assert_gateway_service_ports(default_docs)
+    vm = default_docs[("VirtualMachine", "saw-test")]
+    ports = vm["spec"]["template"]["spec"]["domain"]["devices"]["interfaces"][0]["ports"]
+    assert {"name": "ssh", "port": 22, "protocol": "TCP"} in ports
+
+
+def test_pattern_settings_gateway_service_has_no_ssh():
+    docs = render(*PATTERN_SAW_SETTINGS)
+    assert_gateway_service_ports(docs)
+
+
 
 
 
@@ -856,7 +877,7 @@ def test_pattern_puts_keycloak_and_each_saw_in_their_own_namespaces():
     assert users_app["extraValueFiles"] == ["/overrides/saw-users.yaml"]
     assert users_app["syncPolicy"]["automated"]["prune"] is True
     listed = yaml.safe_load((ROOT / "overrides/saw-users.yaml").read_text())["users"]
-    assert [user["name"] for user in listed] == ["alice"]
+    assert listed == []
     for app in ("governance-interceptor", "governance-policy"):
         assert apps[app]["namespace"] == "openshell-agents", app
 
@@ -1074,6 +1095,7 @@ def test_a_sandbox_ui_gets_a_route_a_service_port_and_a_vm_port(tmp_path):
     assert route["spec"]["tls"]["termination"] == "edge"
     service = docs[("Service", "saw-test-gateway")]
     assert {"name": "ui-4201", "port": 4201, "targetPort": 4201, "protocol": "TCP"} in service["spec"]["ports"]
+    assert_gateway_service_ports(docs, extra={(4201, 4201)})
     vm = docs[("VirtualMachine", "saw-test")]
     ports = vm["spec"]["template"]["spec"]["domain"]["devices"]["interfaces"][0]["ports"]
     assert {"name": "ui-4201", "port": 4201, "protocol": "TCP"} in ports

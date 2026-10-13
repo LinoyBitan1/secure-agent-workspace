@@ -41,6 +41,7 @@ changes here reach an existing VM after a restart (unlike cloud-init).
       "runtimeUser" "cloud-user"
       "mtlsGateway" "saw-installer"
       "ownerSubject" (.Values.accessControl.ownerSubject | default "")
+      "ownerSubjectSource" (.Values.accessControl.ownerSubjectSource | default "")
       "oidcIssuer" $oidcIssuer
       "caBundle" (.Values.oidc.caBundle | default "")
       "caBundleSecret" (include "openshell-sandbox.caBundleSecret" .)
@@ -52,6 +53,8 @@ changes here reach an existing VM after a restart (unlike cloud-init).
           "proxyImage" .Values.dashboard.proxyImage
           "clientId" .Values.dashboard.clientId
           "redirectUrl" $redirectUrl
+          "owner" (.Values.accessControl.owner | default "")
+          "allowedUsers" (prepend (.Values.accessControl.dashboardSupportUsers | default list) (.Values.accessControl.owner | default "") | compact | uniq)
           "insecureSkipTlsVerify" (.Values.dashboard.insecureSkipIssuerTlsVerify | default false))
       "signing" (dict "mode" $signMode "trustKeys" $trustKeys "identity" $signIdentity "issuer" $signIssuer)
       "harness" (dict "cosign" (dict
