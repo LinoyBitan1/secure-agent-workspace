@@ -5,11 +5,11 @@ cluster passwords, provider keys, tokens, or Keycloak passwords in evidence.
 
 ## Version and build checks
 
-The upgrade pins both builds to NemoClaw `v0.0.132`, commit
-`95d6505265ba1f2cb05355f83786353e654de096`, and its matching sandbox base.
+The upgrade pins both builds to NemoClaw `v0.0.133`, commit
+`ef5d55d19e2da33c2474db158588613828e1a9be`, and its matching sandbox base.
 Run `make cli-build` and `make sandbox-build`. Both must reach Complete; record
 the output image digests. Check `dist/build-identity.json` in the CLI image:
-`nemoclawVersion` must be `0.0.132` and `sourceRevision` must match the pin.
+`nemoclawVersion` must be `0.0.133` and `sourceRevision` must match the pin.
 The image stamps both explicitly because the upstream package version is a
 fallback and the container build need not retain Git metadata. Discovery must pass npm audit, signature checks,
 its HTTP protocol tests, TypeScript, and bundle generation in the cluster.
@@ -327,3 +327,104 @@ count in `sqlite_autoindex_ContainerState_1`; `podman` reports
 `database disk image is malformed`. Installer/apply services are failed.
 This explains the outstanding restart readiness failure; no container-store
 reset or data-loss repair was performed, and its cause is not established.
+
+## Fresh-cluster validation — 2026-10-13
+
+Deployed through README Option A (`./pattern.sh make install`) on
+`cluster-vqvlk`, OpenShift 4.22.16. Tested source commit
+`951afdf6743bb054277937cb469b2350edda724e` pins NemoClaw v0.0.133 to
+`ef5d55d19e2da33c2474db158588613828e1a9be`. OpenShell remains
+0.1.2-rhaiv.0. All image builds completed; installed build identity matches
+the pin. The application's public wildcard certificate passed the OIDC CA
+check. Workshop API access used its insecure TLS option.
+
+### Passed
+
+- Full regression suite: **1,168 passed in 474.44 seconds**. The focused
+  image-build checks also passed (11 tests).
+- Alice signed in through the actual owner OIDC flow. The CUDA browser chat
+  returned `SAW_FRESH_CUDA_133_1013`; CLI inference returned
+  `SAW_FRESH_CUDA_CLI_133_1013`. The default notebook browser initially
+  returned `SAW_FRESH_NOTEBOOK_1013`.
+- Controlled v0.0.132 and v0.0.133 harness sandboxes both invoked native
+  `saw_echo` and stdio MCP echo successfully. Clean final chat histories
+  contained the expected tool results and zero tool errors. Both used
+  OpenClaw 2026.9.2, NVIDIA inference, and the same `ds-default` bundle
+  digest `sha256:d4ec9daaf232b0ac5256f6f3e196f908eda2a47b5cc5914ec9d2174f0e084f01`.
+  The exact harmless native tool was explicitly allowed in both isolated
+  test configurations. Requests discovered tools before invoking them.
+- Read-only harness E2E passed on both versions, and again on v0.0.133
+  after restart. Each run skipped standalone MCP readiness inspection and
+  OCI signature inspection for the inline ConfigMap bundle; real MCP calls
+  separately verified the tested stdio path.
+- Repeated installer/apply runs retained all four sandbox IDs and data.
+  A normal KubeVirt restart retained CUDA, notebook, and both harness IDs,
+  persistent marker files, owner configuration, and browser chat history.
+  Podman SQLite integrity was `ok` before and after restart.
+- After restart, actual native and MCP calls returned
+  `SAW_NATIVE_POST_RESTART_133_1013` and
+  `SAW_MCP_POST_RESTART_133_1013`. A new CUDA browser request returned
+  `SAW_CUDA_POST_RESTART_133_1013`.
+- Interactive CUDA TUI inference passed using the already configured
+  gateway password, returning `SAW_TUI_PASSWORD_133_1013`. The initial
+  device-token attempt failed with a scope mismatch; that authentication
+  path is not counted as passing.
+
+### Limits and unresolved failures
+
+This is **not an all-pass qualification**. Native NemoClaw onboarding still
+fails `gateway.port.uncontested` and uses the existing plain OpenClaw
+fallback. The v0.0.133 blueprint declares a maximum OpenShell version of
+0.0.116, while this deployment uses 0.1.2-rhaiv.0.
+
+The default notebook browser worked before restart, but subsequent browser
+reloads timed out or displayed HTTP 504. Its guest backend, limiter, and
+forwarder returned HTTP 200 and its services were active. A scoped
+forwarder restart was attempted; browser recovery was not verified.
+The cause remains unresolved. CUDA browser recovery was verified.
+
+Normal restart preservation does not resolve or prove sandbox
+delete/recreate preservation. No destructive persistence drill was run.
+Non-admin cross-workspace denial and configured Brave-key checks remain
+blocked pending the explicit authorization requested earlier. Other hosted
+providers and remote MCP transports were not qualified. Discovery audit
+reported three moderately vulnerable packages (`hono`, `ip-address`, `qs`);
+CLI runtime audit reported two moderate findings.
+
+### Version comparison and retained state
+
+The upstream v0.0.132-to-v0.0.133 delta contains 29 commits. The
+[official v0.0.133 changelog](https://github.com/NVIDIA/NemoClaw/blob/v0.0.133/docs/changelog/2026-10-12.mdx)
+describes additional hosted providers, local provider tool disclosure,
+gateway port recovery, and several compatibility/cleanup fixes. The tested
+NVIDIA inference, native tool, and stdio MCP paths passed on both versions;
+this does not qualify every new provider or recovery path. All 14 discovery
+runtime files have identical Git blob hashes across these two tags.
+
+Retained images on the fresh cluster:
+
+- v0.0.133 CLI: `sha256:ee41714463f18cf9885ec1486a03415109e973fd30f03e930b2c6a5df83a11a9`
+- v0.0.133 discovery: `sha256:b3bcafad794ae4725f87064c9017b2e709d6f6be0e0ce4daad300fb3f6e57c8d`
+- v0.0.133 sandbox: `sha256:e03b64eb98c184a1e3721fd6a42bee6a8ec67ded4de92c5117a777ea88df23a2`
+- v0.0.132 baseline sandbox: `sha256:342fb754dffd2b5b3859b8f55254e174679cbc432abea6aa64b43efa68506d3b`
+
+Fresh VM `saw-alice/alice` and all four test sandboxes remain available.
+Retained snapshot `saw-alice/alice-nemoclaw-133-pre-restart` is Succeeded and
+ready to use, with deletion policy Retain and the root disk included. The
+initial fresh CUDA data/configuration were archived before loading the
+pinned image. The old cluster's original store and recovery archives remain
+untouched; its corrupted database was not repaired or reset.
+
+The fresh deployment intentionally retains scoped test fixture drift:
+`saw-users` automated sync is disabled and `saw-alice-bom` automated sync is
+paused. These applications were Healthy with expected OutOfSync status.
+The default notebook continues to use its original AIPCC OpenClaw 2026.9.6
+image; the additional v0.0.132/v0.0.133 harness sandboxes carry the comparison.
+Restore automatic reconciliation only when the fixtures are no longer needed.
+
+Evidence receipts are retained under `/tmp/nemoclaw-fresh-*`, including
+native/MCP histories, post-restart histories, and TUI history. Browser proof
+is saved at
+`/home/lbitan/.codex/visualizations/2026/10/13/01a13436-9153-7312-84f7-b9a27b83cbea/nemoclaw-fresh-cuda-post-restart.jpg`.
+Generated kubeconfigs and values files remain private and gitignored;
+credentials are excluded from this record.
