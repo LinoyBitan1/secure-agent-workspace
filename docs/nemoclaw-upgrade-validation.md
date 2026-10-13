@@ -431,6 +431,19 @@ credentials are excluded from this record.
 
 ### Notebook recovery follow-up — 2026-10-13, 12:48 Israel time
 
+**Tracking item: NOTEBOOK-504 — OPEN (recovered; intermittent failure still
+under investigation).** GitHub Issues is disabled for this repository, so
+this record is the tracking location. Native NemoClaw onboarding is a
+separate deferred item.
+
+Remaining investigation: reproduce the authenticated browser stall after
+a normal VM restart, capture correlated proxy/relay/forwarder/backend logs
+before restarting any service, and identify which upstream connection
+stops responding. Close this item only after the cause is established,
+the necessary fix is verified, and browser chat/reload succeeds after a
+normal restart without manual forwarding-service recovery. Preserve all
+sandbox data throughout.
+
 The owner notebook browser is now recovered. A fresh browser navigation
 loaded the retained chat, a new request returned
 `SAW_NOTEBOOK_RECOVERED_1013`, and an explicit page reload retained both the
