@@ -550,3 +550,46 @@ The isolated failed configuration is retained for inspection. VM receipts:
 `pr98-repro-apply.log`, `pr98-legacy-policy.log`, `pr98-fixed.log`.
 The bounded driver is `/tmp/pr98-live-repro.py` on the workstation and
 `/home/cloud-user/pr98-live-repro.py` on Alice's VM.
+
+### Full PR #98 integration on the latest-version branch — 2026-10-13
+
+At the user's request, cherry-picked the complete PR head
+`93fc557ea38c4697bdd016f1815d635e6e4cbb17` into
+`fix/nemoclaw-upgrade-validation` as **`75de2bd`**, preserving the
+v0.0.133 image pins. Both changed files integrated without conflicts.
+Fresh combined-branch checks passed: **176 tests** across apply profiles,
+harness contracts, and harness mounting in 186.72 seconds. This was a
+targeted integration check, not another full 1,168-test suite run.
+
+Pushed the combined branch and refreshed Alice's GitOps application. The
+deployed `alice-installer` ConfigMap and the guest's verified
+`/var/lib/saw/verified/installer/apply_bom.py` both match the combined
+source hash:
+`a690f261144a7b1ced4784813f629a62406ee5b0feb38745433936ac69b55d75`.
+This supersedes the earlier narrower test that staged the PR installer as
+a separate file.
+
+Before normal restart, created retained VM snapshot
+`saw-alice/alice-pr98-pre-integration` and verified it Succeeded and ready
+to use. Normal restart loaded the updated installer disk. The full normal
+install/apply sequence finished successfully at **15:02:22 Israel time**,
+including actual PR plugin-enable commands and
+`PASS all workspaces, providers and sandboxes present`.
+All five Alice sandbox/container IDs remained unchanged, and the CUDA,
+notebook, and latest harness persistent markers matched their earlier
+values. Carol's running VM was not restarted for this integration check.
+
+Repeated the controlled restrictive-allowlist test in `default/pr98-repro`
+using the **installed combined-branch installer**, rather than the
+separately staged PR file. Both enable commands and their fallbacks still
+returned `could not be enabled (blocked by allowlist)`; harness verification
+still failed with `status disabled`. Guest evidence is
+`/home/cloud-user/pr98-integrated-repro.log` and
+`/home/cloud-user/pr98-repro-legacy-policy.json`.
+
+Result: the complete PR is now on the latest-version testing branch and
+normal profile apply passes, but the intentionally restrictive allowlist
+case remains failing on OpenClaw 2026.9.2. Full integration did not remove
+the earlier observed limitation. No upstream approval, merge, or review
+comment was submitted, and no data-reset or sandbox-delete operation was
+performed.
