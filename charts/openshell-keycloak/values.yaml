@@ -17,8 +17,8 @@ keycloak:
   hostname: ""
 
   realm: openshell
-  # No self-registration: an admin adds users
-  # (make -f Makefile-quickstart keycloak-add-users).
+  # An admin adds production users with keycloak-add-users. Demo mode may
+  # enable registration explicitly, but never enables it by itself.
   registrationAllowed: false
 
   clients:
@@ -61,7 +61,7 @@ keycloak:
     maxFailureWaitSeconds: 900
     maxDeltaTimeSeconds: 43200
 
-  # The test users' passwords are never in values: they come from the Secret
+  # Imported users' passwords are never in values: they come from the Secret
   # userPasswords.secretName in this namespace, key = username, and the realm
   # import reads them as placeholders. Make them with
   # scripts/keycloak-users.sh ensure (make keycloak-deploy does), or, in
@@ -78,7 +78,19 @@ keycloak:
         name: vault-backend
         kind: ClusterSecretStore
 
-  testUsers:
+  # Operator-supplied accounts to import into a new realm. Existing realms
+  # require keycloak-add-users; a realm import is not an update mechanism.
+  users: []
+
+  roles:
+    - openshell-user
+    - openshell-admin
+
+# Explicit demo identities. Production and ordinary quickstart leave these
+# out. Workspace owners have only openshell-user; admin is the demo operator.
+demo:
+  enabled: false
+  users:
     - username: developer
       firstName: Developer
       lastName: User
@@ -95,17 +107,11 @@ keycloak:
       lastName: User
       roles:
         - openshell-user
-        - openshell-admin
     - username: bob
       firstName: Bob
       lastName: User
       roles:
         - openshell-user
-        - openshell-admin
-
-  roles:
-    - openshell-user
-    - openshell-admin
 
 # The redirect registrar: registers the SAW web UIs' redirect URIs from
 # inside the cluster. On by default: one Deployment in this namespace keeps
@@ -131,3 +137,16 @@ redirectRegistrar:
   # Empty: the cluster's ingress domain (ingresses.config.openshift.io).
   hostSuffix: ""
   intervalSeconds: 15
+
+# Resolve Pattern user-list owners without placing Keycloak admin credentials
+# in tenant namespaces. The user-list chart grants this service account patch
+# access only to each tenant's saw-owner-subject ConfigMap.
+ownerResolver:
+  enabled: false
+  name: saw-owner-resolver
+  image: registry.access.redhat.com/ubi9/python-311:latest
+  clientId: saw-owner-resolver
+  keycloakUrl: ""
+  adminSecret: ""
+  namespaceSelector: openshell.pattern/saw=true
+  intervalSeconds: 30

@@ -5,6 +5,13 @@
 # label "<name>-dashboard-saw-<name>" is then at most 53 of 63.
 users: []
 
+# Pattern Keycloak accounts are resolved centrally. Disable this only for an
+# external issuer and supply a verified ownerSubject in each user entry.
+ownerResolution:
+  enabled: false
+  resolverNamespace: saw-keycloak
+  resolverServiceAccount: saw-owner-resolver
+
 # Default for every user; a user's own `pruneOnRemove` wins. Prefer setting it
 # on the one entry you are about to remove (in overrides/saw-users.yaml):
 # while it is true for a user, deleting that user's apps (or the saw-users app,

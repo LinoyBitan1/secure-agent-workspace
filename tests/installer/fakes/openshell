@@ -148,10 +148,17 @@ elif op == "workspace delete":
         fail(f"Error: workspace '{name}' not found")
     state["workspaces"] = [w for w in state["workspaces"] if w != name]
 elif op == "workspace member":
-    member = [opt("--workspace"), opt("--subject"), opt("--role")]
-    if member in state["members"]:
-        fail("Error: member already exists")
-    state["members"].append(member)
+    if head[2] == "remove":
+        before = len(state["members"])
+        state["members"] = [m for m in state["members"]
+                            if m[:2] != [opt("--workspace"), opt("--subject")]]
+        if len(state["members"]) == before:
+            fail("Error: member not found")
+    else:
+        member = [opt("--workspace"), opt("--subject"), opt("--role")]
+        if member in state["members"]:
+            fail("Error: member already exists")
+        state["members"].append(member)
 elif op == "provider list-profiles":
     # catalog.json: {"<profile id>": ["<endpoint host>", ...]}; the default
     # stands in for the governance interceptor's catalog.

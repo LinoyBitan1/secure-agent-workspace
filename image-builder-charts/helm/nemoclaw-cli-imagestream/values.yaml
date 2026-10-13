@@ -1,11 +1,12 @@
 source:
   git:
     uri: "https://github.com/NVIDIA/NemoClaw.git"
-    ref: "6f3cced4230ae9660c049cc11804daf37797c595" # v0.0.124
+    ref: "ef5d55d19e2da33c2474db158588613828e1a9be" # v0.0.133
 
 build:
+  nemoclawVersion: "0.0.133"
   nodeImage: "node:22-trixie-slim"
-  # NemoClaw v0.0.124 does not support OpenShell 0.1.x; the SAW installer falls
+  # NemoClaw v0.0.133 does not support OpenShell 0.1.x; the SAW installer falls
   # back to a plain sandbox with OpenClaw when `nemoclaw onboard` fails.
   maxOpenshellVersion: "0.0.116"
 

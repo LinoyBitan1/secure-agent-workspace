@@ -8,6 +8,7 @@
 #                          are left alone. Passwords stay in Secret $USERS_SECRET.
 #   password USER          Show which Secret holds USER's password.
 #   reset-password USER    Give USER a new generated password in the Secret.
+#   resolve-subject USER   Return the exact enabled user's Keycloak subject.
 #   show                   List users that have stored passwords.
 #   ensure                 Create or complete Secret $SECRET: a generated
 #                          password per test user in the chart's values (the
@@ -45,6 +46,7 @@ SECRET="${SECRET:-openshell-keycloak-user-passwords}"
 # overwrite keys it does not know. Wins over SECRET for the same user.
 USERS_SECRET="${USERS_SECRET:-openshell-keycloak-users}"
 DEFAULT_USERS_FILE="${DEFAULT_USERS_FILE:-overrides/saw-users.yaml}"
+DEMO_ENABLED="${DEMO_ENABLED:-false}"
 
 run_python() {
   if [[ "${CI:-}" == true ]]; then
@@ -55,10 +57,13 @@ run_python() {
 }
 
 usernames() {
-  run_python - "${CHART}/values.yaml" <<'EOF'
+  run_python - "${CHART}/values.yaml" "${DEMO_ENABLED}" <<'EOF'
 import sys, yaml
-kc = (yaml.safe_load(open(sys.argv[1])) or {}).get("keycloak") or {}
-for u in kc.get("testUsers") or []:
+values = yaml.safe_load(open(sys.argv[1])) or {}
+users = (values.get("keycloak") or {}).get("users") or []
+if sys.argv[2] == "true":
+    users += (values.get("demo") or {}).get("users") or []
+for u in users:
     if not u.get("password"):
         print(u["username"])
 EOF
@@ -136,8 +141,13 @@ for k, v in (json.load(sys.stdin).get("data") or {}).items():
 }
 
 ensure() {
-  local user new=() added=()
-  for user in $(usernames); do
+  local user new=() added=() selected
+  selected="$(usernames)"
+  if [[ -z "${selected}" ]]; then
+    echo "No imported users need generated passwords."
+    return 0
+  fi
+  for user in ${selected}; do
     if [[ -z "$(password_of "${user}")" ]]; then
       new+=("${user}=$(new_password)")
       added+=("${user}")
@@ -220,6 +230,30 @@ api_get() {  # path
 
 user_id() {  # username; empty when not in the realm
   api_get "/users?exact=true&username=$1" | jq -r '.[0].id // empty'
+}
+
+resolve_subject() {
+  local user="${1:-}" response subject
+  [[ "${user}" =~ ^[a-z0-9][-a-z0-9]*$ ]] || {
+    echo "Error: resolve-subject needs a plain Keycloak username." >&2
+    return 2
+  }
+  admin_login
+  response="$(curl -fsSk "${AUTH[@]}" "${BASE}/admin/realms/${REALM}/users?exact=true&username=${user}")" || {
+    echo "Error: Keycloak user lookup failed." >&2
+    return 1
+  }
+  subject="$(jq -er --arg user "${user}" \
+    'if type == "array" and length == 1 and .[0].username == $user and .[0].enabled == true
+     then .[0].id // empty else empty end' <<<"${response}")" || {
+    echo "Error: Keycloak account is missing, disabled, ambiguous, or mismatched." >&2
+    return 1
+  }
+  [[ "${subject}" =~ ^[A-Za-z0-9._:@/-]+$ ]] || {
+    echo "Error: Keycloak subject has invalid characters." >&2
+    return 1
+  }
+  printf '%s\n' "${subject}"
 }
 
 set_password() {  # user id, password, temporary (true|false)
@@ -389,5 +423,6 @@ case "${1:-}" in
   add-users) add_users "${2:-}" ;;
   password) password "${2:-}" ;;
   reset-password) reset_password "${2:-}" ;;
+  resolve-subject) resolve_subject "${2:-}" ;;
   *) echo "usage: $0 add-users [FILE]|password USER|reset-password USER|show|ensure|harden" >&2; exit 2 ;;
 esac

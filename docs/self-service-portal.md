@@ -298,7 +298,7 @@ URL.
 
 With one sign-in, the Keycloak password is all that protects a UI. The
 realm has no default passwords, a strong-password policy and brute-force
-lockout, and no self-registration (README, "Keycloak test users"); on a
+lockout, and no self-registration (README, "Keycloak production and demo users"); on a
 realm imported earlier, run `make keycloak-harden`
 once. Only users an admin adds can sign in to RHDH and request a workspace:
 `make keycloak-add-users` creates the accounts for

@@ -214,8 +214,9 @@ OpenClaw's token mode.
 - The realm enforces a password policy (14+ characters, upper, lower, digit,
   special, not the user name or email, not one of the last 5) and locks an
   account out for a growing time after 5 failed sign-ins.
-- The pattern's test users (developer, admin, alice, bob) get generated
-  passwords from Vault (`keycloak-users`); there are no default passwords.
+- Production has no demo users. Explicit demo mode can import developer,
+  admin, alice, and bob with generated passwords. Only admin has the
+  platform operator role.
 
 ## What is in the RHDH catalog
 

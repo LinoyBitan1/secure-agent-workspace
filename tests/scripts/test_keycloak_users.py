@@ -60,7 +60,7 @@ sys.exit(f"fake oc: unexpected {args}")
 '''
 
 
-def run(tmp_path, *args):
+def run(tmp_path, *args, demo=True):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     oc = bin_dir / "oc"
@@ -69,7 +69,8 @@ def run(tmp_path, *args):
     state = tmp_path / "state"
     state.mkdir(exist_ok=True)
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", FAKE_OC_STATE=str(state),
-               KEYCLOAK_CHART=str(ROOT / "charts" / "openshell-keycloak"))
+               KEYCLOAK_CHART=str(ROOT / "charts" / "openshell-keycloak"),
+               DEMO_ENABLED="true" if demo else "false")
     return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True, env=env)
 
 
@@ -89,6 +90,12 @@ def test_ensure_generates_a_strong_password_per_user(tmp_path):
             assert re.search(cls, pw), (user, cls)
         assert not re.search(r"[\s'\"$&`\\]", pw)
     assert len(set(passwords.values())) == 4
+
+
+def test_production_ensure_creates_no_demo_secret(tmp_path):
+    result = run(tmp_path, "ensure", demo=False)
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "state" / "secret-openshell-keycloak-user-passwords.json").exists()
 
 
 def test_ensure_keeps_existing_passwords(tmp_path):
@@ -265,15 +272,15 @@ def test_existing_users_are_skipped(tmp_path, keycloak):
     assert first not in result.stdout
 
 
-def test_the_default_file_is_saw_users(tmp_path, keycloak):
-    """The list that creates the workspaces creates the accounts too."""
+def test_an_explicit_demo_file_creates_its_accounts(tmp_path, keycloak):
     env = dict(os.environ, PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}",
                FAKE_OC_STATE=str(tmp_path / "state"))
     result = subprocess.run(["make", "-s", "-f", str(ROOT / "Makefile-quickstart"), "keycloak-add-users",
-                             f"SCRIPTS_DIR={ROOT / 'scripts'}", f"KEYCLOAK_CHART={ROOT / 'charts/openshell-keycloak'}"],
+                             f"SCRIPTS_DIR={ROOT / 'scripts'}", f"KEYCLOAK_CHART={ROOT / 'charts/openshell-keycloak'}",
+                             "USERS_FILE=overrides/saw-users-demo.yaml"],
                             capture_output=True, text=True, env=env, cwd=ROOT)
     assert result.returncode == 0, result.stdout + result.stderr
-    names = {u["name"] for u in yaml.safe_load((ROOT / "overrides" / "saw-users.yaml").read_text())["users"]}
+    names = {u["name"] for u in yaml.safe_load((ROOT / "overrides" / "saw-users-demo.yaml").read_text())["users"]}
     assert set(keycloak()) == names
 
 

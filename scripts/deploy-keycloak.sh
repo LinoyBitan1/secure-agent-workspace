@@ -10,6 +10,11 @@ REALM="${KEYCLOAK_REALM:-openshell}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # yes/no: use a Keycloak already running in NS (asked interactively if unset).
 USE_EXISTING="${USE_EXISTING_KEYCLOAK:-}"
+DEMO_ENABLED="${DEMO_ENABLED:-false}"
+[[ "${DEMO_ENABLED}" == true || "${DEMO_ENABLED}" == false ]] || {
+  echo "Error: DEMO_ENABLED must be true or false." >&2
+  exit 2
+}
 
 # Check RHBK operator access and location before any writes.
 csv_json="$(oc get csv -n "${NS}" -o json)"
@@ -68,10 +73,11 @@ if [[ -n "${existing}" && -z "${ours}" ]]; then
     echo "Error: Keycloak discovery returned HTTP ${discovery_status}; realm state is unknown." >&2
     exit 1
   fi
-  KEYCLOAK_NS="${NS}" KEYCLOAK_CHART="${CHART}" "${SCRIPT_DIR}/keycloak-users.sh" ensure
+  KEYCLOAK_NS="${NS}" KEYCLOAK_CHART="${CHART}" DEMO_ENABLED="${DEMO_ENABLED}" "${SCRIPT_DIR}/keycloak-users.sh" ensure
   echo "Importing realm '${REALM}' into Keycloak '${existing}' in ${NS}..."
   helm upgrade --install openshell-keycloak "${CHART}" --namespace "${NS}" \
-    --set keycloak.existing="${existing}" --set keycloak.realm="${REALM}" --timeout 10m
+    --set keycloak.existing="${existing}" --set keycloak.realm="${REALM}" \
+    --set demo.enabled="${DEMO_ENABLED}" --timeout 10m
   deadline=$((SECONDS + 300))
   until [[ "$(oc get keycloakrealmimport -n "${NS}" -o json | jq -r \
       'first(.items[] | select(.metadata.name == "openshell-keycloak-realm") |
@@ -84,11 +90,11 @@ if [[ -n "${existing}" && -z "${ours}" ]]; then
 fi
 
 echo "Deploying Keycloak via RHBK operator in ${NS}..."
-# The test users' passwords: generated once, kept in a Secret the realm
-# import reads. No guessable defaults.
-KEYCLOAK_NS="${NS}" KEYCLOAK_CHART="${CHART}" "${SCRIPT_DIR}/keycloak-users.sh" ensure
+# Generate passwords only for selected imported users.
+KEYCLOAK_NS="${NS}" KEYCLOAK_CHART="${CHART}" DEMO_ENABLED="${DEMO_ENABLED}" "${SCRIPT_DIR}/keycloak-users.sh" ensure
 helm upgrade --install openshell-keycloak "${CHART}" \
-  --namespace "${NS}" --create-namespace --set keycloak.realm="${REALM}" --timeout 10m
+  --namespace "${NS}" --create-namespace --set keycloak.realm="${REALM}" \
+  --set demo.enabled="${DEMO_ENABLED}" --timeout 10m
 
 echo "Waiting for Keycloak to be ready..."
 deadline=$((SECONDS + 300))
@@ -104,7 +110,9 @@ while true; do
     if [[ -n "${KC_URL}" ]]; then
       echo "  OIDC issuer: ${KC_URL}/realms/${REALM}"
     fi
-    echo "  Test user credentials remain in the Keycloak user Secret."
+    if [[ "${DEMO_ENABLED}" == true ]]; then
+      echo "  Demo user credentials remain in the Keycloak user Secret."
+    fi
     exit 0
   fi
   if (( SECONDS > deadline )); then

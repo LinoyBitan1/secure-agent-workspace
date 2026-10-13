@@ -64,12 +64,20 @@ def run(tmp_path):
     (scripts / "keycloak-host.sh").write_text(
         '#!/bin/sh\nif [ -n "${LOCAL_KC_HOST:-}" ]; then echo "$LOCAL_KC_HOST"; else exit 1; fi\n')
     (scripts / "keycloak-host.sh").chmod(0o755)
+    (scripts / "keycloak-users.sh").write_text(
+        '#!/bin/sh\n'
+        'printf "keycloak-users %s\\n" "$*" >> "$FAKE_LOG"\n'
+        '[ "$1" = resolve-subject ] && [ "$2" = alice ] || exit 2\n'
+        'printf "owner-subject-a\\n"\n'
+    )
+    (scripts / "keycloak-users.sh").chmod(0o755)
     log = tmp_path / "log"
 
     def _run(**env):
         full = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FAKE_LOG": str(log),
                 "FAKE_DIR": str(tmp_path), "OPENSHELL_SAW_NAME": "cinf", "SAW_CHART": "charts/openshell-saw",
-                "OWNER": "alice", "OIDC_ISSUER": "none", "SCRIPTS_DIR": str(scripts), **env}
+                "OWNER": "alice", "OWNER_SUBJECT": "", "OIDC_ISSUER": "none",
+                "OIDC_TOKEN_DIR": str(tmp_path / "oidc"), "SCRIPTS_DIR": str(scripts), **env}
         result = subprocess.run(["bash", str(SCRIPT)], env=full, cwd=ROOT, capture_output=True, text=True)
         assert result.returncode == 0, result.stdout + result.stderr
         return log.read_text(), tmp_path / "bom-values.yaml"
@@ -138,7 +146,8 @@ def test_conflicting_topology_fails_before_cluster_write(tmp_path):
 
 def test_external_issuer_does_not_require_local_keycloak(run):
     issuer = "https://external.example.test/realms/test"
-    log, _ = run(PROVIDER="build", MODEL="m", API_KEY="k", OIDC_ISSUER=issuer)
+    log, _ = run(PROVIDER="build", MODEL="m", API_KEY="k", OIDC_ISSUER=issuer,
+                 OWNER_SUBJECT="external-subject")
     assert "oc get keycloak" not in log
     saw = next(line for line in log.splitlines()
                if line.startswith("helm upgrade --install cinf charts/openshell-saw"))
@@ -167,7 +176,8 @@ def test_profile_rerun_keeps_existing_inference_secret(run):
 
 def test_external_dashboard_opt_in(run):
     log, _ = run(PROVIDER="build", MODEL="m", API_KEY="k",
-                 OIDC_ISSUER="https://external.example.test/realms/test", DASHBOARD="true")
+                 OIDC_ISSUER="https://external.example.test/realms/test", DASHBOARD="true",
+                 OWNER_SUBJECT="external-subject")
     assert "dashboard.enabled=false" not in _saw_helm(log)
     assert "route.webui=false" not in _saw_helm(log)
 
@@ -178,6 +188,7 @@ def test_explicit_local_issuer_keeps_dashboard(run):
                  OIDC_ISSUER="https://keycloak.apps.test/realms/openshell")
     assert "dashboard.enabled=false" not in _saw_helm(log)
     assert "oidc.keycloakName=openshell-keycloak" in _saw_helm(log)
+    assert "keycloak-users resolve-subject alice" in log
 
 
 def test_missing_provider_settings_fail_before_cluster_work(tmp_path):

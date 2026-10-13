@@ -34,14 +34,12 @@ A missing kind usually means an operator is still installing
 
 ### 1.2 Secrets in Vault
 
-Two entries of `values-secret.yaml.template` are generated when missing:
-`keycloak-users` (the test users' passwords) and `rhdh-oidc` (RHDH's
-Keycloak client secret and session secret). Add them to your
+The `rhdh-oidc` entry in `values-secret.yaml.template` generates RHDH's
+Keycloak client secret and session secret. Add it to your
 `values-secret` file and load it:
 
 ```bash
 ./pattern.sh make load-secrets
-oc get externalsecret -n saw-keycloak openshell-keycloak-user-passwords
 oc get externalsecret -n rhdh rhdh-oidc
 ```
 
@@ -76,9 +74,12 @@ cluster) needs it applied once:
 make keycloak-harden
 ```
 
-It sets the password policy and brute-force lockout, turns registration
-off, and gives the test users (developer, admin, alice, bob) their generated
-passwords. Check that the old default no longer works:
+It sets the password policy and brute-force lockout and turns registration
+off. It does not create demo accounts. For an existing install, first enroll
+real owners and an operator, then use the migration procedure in the
+deployment guide to review and disable confirmed demo accounts.
+
+If this realm had a known old demo password, check that it no longer works:
 
 ```bash
 KC=https://$(scripts/keycloak-host.sh saw-keycloak)

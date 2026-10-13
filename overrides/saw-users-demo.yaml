@@ -1,0 +1,5 @@
+# Explicit demo workspace. Enable demo identities in the Keycloak chart too.
+users:
+  - name: alice
+    profiles:
+      - data-science

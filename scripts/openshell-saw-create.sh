@@ -125,11 +125,24 @@ if [[ -z "${OWNER}" ]]; then
   read -r INPUT_OWNER
   if [[ -n "${INPUT_OWNER}" ]]; then
     OWNER="${INPUT_OWNER}"
+    if [[ "${OWNER}" != "${KC_USER}" ]]; then
+      OWNER_SUBJECT=""
+    fi
   else
     OWNER="${KC_USER}"
   fi
 fi
-
+if [[ -f "${OIDC_TOKEN_DIR}/token.json" && -n "${OWNER}" ]]; then
+  token_user="$(token_claim preferred_username)"
+  token_subject="$(token_claim sub)"
+  if [[ "${OWNER}" == "${token_user}" ]]; then
+    if [[ -n "${OWNER_SUBJECT}" && "${OWNER_SUBJECT}" != "${token_subject}" ]]; then
+      echo "Error: OWNER_SUBJECT does not match the logged-in owner." >&2
+      exit 1
+    fi
+    OWNER_SUBJECT="${token_subject}"
+  fi
+fi
 # --- Detect OIDC issuer (OIDC_ISSUER=none deploys without OIDC) ---
 local_keycloak=false
 if [[ "${OIDC_ISSUER}" == "none" ]]; then
@@ -141,6 +154,22 @@ elif [[ -z "${OIDC_ISSUER}" ]]; then
 elif KC_HOST="$("${SCRIPTS_DIR}/keycloak-host.sh" "${KEYCLOAK_NS}")"; then
   if [[ "${OIDC_ISSUER%/}" == "https://${KC_HOST}/realms/${KEYCLOAK_REALM}" ]]; then
     local_keycloak=true
+  fi
+fi
+if [[ -n "${OIDC_ISSUER}" && -z "${OWNER_SUBJECT}" ]]; then
+  if [[ "${local_keycloak}" == true ]]; then
+    OWNER_SUBJECT="$(KEYCLOAK_NS="${KEYCLOAK_NS}" KEYCLOAK_REALM="${KEYCLOAK_REALM}" \
+      "${SCRIPTS_DIR}/keycloak-users.sh" resolve-subject "${OWNER}")"
+  else
+    echo "Error: external issuer needs a verified OWNER_SUBJECT." >&2
+    exit 1
+  fi
+elif [[ -n "${OIDC_ISSUER}" && "${local_keycloak}" == true ]]; then
+  resolved_subject="$(KEYCLOAK_NS="${KEYCLOAK_NS}" KEYCLOAK_REALM="${KEYCLOAK_REALM}" \
+    "${SCRIPTS_DIR}/keycloak-users.sh" resolve-subject "${OWNER}")"
+  if [[ "${OWNER_SUBJECT}" != "${resolved_subject}" ]]; then
+    echo "Error: OWNER_SUBJECT does not match the enabled Keycloak account." >&2
+    exit 1
   fi
 fi
 dashboard_enabled=false

@@ -345,6 +345,7 @@ def test_image_mirror_uses_selected_ghcr_tag_without_fallback(tmp_path, tag):
     bindir = tmp_path / "bin"
     bindir.mkdir()
     log = tmp_path / "mirror.log"
+    executable(bindir / "uname", 'printf "Linux\\n"\n')
     executable(bindir / "oc", r'''case "$*" in
   "get routes -n openshift-image-registry -o json")
     echo '{"items":[{"metadata":{"name":"default-route"},"spec":{"host":"registry.example"}}]}' ;;

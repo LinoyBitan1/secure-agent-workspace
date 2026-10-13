@@ -682,18 +682,21 @@ def keycloak_user_ids(url, realm, client_id, secret, names, insecure=False):
     kc = keycloak_admin(url, realm, client_id, secret, insecure)
     out = {}
     for name in names:
-        users = kc.call("GET", "/users?exact=true&briefRepresentation=true&username="
+        users = kc.call("GET", "/users?exact=true&username="
                         + urllib.parse.quote(name)) or []
-        out.update({u["username"]: u["id"] for u in users if u.get("username") == name and u.get("id")})
+        if len(users) == 1 and users[0].get("username") == name and users[0].get("enabled") is True:
+            subject = users[0].get("id")
+            if isinstance(subject, str) and subject:
+                out[name] = subject
     return out
 
 
 class OwnerSubjects:
     """Fills a portal workspace's ownerSubject (empty in its registry
     entry) with the user's Keycloak id, so the installer makes them a member
-    of their OpenShell workspaces and OpenShell's web UI lists them. Ids do
-    not change: kept once found; a user not found is asked again after
-    `ttl`. Without Keycloak settings (RBAC off) entries stay as they are."""
+    of their OpenShell workspaces and OpenShell's web UI lists them. Cached
+    IDs are checked again after `ttl`, including recreated or disabled users.
+    Without Keycloak settings (RBAC off) entries stay as they are."""
 
     def __init__(self, ttl=60):
         self.ttl, self.ids, self.tried = ttl, {}, {}
@@ -703,18 +706,23 @@ class OwnerSubjects:
         if not url:
             return workspaces
         now = time.time()
-        missing = [w["name"] for w in workspaces if not w.get("ownerSubject") and w["name"] not in self.ids
+        missing = [w["name"] for w in workspaces if not w.get("ownerSubject")
                    and now - self.tried.get(w["name"], 0) >= self.ttl]
         if missing:
             for name in missing:
                 self.tried[name] = now
             try:
-                self.ids.update(keycloak_user_ids(
+                found = keycloak_user_ids(
                     url.rstrip("/"), env("KEYCLOAK_REALM"), env("KEYCLOAK_CLIENT_ID"),
                     open(env("KEYCLOAK_SECRET_FILE"), encoding="utf-8").read().strip(), missing,
-                    os.environ.get("KEYCLOAK_SKIP_VERIFY") == "true"))
+                    os.environ.get("KEYCLOAK_SKIP_VERIFY") == "true")
+                for name in missing:
+                    self.ids.pop(name, None)
+                self.ids.update(found)
             except (PortalError, OSError, ValueError, KeyError) as exc:
                 log(f"WARN: Keycloak ids not read ({exc}); {', '.join(missing)} not members yet")
+                for name in missing:
+                    self.ids.pop(name, None)
         return [{**w, "ownerSubject": self.ids[w["name"]]}
                 if not w.get("ownerSubject") and w["name"] in self.ids else w for w in workspaces]
 

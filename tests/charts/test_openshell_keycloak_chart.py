@@ -69,25 +69,25 @@ def test_client_lists_are_never_null(tmp_path):
 
 def test_no_test_users_and_users_without_roles_render_valid_lists(tmp_path):
     values = tmp_path / "users.yaml"
-    values.write_text("keycloak:\n  testUsers:\n    - username: nobody\n")
+    values.write_text("keycloak:\n  users:\n    - username: nobody\n")
     (realm,) = [d for d in render("-f", str(values)) if d["kind"] == "KeycloakRealmImport"]
     assert realm["spec"]["realm"]["users"][0]["realmRoles"] == []
     empty = tmp_path / "empty.yaml"
-    empty.write_text("keycloak:\n  testUsers: []\n")
+    empty.write_text("keycloak:\n  users: []\n")
     (realm,) = [d for d in render("-f", str(empty)) if d["kind"] == "KeycloakRealmImport"]
     assert realm["spec"]["realm"]["users"] == []
 
 
 # -- passwords: generated, never guessable defaults ---------------------------------
 
-def test_no_test_user_has_a_password_in_values():
+def test_no_demo_user_has_a_password_in_values():
     values = yaml.safe_load((CHART / "values.yaml").read_text())
-    assert values["keycloak"]["testUsers"]
-    assert not [u["username"] for u in values["keycloak"]["testUsers"] if "password" in u]
+    assert values["demo"]["users"]
+    assert not [u["username"] for u in values["demo"]["users"] if "password" in u]
 
 
 def test_passwords_come_from_the_secret_as_placeholders():
-    spec = realm_of(render())["spec"]
+    spec = realm_of(render("--set", "demo.enabled=true"))["spec"]
     users = spec["realm"]["users"]
     for i, user in enumerate(users):
         value = user["credentials"][0]["value"]
@@ -113,7 +113,7 @@ def test_the_realm_enforces_strong_passwords_and_locks_out_guessing():
                                       "NoSpecialChars12345"])
 def test_a_weak_explicit_password_fails_the_render(tmp_path, password):
     values = tmp_path / "weak.yaml"
-    values.write_text(yaml.safe_dump({"keycloak": {"testUsers": [{"username": "alice", "password": password}]}}))
+    values.write_text(yaml.safe_dump({"keycloak": {"users": [{"username": "alice", "password": password}]}}))
     result = helm("-f", str(values))
     assert result.returncode != 0 and "password is too weak" in result.stderr
 
@@ -132,7 +132,7 @@ def strong_password():
 def test_a_strong_explicit_password_is_used(tmp_path):
     password = strong_password()
     values = tmp_path / "strong.yaml"
-    values.write_text(yaml.safe_dump({"keycloak": {"testUsers": [
+    values.write_text(yaml.safe_dump({"keycloak": {"users": [
         {"username": "carol", "password": password}]}}))
     spec = realm_of(render("-f", str(values)))["spec"]
     assert spec["realm"]["users"][0]["credentials"][0]["value"] == password
@@ -140,7 +140,9 @@ def test_a_strong_explicit_password_is_used(tmp_path):
 
 
 def test_the_pattern_reads_the_passwords_from_vault():
-    docs = render("--set", "keycloak.userPasswords.externalSecret.enabled=true")
+    assert not [d for d in render("--set", "keycloak.userPasswords.externalSecret.enabled=true")
+                if d["kind"] == "ExternalSecret"]
+    docs = render("--set", "demo.enabled=true", "--set", "keycloak.userPasswords.externalSecret.enabled=true")
     (es,) = [d for d in docs if d["kind"] == "ExternalSecret"]
     assert es["spec"]["target"]["name"] == "openshell-keycloak-user-passwords"
     assert es["spec"]["dataFrom"] == [{"extract": {"key": "secret/data/hub/keycloak-users"}}]
@@ -148,14 +150,36 @@ def test_the_pattern_reads_the_passwords_from_vault():
     assert not [d for d in render() if d["kind"] == "ExternalSecret"]
 
 
-def test_values_secret_generates_every_test_users_password():
-    users = {u["username"] for u in yaml.safe_load((CHART / "values.yaml").read_text())["keycloak"]["testUsers"]}
+def test_values_secret_has_no_implicit_demo_passwords():
     template = yaml.safe_load((ROOT / "values-secret.yaml.template").read_text())
-    (entry,) = [s for s in template["secrets"] if s["name"] == "keycloak-users"]
-    assert {f["name"] for f in entry["fields"]} == users
-    for field in entry["fields"]:
-        assert field["onMissingValue"] == "generate"
-        assert field["vaultPolicy"] == "validatedPatternDefaultPolicy"
+    assert not [s for s in template["secrets"] if s["name"] == "keycloak-users"]
+
+
+def test_production_has_no_demo_users_or_password_placeholders():
+    spec = realm_of(render("--set", "keycloak.userPasswords.externalSecret.enabled=true"))["spec"]
+    assert spec["realm"]["users"] == []
+    assert spec["realm"]["registrationAllowed"] is False
+    assert "placeholders" not in spec
+
+
+def test_demo_owners_have_no_platform_admin_role():
+    users = {u["username"]: u for u in realm_of(render("--set", "demo.enabled=true"))["spec"]["realm"]["users"]}
+    assert "openshell-admin" in users["admin"]["realmRoles"]
+    for name in ("alice", "bob", "developer"):
+        assert users[name]["realmRoles"] == ["openshell-user"]
+
+
+def test_owner_resolver_has_read_only_cluster_role_and_separate_client():
+    docs = render("--set", "ownerResolver.enabled=true")
+    role = next(d for d in docs if d["kind"] == "ClusterRole" and
+                d["metadata"]["name"].startswith("saw-owner-resolver"))
+    assert role["rules"] == [{"apiGroups": [""], "resources": ["namespaces"], "verbs": ["list"]}]
+    deployment = next(d for d in docs if d["kind"] == "Deployment" and
+                      d["metadata"]["name"] == "saw-owner-resolver")
+    pod = deployment["spec"]["template"]["spec"]
+    assert pod["serviceAccountName"] == "saw-owner-resolver"
+    assert {m["name"] for m in pod["containers"][0]["volumeMounts"]} == {"script", "run"}
+    assert {m["name"] for m in pod["initContainers"][0]["volumeMounts"]} == {"script", "run", "admin"}
 
 
 def test_the_registrar_is_on_by_default_and_can_be_turned_off():

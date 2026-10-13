@@ -98,6 +98,15 @@ spec:
             - name: saw-sec-{{ $i }}
               virtiofs: {}
             {{- end }}
+            {{- if eq .Values.accessControl.ownerSubjectSource "resolved" }}
+            - name: saw-owner
+              virtiofs: {}
+            {{- end }}
+          {{- end }}
+          {{- if and (not .Values.vm.liveInputs) (eq .Values.accessControl.ownerSubjectSource "resolved") }}
+          filesystems:
+            - name: saw-owner
+              virtiofs: {}
           {{- end }}
           interfaces:
             - name: default
@@ -166,6 +175,11 @@ spec:
           configMap:
             name: saw-bom-profiles
             optional: true
+        {{- if eq .Values.accessControl.ownerSubjectSource "resolved" }}
+        - name: saw-owner
+          configMap:
+            name: saw-owner-subject
+        {{- end }}
         {{- /* Required. The virt-launcher pod is scheduled and stays
              ContainerCreating, with FailedMount "secret … not found", and the
              VM shows Starting, until each Secret exists. The kubelet retries

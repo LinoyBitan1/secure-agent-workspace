@@ -141,6 +141,33 @@ def test_no_owner_subject_adds_no_members(ab, fake_env, config, profiles, creds)
     assert fake_env.openshell_state()["members"] == []
 
 
+def test_owner_recreation_removes_stale_membership(ab, fake_env, config, profiles, creds, tmp_path):
+    config = {**config, "prune": {"ledgerPath": str(tmp_path / "managed.json")}}
+    make_applier(ab, config, creds, ownerSubject="old-subject").apply(profiles)
+    make_applier(ab, config, creds, ownerSubject="new-subject").apply(profiles)
+    assert fake_env.openshell_state()["members"] == [
+        ["cuda-dev", "new-subject", "admin"], ["default", "new-subject", "admin"]]
+    make_applier(ab, config, creds, ownerSubject="").apply(profiles)
+    assert fake_env.openshell_state()["members"] == []
+
+
+def test_owner_revocation_clears_retained_disabled_workspace(
+        ab, fake_env, config, profiles, creds, tmp_path):
+    config = {**config, "prune": {"mode": "report", "ledgerPath": str(tmp_path / "managed.json")}}
+    make_applier(ab, config, creds, ownerSubject="old-subject").apply(profiles)
+    for profile in profiles:
+        for workspace in profile.workspaces:
+            if workspace.name == "cuda-dev":
+                workspace.enabled = False
+
+    make_applier(ab, config, creds, ownerSubject="").apply(profiles)
+
+    state = fake_env.openshell_state()
+    assert "cuda-dev" in state["workspaces"]
+    assert state["members"] == []
+    assert json.loads((tmp_path / "owner-memberships.json").read_text()) == {}
+
+
 def test_mtls_client_without_admin_fails_clearly(ab, fake_env, config, profiles, creds):
     fake_env.deny("workspace create")
     with pytest.raises(ab.InstallerError, match="platform admin; check the mTLS identity has the openshell-admin role"):
@@ -485,4 +512,7 @@ def test_full_apply_mounts_the_harness_into_notebook(ab, fake_env, config, profi
     scripts = "\n".join(c[-1] for c in fake_env.openshell_calls() if c[:2] == ["sandbox", "exec"])
     assert "base64 -d" not in scripts
     assert """openclaw config set plugins.load.paths '["/sandbox/harness", "/sandbox/harness/plugins"]'""" in scripts
+    # The bundle and its native plugin, each enabled (2026.9.x keeps them off).
+    assert "openclaw plugins enable ds-default --accept-capabilities" in scripts
+    assert "openclaw plugins enable saw-echo --accept-capabilities" in scripts
     assert applier.verify(profiles) == []

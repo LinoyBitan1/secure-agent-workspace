@@ -74,8 +74,7 @@ rhdh:
   rbac:
     enabled: true
     # Who may manage RBAC in RHDH's Administration page.
-    admins:
-      - admin
+    admins: []
     usersGroup: saw-users
     # RHDH's Keycloak catalog provider (users and groups), as RHDH 1.10 lists it.
     keycloakCatalogPlugin: ./dynamic-plugins/dist/backstage-community-plugin-catalog-backend-module-keycloak-dynamic
@@ -108,8 +107,7 @@ portal:
   # Administrators: they may create or delete a workspace for another user
   # (the "... for a user" templates). Keycloak user names. Everyone else acts
   # only for themselves.
-  admins:
-    - admin
+  admins: []
   generator:
     port: 4355
     # Only RHDH (catalog) and Argo CD (ApplicationSet plugin) may reach the

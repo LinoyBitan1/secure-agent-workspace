@@ -1,0 +1,38 @@
+{{- if .Values.ownerResolution.enabled -}}
+{{- include "saw-users.validate" . -}}
+{{- range $user := .Values.users | default list }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: saw-owner-subject
+  namespace: {{ printf "saw-%s" $user.name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: saw-owner-resolver
+  namespace: {{ printf "saw-%s" $user.name }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["saw-owner-subject"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: saw-owner-resolver
+  namespace: {{ printf "saw-%s" $user.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: saw-owner-resolver
+subjects:
+  - kind: ServiceAccount
+    name: {{ $.Values.ownerResolution.resolverServiceAccount }}
+    namespace: {{ $.Values.ownerResolution.resolverNamespace }}
+{{- end }}
+{{- end }}

@@ -17,6 +17,13 @@ watches, not in whatever namespace this chart happens to be released into.
 {{- $seen := dict -}}
 {{- range .Values.users | default list -}}
 {{- $name := .name | default "" | toString -}}
+{{- if $.Values.ownerResolution.enabled -}}
+{{- $entryValues := .values | default dict -}}
+{{- $entryAccess := index $entryValues "accessControl" | default dict -}}
+{{- if or (hasKey . "ownerSubject") (hasKey $entryAccess "ownerSubject") (hasKey $entryAccess "owner") -}}
+{{- fail (printf "user %q: ownerResolution uses name as the only owner; remove ownerSubject and accessControl owner overrides" $name) -}}
+{{- end -}}
+{{- end -}}
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $name) -}}
 {{- fail (printf "user name %q must be a lowercase DNS label (letters, digits, and hyphens; must start and end with a letter or digit)" $name) -}}
 {{- end -}}
@@ -108,6 +115,9 @@ user's `values` on top. Nested maps merge; the user's keys win.
 {{- $_ := set $base "allowDriverConfig" true -}}
 {{- end -}}
 {{- $overlay := deepCopy ($user.values | default dict) -}}
+{{- if $root.Values.ownerResolution.enabled -}}
+{{- $_ := set $ac "ownerSubjectSource" "resolved" -}}
+{{- end -}}
 {{- mergeOverwrite $base $overlay | toYaml -}}
 {{- end -}}
 
