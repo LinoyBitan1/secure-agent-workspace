@@ -907,8 +907,15 @@ def describe_harness_tree(files, inline=False):
                     "governanceProfile in harness.yaml spec.mcpServers")
             governance.append({"kind": "MCP server", "name": server,
                                "governanceProfile": profile, "hosts": [host]})
+    bundle_id = name
+    if "plugin.json" in files:
+        try:
+            bundle_id = json.loads(files["plugin.json"][0].decode("utf-8")).get("name") or name
+        except (ValueError, AttributeError):
+            pass
     return {
         "name": name,
+        "bundleId": bundle_id,
         "agent": spec.get("agent", "openclaw"),
         "skills": any(rel.startswith("skills/") for rel in files),
         "agentPluginsBundle": "plugin.json" in files,
@@ -969,6 +976,13 @@ def openclaw_harness_config(info):
     if paths:
         config["plugins.load.paths"] = paths
     return config
+
+
+def harness_plugin_ids(info):
+    """The OpenClaw plugin ids the harness brings: the bundle's (plugin.json
+    name) and each native plugin under plugins/."""
+    ids = [info["bundleId"]] if info["agentPluginsBundle"] else []
+    return ids + list(info["pluginDirs"])
 
 
 def mcp_registration_failures(output, declared):
@@ -3196,6 +3210,17 @@ class ProfileApplier:
             if key not in desired:
                 self.cli(*exec_cmd, "sh", "-c", f"{oc_env} openclaw config unset {key}",
                          check=False)
+        # OpenClaw 2026.9.x keeps a plugin found on plugins.load.paths
+        # disabled until it is enabled with capability consent, and a
+        # restrictive plugins.allow (NemoClaw ships one) blocks it outright;
+        # `plugins enable` does both. Older releases load it anyway and may
+        # not know --accept-capabilities, hence the plain retry.
+        ids = harness_plugin_ids(info) if info is not None else []
+        if ids:
+            script = "; ".join(
+                f"{oc_env} openclaw plugins enable {shlex.quote(i)} --accept-capabilities "
+                f"|| {oc_env} openclaw plugins enable {shlex.quote(i)}" for i in ids)
+            self.cli(*exec_cmd, "sh", "-c", script, check=False)
 
     def verify_harness(self, ws, sb):
         """The sandbox mounts exactly its harness volume, the volume holds
@@ -3250,8 +3275,13 @@ class ProfileApplier:
             bundle = by_id.get(info["name"])
         if (not isinstance(bundle, dict) or not bundle.get("enabled")
                 or bundle.get("status") != "loaded"):
+            why = ""
+            if isinstance(bundle, dict):
+                why = f"; status {bundle.get('status') or 'unknown'}"
+                if bundle.get("error"):
+                    why += f": {bundle['error']}"
             return [f"OpenClaw does not load the harness bundle '{info['name']}' "
-                    f"from {HARNESS_MOUNT} ({source})"]
+                    f"from {HARNESS_MOUNT} ({source}){why}"]
         caps = bundle.get("bundleCapabilities") or []
         if caps:
             need_caps = set()

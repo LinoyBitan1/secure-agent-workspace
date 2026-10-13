@@ -485,4 +485,7 @@ def test_full_apply_mounts_the_harness_into_notebook(ab, fake_env, config, profi
     scripts = "\n".join(c[-1] for c in fake_env.openshell_calls() if c[:2] == ["sandbox", "exec"])
     assert "base64 -d" not in scripts
     assert """openclaw config set plugins.load.paths '["/sandbox/harness", "/sandbox/harness/plugins"]'""" in scripts
+    # The bundle and its native plugin, each enabled (2026.9.x keeps them off).
+    assert "openclaw plugins enable ds-default --accept-capabilities" in scripts
+    assert "openclaw plugins enable saw-echo --accept-capabilities" in scripts
     assert applier.verify(profiles) == []
