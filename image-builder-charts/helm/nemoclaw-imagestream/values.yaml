@@ -3,13 +3,13 @@ source:
   discoveryImage: ""
   git:
     uri: "https://github.com/NVIDIA/NemoClaw.git"
-    ref: "95d6505265ba1f2cb05355f83786353e654de096" # v0.0.132
+    ref: "ef5d55d19e2da33c2474db158588613828e1a9be" # v0.0.133
 
 build:
   discoveryNodeVersion: "24.19.0"
   targetArch: "amd64"
-  # NemoClaw v0.0.132 amd64 base image.
-  baseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.132"
+  # NemoClaw v0.0.133 amd64 base image.
+  baseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.133"
   model: "claude-sonnet-4-6"
   inferenceBaseUrl: "https://inference.local/v1"
   inferenceApi: "openai-completions"

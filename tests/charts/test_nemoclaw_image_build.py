@@ -67,8 +67,8 @@ def test_cli_builds_share_one_dockerfile_and_values():
     assert build["spec"]["source"]["dockerfile"].rstrip() == shared.read_text().rstrip()
     args = {a["name"]: a["value"] for a in build["spec"]["strategy"]["dockerStrategy"]["buildArgs"]}
     assert args == {"NODE_IMAGE": "node:test", "MAX_OPENSHELL_VERSION": "0.0.123",
-                    "NEMOCLAW_VERSION": "0.0.132",
-                    "SOURCE_REVISION": "95d6505265ba1f2cb05355f83786353e654de096"}
+                    "NEMOCLAW_VERSION": "0.0.133",
+                    "SOURCE_REVISION": "ef5d55d19e2da33c2474db158588613828e1a9be"}
 
 
 @pytest.mark.skipif(not HELM, reason="helm is not installed")
@@ -140,10 +140,10 @@ def test_discovery_runtime_keeps_vulnerability_and_integrity_checks():
 def test_nemoclaw_upgrade_pins_match_across_builds():
     sandbox = yaml.safe_load((CHART / "values.yaml").read_text())
     cli = yaml.safe_load((CLI_CHART / "values.yaml").read_text())
-    revision = "95d6505265ba1f2cb05355f83786353e654de096"
+    revision = "ef5d55d19e2da33c2474db158588613828e1a9be"
     assert sandbox["source"]["git"]["ref"] == revision
     assert cli["source"]["git"]["ref"] == revision
-    assert sandbox["build"]["baseImage"] == "ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.132"
+    assert sandbox["build"]["baseImage"] == "ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.133"
     # Upstream still refuses OpenShell 0.1.x; don't hide that behind a local override.
     assert cli["build"]["maxOpenshellVersion"] == "0.0.116"
 
