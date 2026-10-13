@@ -675,6 +675,8 @@ HARNESS_IMAGE_MAX_BYTES = 512 * 1024 * 1024
 # Keys configure_harness may set; a shape change must unset the ones it
 # no longer wants, not leave them stale.
 HARNESS_CONFIG_KEYS = ("plugins.load.paths", "skills.load.extraDirs")
+# Provider types that are also OpenClaw chat channels.
+OPENCLAW_CHAT_CHANNELS = frozenset({"slack"})
 OPENCLAW_EXEC_ENV = ("OPENCLAW_HOME=/sandbox SQLITE_TMPDIR=/sandbox/.openclaw/state "
                      "TMPDIR=/sandbox/.openclaw/state OPENCLAW_NIX_MODE=0")
 # mcp.json env/header value: exactly ${VAR}, or Authorization-style
@@ -3316,6 +3318,7 @@ class ProfileApplier:
                      f"{oc_env} openclaw models auth activate {shlex.quote(profile_id)} --agent main",
                      check=False)
         self.configure_harness(ws, sb, exec_cmd, oc_env)
+        self.disable_provider_channels(ws, sb, exec_cmd, oc_env)
         # One script: the gateway secret is made and kept inside the sandbox
         # (the installer never sees it). The gateway is restarted only when
         # the harness was refilled, none is running, or its settings (auth
@@ -3327,6 +3330,19 @@ class ProfileApplier:
                                          providers=providers),
                  check=False)
         self.install_keepalive(ws, sb)
+
+    def disable_provider_channels(self, ws, sb, exec_cmd, oc_env):
+        """Keep OpenClaw's own chat channel off for a provider that shares
+        its name (slack). The provider is for governed reads (the harness's
+        MCP servers); onboarding skips channels. Found live: with the Slack
+        provider attached, the gateway treats the slack channel as configured,
+        tries to install @openclaw/slack from npm at startup (egress denied)
+        and refuses to start; the UI then answers 502."""
+        types = {p.type for p in ws.providers if p.name in sb.providers}
+        for channel in sorted(types & OPENCLAW_CHAT_CHANNELS):
+            self.cli(*exec_cmd, "sh", "-c",
+                     f"{oc_env} openclaw config set channels.{channel}.enabled false",
+                     check=False)
 
     def configure_harness(self, ws, sb, exec_cmd, oc_env):
         """Point OpenClaw at the mounted bundle (openclaw_harness_config).

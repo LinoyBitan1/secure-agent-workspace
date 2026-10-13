@@ -355,7 +355,7 @@ Point out along the way:
 | The briefing has no Slack messages | The app is not in the channel: `/invite @<app>` |
 | The briefing has empty Slack and Email sections (a template) | The sandbox's OpenClaw (2026.7.1) may not load the briefing's tools. See [daily-briefing.md](daily-briefing.md) Limits. |
 | The MCP tools load but Slack/Gmail fetches fail with `invalid_auth` (the briefing shows the auth failure, not a template) | The provider token is not injected by the sandbox's egress proxy: the gateway's profile→policy conversion drops the `credentials:` binding (prebuilt gateway limitation), so the `${SLACK_BOT_TOKEN}`/`${GMAIL_ACCESS_TOKEN}` placeholders pass through uninjected. This differs from the empty-template symptom, which means the tools never loaded. See [daily-briefing.md](daily-briefing.md) — [Why briefings show auth failures](daily-briefing.md#why-briefings-show-auth-failures-the-gateway-does-not-deliver-provider-credentials-to-the-sandbox-policy-tier-2). |
-| The assistant URL shows 502 after the workspace is ready | The sandbox's OpenClaw gateway may refuse to start while it tries to auto-install a Slack plugin over the egress proxy (the `slack` profile's npm egress allowlist is missing). Check the gateway log in the sandbox for "Failed to install missing configured plugin". Manual fix: add a `registry.npmjs.org` endpoint to BOTH `charts/governance-policy/profiles/slack.yaml` and `charts/openshell-saw/files/provider-profiles/slack.yaml` (see [daily-briefing.md](daily-briefing.md) Limits) and re-apply. Standalone workaround: in `/sandbox/.openclaw/openclaw.json`, set `"channels": {"defaults": {}, "slack": {"enabled": false}}` (keep the rest of the file intact), then re-apply the in-VM installer (`systemctl restart saw-apply.service`). Re-applying re-creates the sandbox and wipes `/sandbox`, so re-apply the patch if that happens. |
+| The assistant URL shows 502 after the workspace is ready | The sandbox's OpenClaw gateway did not start. On dana's VM (`make saw-vm-ssh OPENSHELL_SAW_NAME=<user>`), read its log: `openshell sandbox exec -n assistant --workspace personal-assistant --no-tty -- sh -c 'tail -30 /tmp/openclaw-gateway.log'`. "Failed to install missing configured plugin 'slack'" means the installer predates the Slack channel fix; update the pattern and re-apply (`sudo systemctl restart saw-apply.service`). |
 
 More checks, for administrators with the `openshell` CLI:
 
@@ -380,20 +380,18 @@ blocks it. The full tier list is also in
 remediations.** On a cluster setup without the manual remediations in this
 PR, the personal-assistant demo does not work at all:
 
-- **T1a. Gateway startup (npmjs egress):** the sandbox's OpenClaw gateway
-  refuses to start on a fresh sandbox because the slack provider profile's
-  egress allowlist lacks `registry.npmjs.org` — manual fix in the
-  [troubleshooting table](#if-something-goes-wrong) below.
+- **T1a. Gateway startup (npmjs egress):** resolved in the installer, which
+  keeps OpenClaw's own `slack` chat channel off when a Slack provider is
+  attached (see [README.md](README.md)).
 - **T1b. Installer apply (ArgoCD namespace / ServerSideApply):** hand-created
   Argo CD Applications must land in the cluster's Argo CD namespace
   (`openshift-gitops`), and the installer ConfigMap exceeds Argo CD's
   last-applied annotation limit — see the platform note in
   [Prerequisites](#prerequisites-beyond-the-pattern-install). (Platform-level:
   shared across demo paths, also noted in [on-cluster-demo.md](on-cluster-demo.md).)
-- **T1c. MCP servers loading (harness bundle layout):** the daily-briefing
-  bundle must use the Claude layout that openclaw 2026.7.1 reads, or the
-  briefing's MCP servers (`slack-reader`, `gmail-reader`) never load — manual
-  fix in the [troubleshooting table](#if-something-goes-wrong) below.
+- **T1c. MCP servers loading (harness bundle layout):** resolved by the
+  NemoClaw v0.0.133 image (OpenClaw 2026.9.2, #101) and the installer
+  enabling the bundle (#98).
 
 **Tier 2 — blocked by the prebuilt gateway; NOT fixable by any remediation
 or scripting; applies to EVERY cluster (remediated or not).** The gateway
