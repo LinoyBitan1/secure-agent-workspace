@@ -462,3 +462,36 @@ of the intermittent stall, and a durable prevention fix, remain unproven.
 
 Browser evidence:
 `/home/lbitan/.codex/visualizations/2026/10/13/01a13436-9153-7312-84f7-b9a27b83cbea/nemoclaw-notebook-recovered.png`.
+
+### Carol owner pairing test — 2026-10-13
+
+Added a separate chart-rendered Carol test deployment on `cluster-vqvlk`,
+using this validation branch and the same pinned v0.0.133 CLI/CUDA images.
+Alice's resources and sandbox data were not modified. Carol's BOM app has
+automatic sync paused to retain the pinned test ConfigMap; the Carol-only
+rendered manifests remain in `/tmp/nemo-carol-apps.yaml` and
+`/tmp/nemo-carol-bom.yaml`. These are additional validation fixtures, not a
+change to the default GitOps user list.
+
+The initial HTTP 503 was traced to `authentication required` when Carol's
+installer pulled the private cluster-registry CLI image. After installing
+temporary registry pull authentication and resuming only Carol's failed
+installer/apply services, both completed successfully. Native onboarding
+used the already documented fallback.
+
+Created Carol's `openshell-user` account and authorized the existing
+workstation SSH key after explicit user authorization. Existing users and
+passwords were preserved. An initial browser attempt reused Alice's SSO
+identity and received HTTP 403; switching the test sign-in to Carol then
+opened her CUDA chat without any manual device approval or
+`Device pairing required` error. Actual inference returned
+`SAW_CAROL_PAIRING_OK_133_1013` at 13:56:17 Israel time. Owner authentication
+was `trusted-proxy`, restricted to `carol`, with device auto-approval enabled
+for the same four configured owner scopes as Alice.
+
+An explicit browser reload retained the successful reply and did not show
+a pairing prompt. Screenshot evidence is saved at
+`/home/lbitan/.codex/visualizations/2026/10/13/01a13436-9153-7312-84f7-b9a27b83cbea/carol-pairing-passed.png`.
+
+This qualifies Carol on the validation branch in `cluster-vqvlk`; it does
+not qualify the manager's `main` deployment in `cluster-bcvkh`.
