@@ -2543,16 +2543,17 @@ class ProfileApplier:
                          "-days", "365", "-extfile", str(ext), "-out", str(crt)], quiet=True)
         return out
 
-    def register_gateway(self):
+    def register_gateway(self, name=None):
         """Point the CLI at the local gateway over mTLS as the installer's
         admin identity. The entry is replaced on every run so a stale entry
         never wins; the default `openshell` entry is left alone."""
+        name = name or self.gateway
         tls_dir = self.ensure_admin_client_cert()
-        log(f"Registering local mTLS gateway '{self.gateway}' (OU=openshell-admin)")
-        self.cli("gateway", "remove", self.gateway, check=False, quiet=True)
+        log(f"Registering local mTLS gateway '{name}' (OU=openshell-admin)")
+        self.cli("gateway", "remove", name, check=False, quiet=True)
         self.cli("gateway", "add", f"https://127.0.0.1:{GATEWAY_PORT}",
-                 "--name", self.gateway, "--local", env={"OPENSHELL_LOCAL_TLS_DIR": str(tls_dir)})
-        self.cli("gateway", "select", self.gateway)
+                 "--name", name, "--local", env={"OPENSHELL_LOCAL_TLS_DIR": str(tls_dir)})
+        self.cli("gateway", "select", name)
         result = self.cli("workspace", "list", check=False)
         if not result.ok:
             raise InstallerError(
@@ -3150,6 +3151,9 @@ class ProfileApplier:
         }
         if not self.sh.dry_run:
             mgmt_path.write_text(json.dumps(mgmt), encoding="utf-8")
+        # Upstream derives this registration from our non-default port and
+        # reuses cached credentials; refresh it with the installer identity.
+        self.register_gateway(f"nemoclaw-{GATEWAY_PORT}")
         credential = self.creds[ws.name][provider.name]
         nc_provider = provider.nemoclaw_provider or provider.type
         env = {

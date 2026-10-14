@@ -44,6 +44,8 @@ def test_fresh_apply_creates_everything(ab, fake_env, config, profiles, creds):
     # Local mTLS gateway only (the installer's admin identity): no OIDC login,
     # no token files, and the default `openshell` entry is not touched.
     assert state["gateways"] == [{"name": "saw-installer", "endpoint": "https://127.0.0.1:17670",
+                                  "local": True, "roles": ["openshell-admin"]},
+                                 {"name": "nemoclaw-17670", "endpoint": "https://127.0.0.1:17670",
                                   "local": True, "roles": ["openshell-admin"]}]
     assert state["selected"] == "saw-installer"
     assert all("oidc" not in " ".join(c).lower() for c in fake_env.openshell_calls())
@@ -438,6 +440,8 @@ def test_installer_uses_an_admin_client_certificate_under_rbac(ab, fake_env, con
     make_applier(ab, config, creds).apply(profiles)
     state = fake_env.openshell_state()
     assert state["gateways"] == [{"name": "saw-installer", "endpoint": "https://127.0.0.1:17670",
+                                  "local": True, "roles": ["openshell-admin"]},
+                                 {"name": "nemoclaw-17670", "endpoint": "https://127.0.0.1:17670",
                                   "local": True, "roles": ["openshell-admin"]}]
     assert state["selected"] == "saw-installer"
     assert "cuda-dev" in state["workspaces"]

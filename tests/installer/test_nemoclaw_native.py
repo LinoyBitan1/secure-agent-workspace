@@ -99,3 +99,13 @@ def test_native_missing_provider_does_not_create_a_plain_sandbox(ab, fake_env, c
         applier.apply_sandbox(workspace, sandbox)
     assert fake_env.other_calls("nemoclaw") == []
     assert fake_env.openshell_calls() == []
+
+
+def test_native_named_gateway_uses_the_installers_admin_identity(ab, fake_env, config):
+    applier, workspace, sandbox, provider = native_setup(ab, config)
+    applier.onboard_nemoclaw(workspace, sandbox, provider)
+    registrations = fake_env.openshell_state().get("gateways", [])
+    native = next((entry for entry in registrations if entry["name"] == "nemoclaw-17670"), None)
+    assert native is not None
+    assert native["endpoint"] == "https://127.0.0.1:17670"
+    assert native["roles"] == ["openshell-admin"]
