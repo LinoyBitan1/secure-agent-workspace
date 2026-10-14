@@ -515,4 +515,9 @@ def test_full_apply_mounts_the_harness_into_notebook(ab, fake_env, config, profi
     # The bundle and its native plugin, each enabled (2026.9.x keeps them off).
     assert "openclaw plugins enable ds-default --accept-capabilities" in scripts
     assert "openclaw plugins enable saw-echo --accept-capabilities" in scripts
+    # The bundle's MCP server, re-declared where OpenClaw expands ${VAR}.
+    cfg = fake_env.openshell_state()["sandboxes"]["default/notebook"]["openclawConfig"]
+    echo = cfg["mcp.servers.saw-mcp-echo"]
+    assert echo["args"] == ["/sandbox/harness/mcp/echo-server.mjs"]
+    assert echo["env"]["NODE_EXTRA_CA_CERTS"] == "${NODE_EXTRA_CA_CERTS}"
     assert applier.verify(profiles) == []

@@ -684,16 +684,6 @@ OPENCLAW_EXEC_ENV = ("OPENCLAW_HOME=/sandbox SQLITE_TMPDIR=/sandbox/.openclaw/st
 MCP_PLACEHOLDER_ONLY = re.compile(
     r"^(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|Bearer \$\{[A-Za-z_][A-Za-z0-9_]*\})$",
     re.IGNORECASE)
-# OpenClaw starts a stdio MCP server with the MCP SDK's default environment
-# (HOME, LOGNAME, PATH, SHELL, TERM, USER) plus its mcp.json env, so the
-# sandbox's TLS trust settings do not reach it. A server that calls a
-# service goes through the egress proxy, which re-signs TLS with OpenShell's
-# CA; without one of these, as ${VAR}, its HTTPS calls fail (Node:
-# SELF_SIGNED_CERT_IN_CHAIN). Node reads NODE_EXTRA_CA_CERTS; Python,
-# OpenSSL and Go read SSL_CERT_FILE; requests reads REQUESTS_CA_BUNDLE; curl
-# reads CURL_CA_BUNDLE.
-MCP_TLS_TRUST_VARS = ("NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE",
-                      "CURL_CA_BUNDLE")
 # A stdio arg naming a credential-ish flag with a literal value, e.g.
 # "--api-key=sk-live-...". The "--flag value" two-token form is not covered.
 MCP_ARG_CREDENTIAL_RE = re.compile(
@@ -862,6 +852,7 @@ def describe_harness_tree(files, inline=False):
     spec = doc.get("spec") or {}
     name = (doc.get("metadata") or {}).get("name", "")
     mcp_server_names = []
+    mcp_configs = {}
     if "mcp.json" in files and "plugin.json" not in files:
         raise InstallerError(
             f"harness '{name}': mcp.json with no plugin.json at the bundle root; OpenClaw only "
@@ -898,6 +889,7 @@ def describe_harness_tree(files, inline=False):
         except ValueError as exc:
             raise InstallerError(f"harness '{name}': mcp.json is not valid JSON ({exc})") from None
         mcp_server_names = sorted(servers)
+        mcp_configs = {k: v for k, v in servers.items() if isinstance(v, dict)}
         for server, conf in sorted(servers.items()):
             if not isinstance(conf, dict) or conf.get("type") not in ("stdio", "streamable-http", "sse"):
                 raise InstallerError(
@@ -935,16 +927,6 @@ def describe_harness_tree(files, inline=False):
                 # A stdio server runs inside the sandbox, under its policy. It
                 # needs a governanceProfile only when it calls a service.
                 if profile:
-                    env = conf.get("env") or {}
-                    if not any(env.get(var) == f"${{{var}}}" for var in MCP_TLS_TRUST_VARS):
-                        raise InstallerError(
-                            f"harness '{name}': stdio MCP server '{server}' calls a service "
-                            f"({profile}) but its mcp.json env passes none of "
-                            f"{', '.join(MCP_TLS_TRUST_VARS)}; OpenClaw does not pass them on, "
-                            "so the server cannot trust the sandbox's egress proxy and every "
-                            "HTTPS call fails. Add the one its runtime reads, for Node "
-                            '"NODE_EXTRA_CA_CERTS": "${NODE_EXTRA_CA_CERTS}" '
-                            '(Python: "SSL_CERT_FILE": "${SSL_CERT_FILE}")')
                     governance.append({"kind": "MCP server", "name": server,
                                        "governanceProfile": profile, "hosts": []})
                 else:
@@ -975,6 +957,7 @@ def describe_harness_tree(files, inline=False):
         "agentPluginsBundle": "plugin.json" in files,
         "mcp": "mcp.json" in files,
         "mcpServers": mcp_server_names,
+        "mcpConfigs": mcp_configs,
         "pluginDirs": plugin_dirs,
         "governance": governance,
     }
@@ -1030,6 +1013,67 @@ def openclaw_harness_config(info):
     if paths:
         config["plugins.load.paths"] = paths
     return config
+
+
+# OpenClaw (2026.9.x) expands only ${PLUGIN_ROOT}, ${PLUGIN_DATA} and
+# ${CLAUDE_PLUGIN_ROOT} in a bundle's mcp.json; any other ${VAR} reaches the
+# server as literal text, and a stdio server inherits only HOME, LOGNAME,
+# PATH, SHELL, TERM and USER. So a bundle server never sees its provider's
+# placeholder (Slack answers invalid_auth) or the sandbox's CA settings (TLS
+# through the egress proxy fails). openclaw.json does expand ${VAR} from the
+# gateway's environment, which has both, and a server defined under
+# mcp.servers replaces the bundle's server of the same name (found live: the
+# daily-briefing Slack reader works only this way).
+BUNDLE_ROOT_PLACEHOLDERS = ("${CLAUDE_PLUGIN_ROOT}", "${PLUGIN_ROOT}")
+MCP_TRUST_ENV = ("NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
+MCP_SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+SAW_MCP_STATE = "/sandbox/.openclaw/saw-mcp-servers.json"
+
+
+def harness_mcp_servers(info):
+    """{name: mcp.servers entry} re-declaring the bundle's MCP servers in
+    openclaw.json, where OpenClaw expands ${VAR}. Stdio servers also get the
+    sandbox's CA settings, so they trust the egress proxy. Paths resolve as
+    OpenClaw resolves them for a bundle (root: the harness mount)."""
+    if info is None or not info.get("agentPluginsBundle"):
+        return {}
+    root = HARNESS_MOUNT
+    data = f"/sandbox/.openclaw/saw-plugin-data/{info['bundleId']}"
+
+    def expand(value):
+        if not isinstance(value, str):
+            return value
+        for placeholder in BUNDLE_ROOT_PLACEHOLDERS:
+            value = value.replace(placeholder, root)
+        return value.replace("${PLUGIN_DATA}", data)
+
+    out = {}
+    for name, conf in sorted((info.get("mcpConfigs") or {}).items()):
+        if not MCP_SERVER_NAME_RE.match(name):
+            log(f"WARN: harness '{info['name']}': MCP server name {name!r} cannot be "
+                "re-declared in openclaw.json; it keeps the bundle's literal env")
+            continue
+        kind = conf.get("type")
+        if kind == "stdio":
+            command = conf.get("command")
+            if isinstance(command, str) and command.startswith("./"):
+                command = f"{root}/{command[2:]}"
+            entry = {"command": expand(command),
+                     "args": [expand(a) for a in conf.get("args") or []],
+                     "env": {"PLUGIN_ROOT": root, "PLUGIN_DATA": data,
+                             **{var: f"${{{var}}}" for var in MCP_TRUST_ENV},
+                             **{k: expand(v) for k, v in (conf.get("env") or {}).items()}}}
+            if conf.get("cwd"):
+                entry["cwd"] = expand(conf["cwd"])
+        elif kind in ("streamable-http", "sse"):
+            if not conf.get("headers"):
+                continue        # nothing for OpenClaw to expand: the bundle's own entry works
+            entry = {"url": expand(conf.get("url")), "transport": kind,
+                     "headers": {k: expand(v) for k, v in conf["headers"].items()}}
+        else:
+            continue
+        out[name] = entry
+    return out
 
 
 def harness_plugin_ids(info):
@@ -3392,6 +3436,38 @@ class ProfileApplier:
                 f"{oc_env} openclaw plugins enable {shlex.quote(i)} --accept-capabilities "
                 f"|| {oc_env} openclaw plugins enable {shlex.quote(i)}" for i in ids)
             self.cli(*exec_cmd, "sh", "-c", script, check=False)
+        self.configure_harness_mcp(ws, sb, exec_cmd, oc_env, info)
+
+    def configure_harness_mcp(self, ws, sb, exec_cmd, oc_env, info):
+        """Re-declare the bundle's MCP servers under mcp.servers
+        (harness_mcp_servers), and remove the ones an earlier apply added
+        that the bundle no longer has. A change restarts the gateway, which
+        starts MCP servers."""
+        desired = harness_mcp_servers(info)
+        state = json.dumps(desired, sort_keys=True)
+        seen = self.cli(*exec_cmd, "cat", SAW_MCP_STATE, check=False, quiet=True)
+        try:
+            previous = json.loads(seen.out) if seen.ok and seen.out.strip() else {}
+        except ValueError:
+            previous = {}
+        if not isinstance(previous, dict):
+            previous = {}
+        if json.dumps(previous, sort_keys=True) == state:
+            return
+        lines = [f"{oc_env} openclaw config unset mcp.servers.{shlex.quote(name)} >/dev/null 2>&1 || true"
+                 for name in sorted(set(previous) - set(desired)) if MCP_SERVER_NAME_RE.match(name)]
+        for name, entry in desired.items():
+            data = (entry.get("env") or {}).get("PLUGIN_DATA")
+            if data:
+                lines.append(f"mkdir -p {shlex.quote(data)}")
+            lines.append(f"{oc_env} openclaw config set mcp.servers.{name} "
+                         f"{shlex.quote(json.dumps(entry))}")
+        lines.append(f"printf '%s\\n' {shlex.quote(state)} > {SAW_MCP_STATE}")
+        self.cli(*exec_cmd, "sh", "-c", "\n".join(lines), check=False)
+        self.harness_refilled[(ws.name, sb.name)] = True
+        if desired:
+            log(f"Sandbox '{sb.name}': MCP server(s) {', '.join(desired)} declared in "
+                "openclaw.json (provider placeholders and the proxy CA reach them)")
 
     def verify_harness(self, ws, sb):
         """The sandbox mounts exactly its harness volume, the volume holds
@@ -3488,6 +3564,19 @@ class ProfileApplier:
                 failures = mcp_registration_failures(listed.out, info["mcpServers"])
                 if failures:
                     return [f"{failure} from {source}" for failure in failures]
+        for name, entry in harness_mcp_servers(info).items():
+            got = self.cli(*exec_cmd, "sh", "-c",
+                           f"{OPENCLAW_EXEC_ENV} openclaw config get mcp.servers.{name}",
+                           check=False, quiet=True)
+            try:
+                seen_entry = json.loads(got.out) if got.ok else None
+            except ValueError:
+                seen_entry = None
+            key = "command" if "command" in entry else "url"
+            if not isinstance(seen_entry, dict) or seen_entry.get(key) != entry[key]:
+                return [f"OpenClaw does not declare MCP server '{name}' in openclaw.json; "
+                        "the bundle's own entry cannot pass it its provider placeholder "
+                        f"or the proxy CA ({source})"]
         desired = openclaw_harness_config(info)
         for key in HARNESS_CONFIG_KEYS:
             got = self.cli(*exec_cmd, "sh", "-c",

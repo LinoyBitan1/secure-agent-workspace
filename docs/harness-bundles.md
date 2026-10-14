@@ -99,31 +99,26 @@ cannot read it.
    the profile's endpoints. OpenShell gives every process started in the
    sandbox the placeholder; name the variable in its `mcp.json` entry as
    exactly `${VAR}` (or `Bearer ${VAR}` for Authorization headers):
-   `"env": {"BRAVE_API_KEY": "${BRAVE_API_KEY}"}`. Checked end to end: with
-   that declaration the server sees the placeholder (`SET`); without it,
-   `NOT SET`. Any other value is refused so a literal secret cannot ship in
-   the bundle, ConfigMap or image. A provider attached to a running sandbox
-   reaches OpenClaw after its gateway restarts.
+   `"env": {"BRAVE_API_KEY": "${BRAVE_API_KEY}"}`. Any other value is
+   refused so a literal secret cannot ship in the bundle, ConfigMap or
+   image. A provider attached to a running sandbox reaches OpenClaw after
+   its gateway restarts.
 
-4. Pass the sandbox's CA setting too, in the same `env` block. The egress
-   proxy re-signs TLS with OpenShell's CA, and OpenClaw starts a stdio server
-   with only a minimal environment (`HOME`, `PATH`, `USER` and a few more,
-   plus its `env`), so a server that is not told about that CA rejects every
-   HTTPS response (Node: `SELF_SIGNED_CERT_IN_CHAIN`). Use the variable the
-   server's runtime reads:
-
-   | Runtime | `env` entry |
-   |---|---|
-   | Node | `"NODE_EXTRA_CA_CERTS": "${NODE_EXTRA_CA_CERTS}"` |
-   | Python (`ssl`, `httpx`), OpenSSL, Go | `"SSL_CERT_FILE": "${SSL_CERT_FILE}"` |
-   | Python `requests` | `"REQUESTS_CA_BUNDLE": "${REQUESTS_CA_BUNDLE}"` |
-   | curl | `"CURL_CA_BUNDLE": "${CURL_CA_BUNDLE}"` |
-
-   For example, a Node server that calls Brave:
-   `"env": {"BRAVE_API_KEY": "${BRAVE_API_KEY}", "NODE_EXTRA_CA_CERTS": "${NODE_EXTRA_CA_CERTS}"}`.
-   The installer refuses a governed stdio server whose `env` passes none of
-   these, so the mistake shows at apply instead of as a TLS error in a chat.
-   A server that calls nothing (no `governanceProfile`) needs none of them.
+   OpenClaw itself expands only `${PLUGIN_ROOT}`, `${PLUGIN_DATA}` and
+   `${CLAUDE_PLUGIN_ROOT}` in a bundle's `mcp.json`, and starts a stdio
+   server with only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM` and `USER`.
+   Left alone, the server would get the literal text `${BRAVE_API_KEY}`
+   (the service answers "invalid auth") and would not trust the egress
+   proxy's CA (TLS fails with `SELF_SIGNED_CERT_IN_CHAIN`). So the installer
+   re-declares each bundle server under `mcp.servers` in `openclaw.json`,
+   with the same command, arguments and `env`; OpenClaw expands `${VAR}`
+   there from the gateway's environment, and a server declared there
+   replaces the bundle's server of the same name. Stdio servers also get
+   the sandbox's CA settings (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
+   `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`), so a server in any language
+   trusts the proxy. Remote servers are re-declared only when they have
+   `headers`. Verification fails if a declaration is missing. Nothing
+   changes for the bundle author: write `mcp.json` as above.
 
 The installer refuses a bundle whose governed server or plugin names a profile
 the gateway does not serve in that workspace, or one the sandbox has no
