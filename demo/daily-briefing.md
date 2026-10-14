@@ -111,12 +111,13 @@ openshell logs assistant --workspace personal-assistant --source sandbox
   `gmail-reader__new_messages`.
   The schedule uses the agent's `cron` tool; if that OpenClaw has none,
   schedule the update from the OpenClaw UI's cron page.
-- openclaw 2026.7.1 passes `.mcp.json` `env` values through as literals (no
-  `${VAR}` expansion inside the sandbox), so the bundle hardcodes
-  `NODE_EXTRA_CA_CERTS=/run/openshell-supervisor-ca/material/ca.crt` — the
-  supervisor-mounted MITM egress proxy CA inside the sandbox. Only a
-  non-credential env var may carry a literal path; provider tokens stay
-  `${VAR}` placeholders.
+- Both servers pass `"NODE_EXTRA_CA_CERTS": "${NODE_EXTRA_CA_CERTS}"` in
+  `mcp.json`. OpenClaw starts a stdio MCP server with only a minimal
+  environment, and without that setting Node does not trust the egress
+  proxy's CA: every Slack and Gmail call failed with
+  `SELF_SIGNED_CERT_IN_CHAIN` (found live on OpenClaw 2026.9.2). The
+  installer now refuses a governed stdio server that passes no CA setting;
+  see [harness bundles](../docs/harness-bundles.md).
 - ⚠️ **CURRENT LIMITATION: the sandbox egress proxy does not inject the real
   provider token.** The gateway's profile→policy conversion drops the
   `credentials:` binding (prebuilt gateway, not source in this repo), so the

@@ -858,7 +858,10 @@ def test_a_stdio_server_gets_its_key_only_through_the_provider(ab, fake_env, con
     """No key is written or exported into the sandbox by the installer: the
     server reads the provider's placeholder env var, and the egress proxy
     adds the real key."""
-    tree = {**V1, "harness.yaml": manifest(mcpServers=[{"name": "echo", "governanceProfile": "brave"}])}
+    tree = {**V1, "harness.yaml": manifest(mcpServers=[{"name": "echo", "governanceProfile": "brave"}]),
+            "mcp.json": json.dumps({"mcpServers": {"echo": {
+                "type": "stdio", "command": "node",
+                "env": {"NODE_EXTRA_CA_CERTS": "${NODE_EXTRA_CA_CERTS}"}}}})}
     fake_env.set_images({IMAGE_V1: {"__tree__": tree}})
     applier = make_applier(ab, config, creds)
     applier.apply(use_ref(profiles, {"image": IMAGE_V1}, ["nvidia", "brave"]))

@@ -684,6 +684,16 @@ OPENCLAW_EXEC_ENV = ("OPENCLAW_HOME=/sandbox SQLITE_TMPDIR=/sandbox/.openclaw/st
 MCP_PLACEHOLDER_ONLY = re.compile(
     r"^(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|Bearer \$\{[A-Za-z_][A-Za-z0-9_]*\})$",
     re.IGNORECASE)
+# OpenClaw starts a stdio MCP server with the MCP SDK's default environment
+# (HOME, LOGNAME, PATH, SHELL, TERM, USER) plus its mcp.json env, so the
+# sandbox's TLS trust settings do not reach it. A server that calls a
+# service goes through the egress proxy, which re-signs TLS with OpenShell's
+# CA; without one of these, as ${VAR}, its HTTPS calls fail (Node:
+# SELF_SIGNED_CERT_IN_CHAIN). Node reads NODE_EXTRA_CA_CERTS; Python,
+# OpenSSL and Go read SSL_CERT_FILE; requests reads REQUESTS_CA_BUNDLE; curl
+# reads CURL_CA_BUNDLE.
+MCP_TLS_TRUST_VARS = ("NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE",
+                      "CURL_CA_BUNDLE")
 # A stdio arg naming a credential-ish flag with a literal value, e.g.
 # "--api-key=sk-live-...". The "--flag value" two-token form is not covered.
 MCP_ARG_CREDENTIAL_RE = re.compile(
@@ -925,6 +935,16 @@ def describe_harness_tree(files, inline=False):
                 # A stdio server runs inside the sandbox, under its policy. It
                 # needs a governanceProfile only when it calls a service.
                 if profile:
+                    env = conf.get("env") or {}
+                    if not any(env.get(var) == f"${{{var}}}" for var in MCP_TLS_TRUST_VARS):
+                        raise InstallerError(
+                            f"harness '{name}': stdio MCP server '{server}' calls a service "
+                            f"({profile}) but its mcp.json env passes none of "
+                            f"{', '.join(MCP_TLS_TRUST_VARS)}; OpenClaw does not pass them on, "
+                            "so the server cannot trust the sandbox's egress proxy and every "
+                            "HTTPS call fails. Add the one its runtime reads, for Node "
+                            '"NODE_EXTRA_CA_CERTS": "${NODE_EXTRA_CA_CERTS}" '
+                            '(Python: "SSL_CERT_FILE": "${SSL_CERT_FILE}")')
                     governance.append({"kind": "MCP server", "name": server,
                                        "governanceProfile": profile, "hosts": []})
                 else:
