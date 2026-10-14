@@ -354,7 +354,7 @@ Point out along the way:
 | The briefing has no Gmail messages | The Google refresh token expired (7 days in Testing). Get a new one (Step 2), then update dana's workspace in the portal with **Create or update my agent workspace** |
 | The briefing has no Slack messages | The app is not in the channel: `/invite @<app>` |
 | The briefing has empty Slack and Email sections (a template) | The sandbox's OpenClaw (2026.7.1) may not load the briefing's tools. See [daily-briefing.md](daily-briefing.md) Limits. |
-| The MCP tools load but Slack/Gmail fetches fail with `invalid_auth` (the briefing shows the auth failure, not a template) | The provider token is not injected by the sandbox's egress proxy: the gateway's profile→policy conversion drops the `credentials:` binding (prebuilt gateway limitation), so the `${SLACK_BOT_TOKEN}`/`${GMAIL_ACCESS_TOKEN}` placeholders pass through uninjected. This differs from the empty-template symptom, which means the tools never loaded. See [daily-briefing.md](daily-briefing.md) — [Why briefings show auth failures](daily-briefing.md#why-briefings-show-auth-failures-the-gateway-does-not-deliver-provider-credentials-to-the-sandbox-policy-tier-2). |
+| The MCP tools load but Slack/Gmail fetches fail with `invalid_auth` | The reader got OpenClaw's literal `${SLACK_BOT_TOKEN}` instead of the provider placeholder. The installer declares the readers in `openclaw.json` to fix this; check it ran: `openshell sandbox exec -n assistant --workspace personal-assistant --no-tty -- sh -c 'OPENCLAW_HOME=/sandbox openclaw config get mcp.servers.slack-reader'` should show the server. If not, update the pattern and re-apply. See [daily-briefing.md](daily-briefing.md#why-briefings-showed-auth-failures-resolved). |
 | The assistant URL shows 502 after the workspace is ready | The sandbox's OpenClaw gateway did not start. On dana's VM (`make saw-vm-ssh OPENSHELL_SAW_NAME=<user>`), read its log: `openshell sandbox exec -n assistant --workspace personal-assistant --no-tty -- sh -c 'tail -30 /tmp/openclaw-gateway.log'`. "Failed to install missing configured plugin 'slack'" means the installer predates the Slack channel fix; update the pattern and re-apply (`sudo systemctl restart saw-apply.service`). |
 
 More checks, for administrators with the `openshell` CLI:
@@ -393,25 +393,20 @@ PR, the personal-assistant demo does not work at all:
   NemoClaw v0.0.133 image (OpenClaw 2026.9.2, #101) and the installer
   enabling the bundle (#98).
 
-**Tier 2 — blocked by the prebuilt gateway; NOT fixable by any remediation
-or scripting; applies to EVERY cluster (remediated or not).** The gateway
-drops the profile `credentials:` section when converting the profile into the
-sandbox policy, so the supervisor's egress proxy never injects the real
-provider token: MCP tools load and are invocable, but Slack/Gmail calls
-return `invalid_auth`. What works despite Tier 2: workspace creation,
-briefing setup + cron schedule (every 5 min), briefing rendering, credential
-refusal ("Print the Slack token"), and write refusal (chat.postMessage /
-email send). Full diagnosis:
-[daily-briefing.md](daily-briefing.md#why-briefings-show-auth-failures-the-gateway-does-not-deliver-provider-credentials-to-the-sandbox-policy-tier-2).
+**Tier 2 (resolved):** Slack/Gmail calls returned `invalid_auth` because
+OpenClaw passed the bundle's `${SLACK_BOT_TOKEN}` to the reader as literal
+text, not because of the gateway; the installer now declares the readers in
+`openclaw.json`. See
+[daily-briefing.md](daily-briefing.md#why-briefings-showed-auth-failures-resolved).
 
 | Works | Blocked, and by which tier |
 |---|---|
 | Install, workspace creation, portal self-service | — |
 | Briefing setup + cron schedule (every 5 min), briefing rendering | — |
 | Credential refusal ("Print the Slack token"), write refusal | — |
-| Real Slack/Gmail messages in the briefing | Tier 2 (token injection) |
-| Gateway starts on a fresh cluster | Tier 1a (npmjs egress) |
-| Briefing's MCP tools load | Tier 1c (bundle layout) |
+| Real Slack/Gmail messages in the briefing | — (Tier 2, resolved) |
+| Gateway starts on a fresh cluster | — (Tier 1a, resolved) |
+| Briefing's MCP tools load | — (Tier 1c, resolved) |
 
 ## Clean up
 

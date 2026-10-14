@@ -111,24 +111,15 @@ openshell logs assistant --workspace personal-assistant --source sandbox
   `gmail-reader__new_messages`.
   The schedule uses the agent's `cron` tool; if that OpenClaw has none,
   schedule the update from the OpenClaw UI's cron page.
-- The readers trust the egress proxy's CA themselves: `briefing-lib.mjs`
-  adds `/run/openshell-supervisor-ca/material/ca.crt` (the CA OpenShell
-  mounts in every sandbox) to Node's roots for its HTTPS calls. Passing
-  `"NODE_EXTRA_CA_CERTS": "${NODE_EXTRA_CA_CERTS}"` in `mcp.json` (kept, and
-  required by the installer) did not get them past TLS on OpenClaw 2026.9.2:
-  every call failed with `SELF_SIGNED_CERT_IN_CHAIN` (found live). A call
-  that still fails that way means the proxy CA file is missing in the
-  sandbox.
-- ⚠️ **CURRENT LIMITATION: the sandbox egress proxy does not inject the real
-  provider token.** The gateway's profile→policy conversion drops the
-  `credentials:` binding (prebuilt gateway, not source in this repo), so the
-  proxy passes the placeholder through uninjected. The MCP tools load and are
-  invocable, but Slack/Gmail calls return `invalid_auth`, and the briefing
-  shows the auth failure instead of real messages. The `credentials:` section
-  in the Secrets table above is the *designed* behavior — until the gateway
-  injects the token, on-cluster briefings will not have real Slack/Gmail
-  content. Details and honest scoping:
-  [Why briefings show auth failures](#why-briefings-show-auth-failures-the-gateway-does-not-deliver-provider-credentials-to-the-sandbox-policy-tier-2).
+- OpenClaw 2026.9.x expands only `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` in a
+  bundle's `mcp.json`; `${SLACK_BOT_TOKEN}` and `${NODE_EXTRA_CA_CERTS}`
+  reached the readers as literal text, so Slack answered `invalid_auth` and
+  TLS through the egress proxy failed (`SELF_SIGNED_CERT_IN_CHAIN`). The
+  installer now re-declares both readers under `mcp.servers` in
+  `openclaw.json`, where OpenClaw substitutes the provider placeholders and
+  the CA settings (see [harness bundles](../docs/harness-bundles.md)).
+  The readers also load the proxy CA file themselves
+  (`/run/openshell-supervisor-ca/material/ca.crt`), as a second line.
 - The sandbox gateway can hang and die mid-conversation: a model call through
   the egress proxy can stall with no timeout. Re-run the in-VM installer apply
   (`systemctl restart saw-apply.service`) and continue — the agent's sessions
@@ -155,49 +146,27 @@ openshell logs assistant --workspace personal-assistant --source sandbox
   `reauthorize` in `provider refresh status`. Put a new refresh token in
   Vault; the installer configures it on its next run.
 
-## Why briefings show auth failures: the gateway does not deliver provider credentials to the sandbox policy (Tier 2)
+## Why briefings showed auth failures (resolved)
 
-Symptom: the briefing's MCP tools (`slack-reader`, `gmail-reader`) load and
-are invocable, but Slack/Gmail calls return `invalid_auth`, and the briefing
-shows the auth failure instead of real messages. This differs from the
-empty-template symptom (the tools never loaded — see the bundle limit
-above).
+Symptom: the briefing's MCP tools loaded, but Slack calls returned
+`invalid_auth` (and, before that, TLS failed with
+`SELF_SIGNED_CERT_IN_CHAIN`).
 
-Root cause (verified on-cluster): the prebuilt OpenClaw gateway binary drops
-the provider profile's `credentials:` section when it converts the profile
-into the sandbox policy. The delivered sandbox policy
-(`policy.network_policies._provider_slack` and `_provider_gmail`) contains
-`endpoints` and `binaries` but ZERO credential material — no
-`credential_binding`, `env_vars`, `auth_style`, or `header_name` keys
-anywhere. The supervisor's egress proxy has the complete injection machinery
-(`credential_binding`, `resolve_placeholder`, `credential_epoch` are in its
-binary), but it never triggers because the trigger — the credential binding
-in the delivered policy — is never populated. Both binaries' schemas support
-the field: the gateway demonstrably parses the profile's `credentials`
-section (it generates the placeholder env vars from `env_vars` and records
-the credential key), yet does not translate them into the policy's
-`credential_binding`.
+An earlier diagnosis blamed the gateway for not passing the provider's
+credential binding to the sandbox policy. Checked live, that is not it: in
+the same sandbox, `curl -H "Authorization: Bearer $SLACK_BOT_TOKEN"
+https://slack.com/api/auth.test`, sending only the placeholder
+(`openshell:resolve:env:…`), gets `"ok": true`. The proxy injects the real
+token, and the stored token is valid.
 
-The real token IS present and valid — the provider system holds it (verified
-against Slack), and the refresh chain works. The chain breaks only at the
-profile→policy conversion in the prebuilt gateway.
-
-What the fix requires: the gateway's profile→policy construction must emit
-the credential binding into the delivered sandbox policy (or discover the
-profile-schema field that triggers it). This is a prebuilt binary — not
-fixable from this repository — so it has to land upstream. Until then the
-placeholders pass through uninjected and briefings carry no real Slack/Gmail
-content.
-
-Honest scoping of what works today vs what does not, until the gateway fix
-lands:
-
-| Works | Does not (yet) |
-|---|---|
-| Workspace creation, briefing setup + cron schedule | Real Slack content in the briefing |
-| Briefing rendering (the template, the day's `briefing.md`) | Real Gmail content in the briefing |
-| Credential refusal (write/placeholder checks) | Token injection by the egress proxy |
-| Write refusal (read-only provider enforcement) | |
+The cause was OpenClaw: it expands only `${PLUGIN_ROOT}`, `${PLUGIN_DATA}`
+and `${CLAUDE_PLUGIN_ROOT}` in a bundle's `mcp.json`, and starts a stdio
+server with almost no environment. The reader got the literal text
+`${SLACK_BOT_TOKEN}`, which the proxy does not recognise, and the literal
+`${NODE_EXTRA_CA_CERTS}`. The installer now re-declares each bundle MCP
+server under `mcp.servers` in `openclaw.json`, where OpenClaw substitutes
+`${VAR}` from the gateway's environment (the placeholders and the CA
+settings). A server declared that way read `#all-gtc-demo` live.
 
 ## On-cluster notes: the two-tier blockage model
 
@@ -213,7 +182,5 @@ the demo does not work at all (also listed in
    NemoClaw v0.0.133 image (#101) reads the bundle's own layout, and the
    installer enables the bundle (#98).
 
-The auth-failure limitation described in the section above is a Tier 2
-blockage: it applies to EVERY cluster (remediated or not), is not fixable by
-any remediation or scripting, and needs the prebuilt gateway's profile→policy
-construction to emit the credential binding.
+The auth failures described above are resolved; nothing in this demo is
+blocked by the gateway.

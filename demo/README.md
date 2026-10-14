@@ -9,9 +9,7 @@ inside the cluster. Choose by what you can set up: accounts or services.
 Step-by-step walkthrough: [personal-assistant-demo.md](personal-assistant-demo.md)
 (how the briefing works under the hood: [daily-briefing.md](daily-briefing.md)).
 
-- The agent reads real Slack and Gmail (⚠️ with the Tier 2 limitation below:
-  the token is not injected, so fetches currently return `invalid_auth`),
-  so you need two external demo
+- The agent reads real Slack and Gmail, so you need two external demo
   accounts (Slack app, Google Cloud OAuth client): about 30 minutes, once.
 - Quick to run: one workspace, one prompt, a ~10-minute demo.
 - Same platform install, same profile shape: one NemoClaw sandbox with the
@@ -20,14 +18,10 @@ Step-by-step walkthrough: [personal-assistant-demo.md](personal-assistant-demo.m
 - Self-service via the Red Hat Developer Hub portal: add your demo user
   (e.g. `dana`) to `overrides/saw-users.yaml` first, then they pick the
   profile, enter their keys, and get their own workspace.
-- ⚠️ **Current limitation (Tier 2 blockage): the sandbox egress proxy does
-  not inject the real provider token.** The gateway's profile→policy
-  conversion drops the
-  `credentials:` binding (prebuilt gateway limitation), so Slack/Gmail calls
-  return `invalid_auth` and the briefing shows the auth failure instead of
-  real messages — until the gateway fix lands upstream. Full diagnosis and
-  honest scoping: [daily-briefing.md](daily-briefing.md#why-briefings-show-auth-failures-the-gateway-does-not-deliver-provider-credentials-to-the-sandbox-policy-tier-2)
-  Limits. Everything else in the demo works as described.
+- The earlier "Tier 2" limitation (Slack and Gmail answering
+  `invalid_auth`) is resolved: the egress proxy does inject the real token;
+  the readers were sending OpenClaw's literal `${SLACK_BOT_TOKEN}` text.
+  See [daily-briefing.md](daily-briefing.md#why-briefings-showed-auth-failures-resolved).
 
 ## Personal Assistant (Longer Setup) with on-cluster providers: chat, email and calendar
 
@@ -111,13 +105,13 @@ this PR, the demo does not work at all:
   bundle's `plugin.json` and `mcp.json`, and the installer enables the
   bundle (#98).
 
-**Tier 2 — blocked by the prebuilt gateway; NOT fixable by any remediation
-or scripting; applies to EVERY cluster (remediated or not).** The gateway
-drops the profile `credentials:` section when converting the profile into
-the sandbox policy, so the supervisor's egress proxy never injects the real
-provider token: MCP tools load and are invocable, but Slack/Gmail calls
-return `invalid_auth`. Full diagnosis:
-[daily-briefing.md](daily-briefing.md#why-briefings-show-auth-failures-the-gateway-does-not-deliver-provider-credentials-to-the-sandbox-policy-tier-2).
+**Tier 2 (resolved): Slack and Gmail answered `invalid_auth`.** Not the
+gateway: the egress proxy injects the real token (curl in the sandbox,
+sending only the placeholder, gets `ok: true` from Slack). OpenClaw passed
+the bundle's `${SLACK_BOT_TOKEN}` to the reader as literal text; the
+installer now declares the readers in `openclaw.json`, where OpenClaw fills
+in the placeholder. See
+[daily-briefing.md](daily-briefing.md#why-briefings-showed-auth-failures-resolved).
 
 A reader on a fresh cluster reaches a working demo (Tier 1 cleared) by doing
 the three remediations by hand:
@@ -159,6 +153,4 @@ template. Cause: OpenClaw 2026.7.1 read only the Claude layout
 and `mcp.json`; the installer enables the bundle, which 2026.9.x otherwise
 keeps disabled (#98). No hand-made layout is needed.
 
-Tier 2 is not fixed by any of the above: it needs the prebuilt gateway's
-profile→policy construction to emit the credential binding — see
-[daily-briefing.md](daily-briefing.md#why-briefings-show-auth-failures-the-gateway-does-not-deliver-provider-credentials-to-the-sandbox-policy-tier-2).
+Tier 2 is resolved too; see above.

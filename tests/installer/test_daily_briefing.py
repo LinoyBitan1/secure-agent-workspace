@@ -164,6 +164,21 @@ def test_the_bundle_is_enabled_with_capability_consent(
     assert scripts.index("config set plugins.load.paths") < scripts.index("plugins enable")
 
 
+def test_the_readers_are_declared_where_openclaw_expands_their_placeholders(
+        ab, fake_env, config, briefing, briefing_secrets, catalog):
+    """Found live: from the bundle's mcp.json the Slack reader got the literal
+    text ${SLACK_BOT_TOKEN} (Slack: invalid_auth). Re-declared in
+    openclaw.json, OpenClaw puts the provider's placeholder in."""
+    creds = ab.resolve_credentials(briefing, briefing_secrets)
+    applier(ab, config, creds).apply(briefing)
+    cfg = fake_env.openshell_state()["sandboxes"]["personal-assistant/assistant"]["openclawConfig"]
+    slack, gmail = cfg["mcp.servers.slack-reader"], cfg["mcp.servers.gmail-reader"]
+    assert slack["args"] == ["/sandbox/harness/mcp/slack-reader.mjs"]
+    assert slack["env"]["SLACK_BOT_TOKEN"] == "${SLACK_BOT_TOKEN}"
+    assert gmail["env"]["GMAIL_ACCESS_TOKEN"] == "${GMAIL_ACCESS_TOKEN}"
+    assert slack["env"]["NODE_EXTRA_CA_CERTS"] == "${NODE_EXTRA_CA_CERTS}"
+
+
 def test_openclaws_own_slack_channel_stays_off(
         ab, fake_env, config, briefing, briefing_secrets, catalog):
     """Found live: with the Slack provider attached, the gateway treats its
