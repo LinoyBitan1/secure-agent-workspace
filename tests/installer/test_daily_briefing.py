@@ -225,11 +225,13 @@ def test_the_bundle_is_valid_and_the_chart_copy_matches():
 # -- the MCP servers, against fake Slack and Gmail ----------------------------------
 
 FAKE_APIS = r'''
+import { readFileSync } from "node:fs";
 import http from "node:http";
+import https from "node:https";
 const day = Math.floor(new Date(new Date().setHours(0, 0, 0, 0)).getTime() / 1000);
 let slackTs = day + 60, mails = ["m1"];
 const reply = (res, body) => { res.writeHead(200, {"content-type": "application/json"}); res.end(JSON.stringify(body)); };
-http.createServer((req, res) => {
+const handler = (req, res) => {
   const url = new URL(req.url, "http://x");
   if (req.headers.authorization !== `Bearer ${url.pathname.startsWith("/slack") ? "slack-ph" : "gmail-ph"}`)
     return reply(res, {ok: false, error: "invalid_auth"});
@@ -246,7 +248,13 @@ http.createServer((req, res) => {
     return reply(res, {id: "m1", internalDate: String(day * 1000 + 5000), snippet: "Quarterly numbers attached",
       labelIds: ["UNREAD"], payload: {headers: [{name: "From", value: "cfo@example.com"}, {name: "Subject", value: "Q3"}]}});
   res.writeHead(404); res.end();
-}).listen(0, "127.0.0.1", function () { console.log(this.address().port); });
+};
+// FAKE_TLS_DIR: serve HTTPS with that directory's self-signed cert (the
+// stand-in for the sandbox egress proxy, which re-signs TLS with its own CA).
+const tls = process.env.FAKE_TLS_DIR;
+(tls ? https.createServer({ key: readFileSync(`${tls}/key.pem`), cert: readFileSync(`${tls}/cert.pem`) }, handler)
+     : http.createServer(handler))
+  .listen(0, "127.0.0.1", function () { console.log(this.address().port); });
 '''
 
 
@@ -301,5 +309,35 @@ def test_the_readers_return_only_new_messages(tmp_path):
         missing = mcp_call("gmail-reader.mjs", {k: v for k, v in env.items() if k != "GMAIL_ACCESS_TOKEN"},
                            "new_messages")[3]["result"]
         assert missing["isError"] and "no gmail provider" in missing["content"][0]["text"]
+    finally:
+        api.kill()
+
+
+@pytest.mark.skipif(not shutil.which("node") or not shutil.which("openssl"),
+                    reason="node or openssl is not installed")
+def test_the_readers_trust_the_proxy_ca_themselves(tmp_path):
+    """Found live on OpenClaw 2026.9.2: NODE_EXTRA_CA_CERTS in mcp.json did not
+    get the readers past the egress proxy's re-signed TLS
+    (SELF_SIGNED_CERT_IN_CHAIN). The readers load the proxy CA file themselves
+    (here pointed at a test CA with BRIEFING_PROXY_CA)."""
+    import os
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                    "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+                    "-keyout", str(tmp_path / "key.pem"), "-out", str(tmp_path / "cert.pem")],
+                   check=True, capture_output=True)
+    (tmp_path / "apis.mjs").write_text(FAKE_APIS)
+    api = subprocess.Popen(["node", str(tmp_path / "apis.mjs")], stdout=subprocess.PIPE, text=True,
+                           env={**os.environ, "FAKE_TLS_DIR": str(tmp_path)})
+    try:
+        port = api.stdout.readline().strip()
+        base = {k: v for k, v in os.environ.items() if k != "NODE_EXTRA_CA_CERTS"}
+        env = {**base, "BRIEFING_DIR": str(tmp_path / "briefing"),
+               "SLACK_API_URL": f"https://127.0.0.1:{port}/slack", "SLACK_BOT_TOKEN": "slack-ph"}
+        untrusted = mcp_call("slack-reader.mjs", env, "new_messages")[3]["result"]
+        assert untrusted["isError"] and "SELF_SIGNED" in untrusted["content"][0]["text"]
+        trusted = mcp_call("slack-reader.mjs", {**env, "BRIEFING_PROXY_CA": str(tmp_path / "cert.pem")},
+                           "new_messages")[3]["result"]
+        assert not trusted.get("isError"), trusted
+        assert json.loads(trusted["content"][0]["text"])["new"] == 1
     finally:
         api.kill()
