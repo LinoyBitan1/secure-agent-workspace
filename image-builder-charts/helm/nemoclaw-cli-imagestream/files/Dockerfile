@@ -16,6 +16,25 @@ RUN printf '%s\n' "$SOURCE_REVISION" | grep -Eq '^[0-9a-f]{40}$' \
     && printf '%s\n' "$NEMOCLAW_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
     && printf '%s\n' "$SOURCE_REVISION" > .source-revision \
     && printf '%s\n' "$NEMOCLAW_VERSION" > .version
+# OpenShell 0.1.2 has mandatory provider policy and no Providers v2 switch.
+RUN node -e 'const fs = require("fs"); \
+    const file = "src/lib/adapters/openshell/provider-adapter-cli.ts"; \
+    const source = fs.readFileSync(file, "utf8"); \
+    const anchor = "          const value = document.settings?.providers_v2_enabled;"; \
+    if (source.split(anchor).length !== 2) throw Error("Review NemoClaw provider policy compatibility patch"); \
+    const added = String.raw` \
+          if (document.scope === "global" && document.settings && \
+              typeof document.settings === "object" && !Array.isArray(document.settings) && \
+              !Object.hasOwn(document.settings, "providers_v2_enabled") && request.target.kind === "named") { \
+            const info = invoke(["gateway", "info", "--output", "json"], request); \
+            const error = commandError(info); \
+            if (error) return failure<string>(error); \
+            const gateway = JSON.parse(bufferOrStringToText(info.stdout)); \
+            if (gateway.gateway === request.target.gatewayName && gateway.status === "healthy" && \
+                typeof gateway.version === "string" && /^0\.1\.2(?:-rhaiv\.[0-9]+)?$/u.test(gateway.version)) \
+              return success<string>("true"); \
+          }`; \
+    fs.writeFileSync(file, source.replace(anchor, anchor + added));'
 RUN npm run build:cli
 
 FROM ${NODE_IMAGE}
