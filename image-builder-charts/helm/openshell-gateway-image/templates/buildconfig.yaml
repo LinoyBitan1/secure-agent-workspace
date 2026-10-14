@@ -228,7 +228,7 @@ spec:
       # Bake system packages + OpenShell binaries into the qcow2
       RUN virt-customize -a base.qcow2 \
             --install curl,jq,qemu-guest-agent,openssh-clients,openssh-server,binutils \
-            --install nodejs,cloud-init,python3-pip \
+            --install nodejs,cloud-init,python3-pip,lsof \
             {{- if eq .Values.containerRuntime "docker" }}
             --run-command 'dnf remove -y podman podman-docker containers-common 2>/dev/null; dnf clean all' \
             --run-command 'dnf config-manager addrepo --from-repofile=https://download.docker.com/linux/fedora/docker-ce.repo' \
