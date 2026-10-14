@@ -3,8 +3,11 @@
 // /sandbox/briefing: per-source state for the day, and <day>/items.jsonl
 // with every message collected that day.
 import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import http from "node:http";
+import https from "node:https";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { rootCertificates } from "node:tls";
 
 export const ROOT = process.env.BRIEFING_DIR || "/sandbox/briefing";
 const TEXT_LIMIT = 500;
@@ -43,18 +46,55 @@ export function clip(text) {
   return t.length > TEXT_LIMIT ? t.slice(0, TEXT_LIMIT) + "…" : t;
 }
 
-// GET with the placeholder token; the sandbox proxy puts the real one in.
-export async function getJson(url, token) {
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(20000),
-  });
-  let body;
-  try { body = await res.json(); } catch { body = {}; }
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${body.error?.message || body.error || ""}`.trim());
+// The sandbox's egress proxy re-signs TLS with OpenShell's CA. The server
+// trusts it itself, from the file OpenShell mounts in every sandbox, rather
+// than relying on NODE_EXTRA_CA_CERTS reaching it through OpenClaw (found
+// live on 2026.9.2: SELF_SIGNED_CERT_IN_CHAIN even with it in mcp.json).
+export const PROXY_CA = "/run/openshell-supervisor-ca/material/ca.crt";
+let trusted;
+function trustedRoots() {
+  if (trusted === undefined) {
+    trusted = null;     // no proxy CA (outside a sandbox): Node's roots only
+    for (const file of [process.env.BRIEFING_PROXY_CA, process.env.NODE_EXTRA_CA_CERTS, PROXY_CA]) {
+      if (!file) continue;
+      try {
+        trusted = [...rootCertificates, readFileSync(file, "utf8")];
+        break;
+      } catch {}
+    }
   }
-  return body;
+  return trusted;
+}
+
+// GET with the placeholder token; the sandbox proxy puts the real one in.
+export function getJson(url, token) {
+  const u = new URL(url);
+  const lib = u.protocol === "http:" ? http : https;
+  const ca = u.protocol === "https:" ? trustedRoots() : null;
+  return new Promise((resolve, reject) => {
+    const req = lib.get(u, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      timeout: 20000,
+      ...(ca ? { ca } : {}),
+    }, (res) => {
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => { data += chunk; });
+      res.on("end", () => {
+        let body;
+        try { body = JSON.parse(data); } catch { body = {}; }
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`HTTP ${res.statusCode} ${body.error?.message || body.error || ""}`.trim()));
+        } else {
+          resolve(body);
+        }
+      });
+    });
+    req.on("timeout", () => req.destroy(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" })));
+    // serve() reports err.cause.code first: keep codes such as
+    // SELF_SIGNED_CERT_IN_CHAIN or ECONNREFUSED visible.
+    req.on("error", (err) => reject(Object.assign(new Error(err.message), { cause: err })));
+  });
 }
 
 // tools: [{name, description, inputSchema, run: async (args) => result}]
