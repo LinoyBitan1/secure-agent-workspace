@@ -16,7 +16,7 @@ RUN printf '%s\n' "$SOURCE_REVISION" | grep -Eq '^[0-9a-f]{40}$' \
     && printf '%s\n' "$NEMOCLAW_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
     && printf '%s\n' "$SOURCE_REVISION" > .source-revision \
     && printf '%s\n' "$NEMOCLAW_VERSION" > .version
-# OpenShell 0.1.2 has mandatory provider policy and no Providers v2 switch.
+# OpenShell 0.1.2 has mandatory provider policy and paginated sandbox listings.
 RUN node -e 'const fs = require("fs"); \
     const file = "src/lib/adapters/openshell/provider-adapter-cli.ts"; \
     const source = fs.readFileSync(file, "utf8"); \
@@ -34,7 +34,15 @@ RUN node -e 'const fs = require("fs"); \
                 typeof gateway.version === "string" && /^0\.1\.2(?:-rhaiv\.[0-9]+)?$/u.test(gateway.version)) \
               return success<string>("true"); \
           }`; \
-    fs.writeFileSync(file, source.replace(anchor, anchor + added));'
+    fs.writeFileSync(file, source.replace(anchor, anchor + added)); \
+    const identityFile = "src/lib/adapters/openshell/sandbox-identity.ts"; \
+    const identity = fs.readFileSync(identityFile, "utf8"); \
+    if (identity.split("\"--limit\"").length !== 2) throw Error("Review NemoClaw identity pagination compatibility"); \
+    const pageAnchor = "return Array.isArray(rows) ? rows : null;"; \
+    if (identity.split(pageAnchor).length !== 2) throw Error("Review NemoClaw identity page compatibility"); \
+    fs.writeFileSync(identityFile, identity.replace("\"--limit\"", \
+      "input.runCaptureOpenshell([\"sandbox\", \"list\", \"--help\"], {ignoreError: false, timeout, maxBuffer: 131072}).includes(\"--page-size\") ? \"--page-size\" : \"--limit\"") \
+      .replace(pageAnchor, "if (rows && typeof rows === \"object\" && \"sandboxes\" in rows && \"next_page_token\" in rows && rows.next_page_token === \"\" && Array.isArray(rows.sandboxes)) return rows.sandboxes; " + pageAnchor));'
 RUN npm run build:cli
 
 FROM ${NODE_IMAGE}

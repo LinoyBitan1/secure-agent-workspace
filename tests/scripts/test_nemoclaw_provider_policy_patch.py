@@ -43,6 +43,10 @@ def run_prerequisite(tmp_path, *, settings=None, info=None, **options):
     source = tmp_path / "src/lib/adapters/openshell/provider-adapter-cli.ts"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_bytes(FIXTURE.read_bytes())
+    identity = source.with_name("sandbox-identity.ts")
+    identity.write_text('const limitFlag = (input, timeout) => "--limit";\n'
+                        'function parsePage(output) { let rows; try { rows = JSON.parse(output); } '
+                        'catch { return null; } return Array.isArray(rows) ? rows : null; }')
     command = re.search(r"^RUN (node -e .*?)\nRUN npm run build:cli", DOCKERFILE.read_text(),
                         re.MULTILINE | re.DOTALL).group(1).replace("\\\n", "")
     subprocess.run(shlex.split(command), cwd=tmp_path, check=True, capture_output=True, text=True)
@@ -98,3 +102,33 @@ def test_transport_failure_does_not_imply_policy_composition(tmp_path):
     assert not run_prerequisite(tmp_path, infoStatus=1)["result"]["ok"]
     assert not run_prerequisite(tmp_path, settingsStatus=1)["result"]["ok"]
 
+
+@pytest.mark.parametrize("help_text,flag", [("--page-size <PAGE_SIZE>", "--page-size"),
+                                         ("--limit <LIMIT>", "--limit")])
+def test_identity_pagination_preserves_the_installed_cli_contract(tmp_path, help_text, flag):
+    run_prerequisite(tmp_path)
+    identity = tmp_path / "src/lib/adapters/openshell/sandbox-identity.ts"
+    code = ('const fs=require("fs");const make=new Function(fs.readFileSync(process.argv[1],"utf8")'
+            '+";return limitFlag;");const f=make();process.stdout.write('
+            'f({runCaptureOpenshell:()=>process.argv[2]},1000));')
+    result = subprocess.run([NODE, "-e", code, str(identity), help_text],
+                            check=True, capture_output=True, text=True)
+    assert result.stdout == flag
+
+
+@pytest.mark.parametrize("payload,expected", [
+    ([], []), ([{"id": "legacy"}], [{"id": "legacy"}]),
+    ({"sandboxes": [], "next_page_token": ""}, []),
+    ({"sandboxes": [{"id": "native"}], "next_page_token": ""}, [{"id": "native"}]),
+    ({"sandboxes": [{"id": "partial"}], "next_page_token": "more"}, None),
+    ({"sandboxes": []}, None), ({"sandboxes": "invalid", "next_page_token": ""}, None),
+    (None, None),
+])
+def test_identity_parser_requires_a_complete_page(tmp_path, payload, expected):
+    run_prerequisite(tmp_path)
+    identity = tmp_path / "src/lib/adapters/openshell/sandbox-identity.ts"
+    code = ('const fs=require("fs");const f=new Function(fs.readFileSync(process.argv[1],"utf8")'
+            '+";return parsePage;")();process.stdout.write(JSON.stringify(f(process.argv[2])));')
+    result = subprocess.run([NODE, "-e", code, str(identity), json.dumps(payload)],
+                            check=True, capture_output=True, text=True)
+    assert json.loads(result.stdout) == expected
