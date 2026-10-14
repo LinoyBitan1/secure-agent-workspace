@@ -22,6 +22,7 @@ spec:
       description: Seconds a wait may take.
   results:
     - name: user
+      type: string
       description: The user the request was for.
   volumes:
     - name: scripts
@@ -30,6 +31,7 @@ spec:
   steps:
     - name: run
       image: {{ .Values.portal.image }}
+      computeResources: {}
       command: ["python3", "/opt/saw/portal.py", "$(params.action)", "$(params.arg)", "$(params.timeout)"]
       volumeMounts:
         - name: scripts
@@ -50,8 +52,10 @@ spec:
           value: {{ include "openshell-rhdh.internalUrl" . }}
         - name: ARGO_NAMESPACE
           value: {{ include "openshell-rhdh.argoNamespace" . }}
+        {{- with .Values.portal.admins }}
         - name: PORTAL_ADMINS
-          value: {{ .Values.portal.admins | default list | join "," | quote }}
+          value: {{ . | join "," | quote }}
+        {{- end }}
         - name: VAULT_ADDR
           value: {{ .Values.vault.addr }}
         - name: VAULT_SKIP_VERIFY
