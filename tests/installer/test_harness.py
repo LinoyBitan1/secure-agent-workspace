@@ -380,10 +380,41 @@ def test_a_stdio_server_without_a_profile_is_not_governed(ab):
     assert ab.describe_harness_tree(_stdio_tree())["governance"] == []
 
 
+NODE_TRUST = {"type": "stdio", "command": "node",
+              "env": {"NODE_EXTRA_CA_CERTS": "${NODE_EXTRA_CA_CERTS}"}}
+
+
 def test_a_stdio_server_that_calls_a_service_is_governed_by_its_profile(ab):
-    info = ab.describe_harness_tree(_stdio_tree({"governanceProfile": "web-search"}))
+    info = ab.describe_harness_tree(_stdio_tree({"governanceProfile": "web-search"}, NODE_TRUST))
     assert info["governance"] == [{"kind": "MCP server", "name": "tavily",
                                    "governanceProfile": "web-search", "hosts": []}]
+
+
+def test_a_stdio_server_that_calls_a_service_must_pass_the_proxy_ca(ab):
+    """OpenClaw gives a stdio server only a minimal environment: without the
+    CA setting it cannot trust the egress proxy (found live:
+    SELF_SIGNED_CERT_IN_CHAIN on every Slack call)."""
+    with pytest.raises(ab.InstallerError, match="passes none of NODE_EXTRA_CA_CERTS"):
+        ab.describe_harness_tree(_stdio_tree({"governanceProfile": "web-search"}))
+
+
+@pytest.mark.parametrize("var", ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE",
+                                 "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"])
+def test_any_runtimes_ca_setting_is_enough(ab, var):
+    conf = {"type": "stdio", "command": "python3", "env": {var: "${%s}" % var}}
+    assert ab.describe_harness_tree(_stdio_tree({"governanceProfile": "web-search"}, conf))
+
+
+def test_the_ca_setting_must_be_the_sandboxs_own(ab):
+    """${OTHER} under the CA's name would point the server at another file."""
+    conf = {"type": "stdio", "command": "node",
+            "env": {"NODE_EXTRA_CA_CERTS": "${SOME_OTHER_VAR}"}}
+    with pytest.raises(ab.InstallerError, match="passes none of"):
+        ab.describe_harness_tree(_stdio_tree({"governanceProfile": "web-search"}, conf))
+
+
+def test_a_local_stdio_server_needs_no_ca(ab):
+    assert ab.describe_harness_tree(_stdio_tree())["governance"] == []
 
 
 @pytest.mark.parametrize("key", ["credentialSecret", "credentialSecretKey", "credentialEnvVar"])
