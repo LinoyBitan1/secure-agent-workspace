@@ -3120,9 +3120,13 @@ class ProfileApplier:
             mgmt_path.write_text(json.dumps(mgmt), encoding="utf-8")
         credential = self.creds[ws.name][provider.name]
         nc_provider = provider.nemoclaw_provider or provider.type
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
         env = {
             "NEMOCLAW_GATEWAY_MANAGEMENT": str(mgmt_path),
             "NEMOCLAW_GATEWAY_PORT": str(GATEWAY_PORT),
+            "NEMOCLAW_GATEWAY_RUNTIME": "podman",
+            "OPENSHELL_PODMAN_SOCKET": (os.environ.get("OPENSHELL_PODMAN_SOCKET")
+                                       or f"{runtime_dir}/podman/podman.sock"),
             "NEMOCLAW_IGNORE_RUNTIME_RESOURCES": "1",
             "NEMOCLAW_OPENSHELL_GATEWAY_BIN": "/usr/local/bin/openshell-gateway",
             "NEMOCLAW_OPENSHELL_SANDBOX_BIN": "/usr/local/bin/openshell-supervisor",

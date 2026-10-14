@@ -302,7 +302,7 @@ jobs:
           # Install base packages
           sudo chroot "${GUEST}" dnf install -y \
             curl jq qemu-guest-agent openssh-clients openssh-server \
-            binutils nodejs cloud-init python3-pip
+            binutils lsof nodejs cloud-init python3-pip
 
           # Remove Podman, add Docker CE repo, install Docker CE
           sudo chroot "${GUEST}" dnf remove -y \
@@ -381,7 +381,7 @@ jobs:
           # Install base packages (Podman is already present in Fedora Cloud)
           sudo chroot "${GUEST}" dnf install -y \
             curl jq qemu-guest-agent openssh-clients openssh-server \
-            binutils nodejs cloud-init python3-pip
+            binutils lsof nodejs cloud-init python3-pip
 
           # Create cloud-user
           sudo chroot "${GUEST}" useradd -m -G wheel \
