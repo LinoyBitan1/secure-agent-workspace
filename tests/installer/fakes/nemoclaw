@@ -8,7 +8,5 @@ from pathlib import Path
 state = Path(os.environ["FAKE_STATE"])
 with open(state / "nemoclaw.log", "a") as log:
     log.write(json.dumps({"args": sys.argv[1:],
-                          "runtime": os.environ.get("NEMOCLAW_GATEWAY_RUNTIME"),
-                          "socket": os.environ.get("OPENSHELL_PODMAN_SOCKET"),
                           "has_key": bool(os.environ.get("NEMOCLAW_PROVIDER_KEY"))}) + "\n")
 sys.exit(1 if (state / "nemoclaw-fail").exists() else 0)

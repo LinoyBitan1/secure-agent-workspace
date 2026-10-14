@@ -1,6 +1,3 @@
 # Add real account names here after creating them with keycloak-add-users.
 # Each entry creates saw-<name>. Demo entries are in saw-users-demo.yaml.
-users:
-  - name: alice
-    profiles:
-      - data-science
+users: []

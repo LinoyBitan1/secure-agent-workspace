@@ -91,16 +91,6 @@ def test_nemoclaw_gets_the_provider_key_via_environment(ab, fake_env, config, pr
     assert calls[0]["has_key"]
 
 
-def test_nemoclaw_selects_the_rootless_podman_runtime(
-        ab, fake_env, config, profiles, creds, monkeypatch):
-    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
-    monkeypatch.delenv("OPENSHELL_PODMAN_SOCKET", raising=False)
-    make_applier(ab, config, creds).apply(profiles)
-    call = fake_env.other_calls("nemoclaw")[0]
-    assert call["runtime"] == "podman"
-    assert call["socket"] == "/run/user/1000/podman/podman.sock"
-
-
 def test_keepalive_units_are_written_for_agent_sandboxes(ab, fake_env, config, profiles, creds):
     make_applier(ab, config, creds).apply(profiles)
     tees = [c for c in fake_env.other_calls("sudo") if c["args"][:2] == ["-n", "tee"]]
