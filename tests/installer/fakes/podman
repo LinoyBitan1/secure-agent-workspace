@@ -61,6 +61,10 @@ def container_name(key):
 
 if cmd == "pull":
     image = args[-1]
+    registry_file = state / "registry-images.json"
+    registry = json.loads(registry_file.read_text()) if registry_file.exists() else {}
+    if image not in images and image in registry:
+        images[image] = registry[image]
     if image not in images:
         print(f"Error: initializing source docker://{image}: manifest unknown", file=sys.stderr)
         sys.exit(125)

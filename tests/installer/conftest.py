@@ -122,7 +122,7 @@ def fake_env(tmp_path, monkeypatch):
     state = tmp_path / "fakestate"
     state.mkdir()
     repository = "ghcr.io/validatedpatterns-sandbox/nemoclaw-sandbox"
-    (state / "images.json").write_text(json.dumps({repository + ":latest": {
+    (state / "registry-images.json").write_text(json.dumps({repository + ":latest": {
         "RepoDigests": [repository + "@sha256:" + "a" * 64]}}))
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     monkeypatch.setenv("FAKE_STATE", str(state))

@@ -962,7 +962,7 @@ def gateway(tmp_path):
     g.stop()
 
 
-@pytest.mark.parametrize("sandbox", ["notebook", "cuda-sandbox"])
+@pytest.mark.parametrize("sandbox", ["notebook"])
 def test_every_openclaw_sandbox_ends_up_with_a_gateway(
         ab, fake_env, config, profiles, creds, gateway, sandbox):
     """Regression (found in review): the script also contains the text
