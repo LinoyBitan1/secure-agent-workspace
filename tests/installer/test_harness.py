@@ -380,41 +380,10 @@ def test_a_stdio_server_without_a_profile_is_not_governed(ab):
     assert ab.describe_harness_tree(_stdio_tree())["governance"] == []
 
 
-NODE_TRUST = {"type": "stdio", "command": "node",
-              "env": {"NODE_EXTRA_CA_CERTS": "${NODE_EXTRA_CA_CERTS}"}}
-
-
 def test_a_stdio_server_that_calls_a_service_is_governed_by_its_profile(ab):
-    info = ab.describe_harness_tree(_stdio_tree({"governanceProfile": "web-search"}, NODE_TRUST))
+    info = ab.describe_harness_tree(_stdio_tree({"governanceProfile": "web-search"}))
     assert info["governance"] == [{"kind": "MCP server", "name": "tavily",
                                    "governanceProfile": "web-search", "hosts": []}]
-
-
-def test_a_stdio_server_that_calls_a_service_must_pass_the_proxy_ca(ab):
-    """OpenClaw gives a stdio server only a minimal environment: without the
-    CA setting it cannot trust the egress proxy (found live:
-    SELF_SIGNED_CERT_IN_CHAIN on every Slack call)."""
-    with pytest.raises(ab.InstallerError, match="passes none of NODE_EXTRA_CA_CERTS"):
-        ab.describe_harness_tree(_stdio_tree({"governanceProfile": "web-search"}))
-
-
-@pytest.mark.parametrize("var", ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE",
-                                 "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"])
-def test_any_runtimes_ca_setting_is_enough(ab, var):
-    conf = {"type": "stdio", "command": "python3", "env": {var: "${%s}" % var}}
-    assert ab.describe_harness_tree(_stdio_tree({"governanceProfile": "web-search"}, conf))
-
-
-def test_the_ca_setting_must_be_the_sandboxs_own(ab):
-    """${OTHER} under the CA's name would point the server at another file."""
-    conf = {"type": "stdio", "command": "node",
-            "env": {"NODE_EXTRA_CA_CERTS": "${SOME_OTHER_VAR}"}}
-    with pytest.raises(ab.InstallerError, match="passes none of"):
-        ab.describe_harness_tree(_stdio_tree({"governanceProfile": "web-search"}, conf))
-
-
-def test_a_local_stdio_server_needs_no_ca(ab):
-    assert ab.describe_harness_tree(_stdio_tree())["governance"] == []
 
 
 @pytest.mark.parametrize("key", ["credentialSecret", "credentialSecretKey", "credentialEnvVar"])
@@ -519,3 +488,54 @@ def test_the_index_and_the_files_must_list_the_same_bundles(ab, shipped_harness_
     with pytest.raises(ab.InstallerError, match="missing from harness-index.yaml"):
         ab.check_harness_index(bundles, {"bundles": {}})
     ab.check_harness_index(bundles, {})  # no index shipped: nothing to compare
+
+
+# -- bundle MCP servers re-declared in openclaw.json -------------------------------
+
+def _mcp_info(ab, servers, declared=()):
+    manifest = yaml.safe_dump({"metadata": {"name": "demo"}, "spec": {
+        "mcpServers": [{"name": n, "governanceProfile": "web-search"} for n in declared]}})
+    tree = {"harness.yaml": (manifest.encode(), False), "plugin.json": (b'{"name": "demo"}', False),
+            "mcp.json": (json.dumps({"mcpServers": servers}).encode(), False)}
+    return ab.describe_harness_tree(tree)
+
+
+def test_a_stdio_server_gets_its_placeholders_through_openclaw_json(ab):
+    """OpenClaw expands only ${PLUGIN_ROOT}/${PLUGIN_DATA} in a bundle's
+    mcp.json, so ${BRAVE_API_KEY} would reach the server as literal text
+    (found live: Slack answered invalid_auth). openclaw.json expands it."""
+    info = _mcp_info(ab, {"search": {"type": "stdio", "command": "node",
+                                     "args": ["${PLUGIN_ROOT}/mcp/search.mjs", "--data=${PLUGIN_DATA}"],
+                                     "env": {"BRAVE_API_KEY": "${BRAVE_API_KEY}"}}})
+    entry = ab.harness_mcp_servers(info)["search"]
+    assert entry["command"] == "node"
+    assert entry["args"] == ["/sandbox/harness/mcp/search.mjs",
+                             "--data=/sandbox/.openclaw/saw-plugin-data/demo"]
+    assert entry["env"]["BRAVE_API_KEY"] == "${BRAVE_API_KEY}"
+    # and the sandbox's CA settings, so it trusts the egress proxy
+    for var in ab.MCP_TRUST_ENV:
+        assert entry["env"][var] == "${%s}" % var
+    assert entry["env"]["PLUGIN_ROOT"] == "/sandbox/harness"
+
+
+def test_a_relative_command_resolves_inside_the_bundle(ab):
+    info = _mcp_info(ab, {"tool": {"type": "stdio", "command": "./bin/tool"}})
+    assert ab.harness_mcp_servers(info)["tool"]["command"] == "/sandbox/harness/bin/tool"
+
+
+def test_a_remote_server_is_re_declared_only_for_its_headers(ab):
+    info = _mcp_info(ab, {
+        "docs": {"type": "streamable-http", "url": "https://docs.example.com/mcp",
+                 "headers": {"Authorization": "Bearer ${DOCS_TOKEN}"}},
+        "open": {"type": "sse", "url": "https://open.example.com/sse"}}, declared=("docs", "open"))
+    servers = ab.harness_mcp_servers(info)
+    assert servers == {"docs": {"url": "https://docs.example.com/mcp", "transport": "streamable-http",
+                                "headers": {"Authorization": "Bearer ${DOCS_TOKEN}"}}}
+
+
+def test_a_bundle_without_plugin_json_declares_nothing(ab):
+    manifest = yaml.safe_dump({"metadata": {"name": "demo"}, "spec": {}})
+    info = ab.describe_harness_tree({"harness.yaml": (manifest.encode(), False),
+                                     "skills/x/SKILL.md": (b"---\nname: x\n---\n", False)})
+    assert ab.harness_mcp_servers(info) == {}
+

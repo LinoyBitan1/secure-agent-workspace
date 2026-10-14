@@ -856,12 +856,9 @@ def test_a_remote_mcp_server_inside_its_profile_is_accepted(ab, fake_env, config
 
 def test_a_stdio_server_gets_its_key_only_through_the_provider(ab, fake_env, config, profiles, creds):
     """No key is written or exported into the sandbox by the installer: the
-    server reads the provider's placeholder env var, and the egress proxy
-    adds the real key."""
-    tree = {**V1, "harness.yaml": manifest(mcpServers=[{"name": "echo", "governanceProfile": "brave"}]),
-            "mcp.json": json.dumps({"mcpServers": {"echo": {
-                "type": "stdio", "command": "node",
-                "env": {"NODE_EXTRA_CA_CERTS": "${NODE_EXTRA_CA_CERTS}"}}}})}
+    server gets the provider's placeholder (through openclaw.json), and the
+    egress proxy adds the real key."""
+    tree = {**V1, "harness.yaml": manifest(mcpServers=[{"name": "echo", "governanceProfile": "brave"}])}
     fake_env.set_images({IMAGE_V1: {"__tree__": tree}})
     applier = make_applier(ab, config, creds)
     applier.apply(use_ref(profiles, {"image": IMAGE_V1}, ["nvidia", "brave"]))
@@ -870,7 +867,10 @@ def test_a_stdio_server_gets_its_key_only_through_the_provider(ab, fake_env, con
                if c[:2] == ["sandbox", "exec"] and c[3] == "notebook"]
     gateway_run = next(s for s in scripts if "nohup openclaw gateway run" in s)
     assert gateway_run.count("export ") == 1, "only the gateway token is exported"
-    assert not any("mcp.servers." in s for s in scripts)
+    # The server is re-declared in openclaw.json with ${VAR} references only:
+    # OpenClaw fills in the placeholder there, never a key.
+    declared = notebook(fake_env)["openclawConfig"]["mcp.servers.echo"]
+    assert all(v.startswith("${") or v.startswith("/") for v in declared["env"].values())
     brave_key = creds["default"]["brave"]
     assert brave_key not in "\n".join(" ".join(c) for c in fake_env.openshell_calls()
                                       if c[:2] == ["sandbox", "exec"])
@@ -1108,3 +1108,34 @@ def test_a_harness_needs_driver_config_allowed(ab, tmp_path):
     toml.write_text('[openshell.drivers.podman]\nallow_driver_config = true\n')
     ab.check_driver_config_allowed(toml)
     ab.check_driver_config_allowed(tmp_path / "missing.toml")
+
+
+def test_mcp_servers_are_declared_once_and_follow_the_bundle(ab, fake_env, config, profiles, creds):
+    """A rerun with the same bundle leaves openclaw.json alone (no gateway
+    restart); a server the bundle drops is removed again."""
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    use_ref(profiles, {"image": IMAGE_V1})
+    make_applier(ab, config, creds).apply(profiles)
+    sb = notebook(fake_env)
+    assert sb["mcpWrites"] == 1 and "mcp.servers.echo" in sb["openclawConfig"]
+    make_applier(ab, config, creds).apply(profiles)
+    assert notebook(fake_env)["mcpWrites"] == 1, "unchanged: nothing rewritten"
+    v2 = {**V2, "mcp.json": json.dumps({"mcpServers": {}})}
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}, IMAGE_V2: {"__tree__": v2}})
+    applier = make_applier(ab, config, creds)
+    applier.apply(use_ref(profiles, {"image": IMAGE_V2}))
+    sb = notebook(fake_env)
+    assert sb["mcpWrites"] == 2 and "mcp.servers.echo" not in sb["openclawConfig"]
+
+
+def test_a_missing_mcp_declaration_fails_verify(ab, fake_env, config, profiles, creds):
+    fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
+    use_ref(profiles, {"image": IMAGE_V1})
+    applier = make_applier(ab, config, creds)
+    applier.apply(profiles)
+    assert applier.verify(profiles) == []
+    state = fake_env.openshell_state()
+    del state["sandboxes"]["default/notebook"]["openclawConfig"]["mcp.servers.echo"]
+    fake_env.set_openshell_state(state)
+    assert any("does not declare MCP server 'echo'" in f for f in applier.verify(profiles))
+
