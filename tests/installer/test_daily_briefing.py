@@ -216,8 +216,10 @@ def test_the_bundle_is_valid_and_the_chart_copy_matches():
     assert {s["name"]: s["governanceProfile"] for s in doc["spec"]["mcpServers"]} == {
         "slack-reader": "slack", "gmail-reader": "gmail"}
     servers = json.loads((BUNDLE / "mcp.json").read_text())["mcpServers"]
-    assert servers["slack-reader"]["env"] == {"SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}"}
-    assert servers["gmail-reader"]["env"] == {"GMAIL_ACCESS_TOKEN": "${GMAIL_ACCESS_TOKEN}"}
+    # The provider's placeholder, and the proxy CA (OpenClaw passes neither on).
+    ca = {"NODE_EXTRA_CA_CERTS": "${NODE_EXTRA_CA_CERTS}"}
+    assert servers["slack-reader"]["env"] == {"SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}", **ca}
+    assert servers["gmail-reader"]["env"] == {"GMAIL_ACCESS_TOKEN": "${GMAIL_ACCESS_TOKEN}", **ca}
 
 
 # -- the MCP servers, against fake Slack and Gmail ----------------------------------
