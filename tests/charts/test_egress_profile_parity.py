@@ -1,5 +1,6 @@
 """Keep the shipped governance profiles and the VM's hostname allowlist aligned."""
 
+import hashlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -95,12 +96,23 @@ def test_allowlist_has_no_unexplained_reverse_drift():
 
 def test_installer_profile_copies_match_governance_policy():
     copies = sorted(SAW_COPIES.glob("*.yaml"))
-    assert [p.name for p in copies] == ["brave.yaml", "nvidia.yaml", "openai.yaml"]
+    assert [p.name for p in copies] == ["brave.yaml", "nemoclaw-nvidia-inference-v1.yaml",
+                                      "nvidia.yaml", "openai.yaml"]
     for path in copies:
         twin = PROFILES / path.name
         assert path.read_text() == twin.read_text(), (
             f"copy charts/governance-policy/profiles/{path.name} to "
             f"charts/openshell-saw/files/provider-profiles/{path.name}")
+
+
+def test_nemoclaw_profile_matches_the_pinned_upstream_source():
+    # managed-inference/provider-profiles/nemoclaw-nvidia-inference-v1.yaml
+    # from NVIDIA/NemoClaw v0.0.133; requalify when changing the source pin.
+    cli = yaml.safe_load((ROOT / "image-builder-charts/helm/nemoclaw-cli-imagestream/values.yaml").read_text())
+    assert cli["source"]["git"]["ref"] == "ef5d55d19e2da33c2474db158588613828e1a9be"
+    profile = PROFILES / "nemoclaw-nvidia-inference-v1.yaml"
+    assert hashlib.sha256(profile.read_bytes()).hexdigest() == (
+        "c81ceb581c1c049ff2496ec963574a94a1b0acc0cd17acebd435ad3bfd993ecf")
 
 
 @pytest.mark.skipif(not HELM, reason="helm is not installed")
