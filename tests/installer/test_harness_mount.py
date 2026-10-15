@@ -974,6 +974,10 @@ def test_every_openclaw_sandbox_ends_up_with_a_gateway(
     killed its shell before nohup; the one without a harness concluded a
     gateway was already running. Neither got a gateway. This runs the exact
     script start_openclaw sends with a real sh, nothing running yet."""
+    for _, ws in ab.enabled_workspaces(profiles):
+        for sb in ws.sandboxes:
+            if sb.name == sandbox:
+                sb.type = "openclaw"
     fake_env.set_images({IMAGE_V1: {"__tree__": V1}})
     make_applier(ab, config, creds).apply(use_ref(profiles, {"image": IMAGE_V1}))
     script = next(c[-1] for c in fake_env.openshell_calls()

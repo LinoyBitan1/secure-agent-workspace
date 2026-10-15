@@ -91,14 +91,58 @@ def test_nemoclaw_gets_the_provider_key_via_environment(ab, fake_env, config, pr
     assert calls[0]["has_key"]
 
 
-def test_keepalive_units_are_written_for_agent_sandboxes(ab, fake_env, config, profiles, creds):
+def test_native_nemoclaw_uses_profile_image_and_rootless_socket(
+        ab, fake_env, config, profiles, creds, monkeypatch):
+    monkeypatch.setenv("OPENSHELL_PODMAN_SOCKET", "/run/user/1000/podman/podman.sock")
+    make_applier(ab, config, creds).apply(profiles)
+    call = fake_env.other_calls("nemoclaw")[0]
+    image = call["args"][call["args"].index("--from-image") + 1]
+    assert image == "ghcr.io/validatedpatterns-sandbox/nemoclaw-sandbox@sha256:" + "a" * 64
+    assert call["runtime"] == "podman"
+    assert call["socket"] == "/run/user/1000/podman/podman.sock"
+    assert call["workspace"] == "cuda-dev"
+    management = json.loads((fake_env.home / "gateway-management.json").read_text())
+    assert management["stateDir"] == str(fake_env.home / ".local/state/saw-installer")
+    # Only the plain OpenClaw notebook is created/configured by the installer.
+    assert not [c for c in fake_env.openshell_calls()
+                if c[:2] in (["sandbox", "create"], ["sandbox", "exec"])
+                and "cuda-sandbox" in c]
+
+
+def test_native_nemoclaw_failure_is_reported_without_fallback(
+        ab, fake_env, config, profiles, creds):
+    (fake_env.state / "nemoclaw-fail").touch()
+    with pytest.raises(ab.InstallerError, match="nemoclaw"):
+        make_applier(ab, config, creds).apply(profiles)
+    assert "cuda-dev/cuda-sandbox" not in fake_env.openshell_state()["sandboxes"]
+
+
+def test_native_nemoclaw_keeps_pinned_image_without_resolving_again(ab, fake_env, config):
+    image = "registry.example:5000/agent@sha256:" + "b" * 64
+    assert make_applier(ab, config, {}).resolve_nemoclaw_image(image, "/test.sock") == image
+    assert fake_env.other_calls("podman") == []
+
+
+@pytest.mark.parametrize("image", ["", "bad image", "registry.example/agent@sha256:abc"])
+def test_native_nemoclaw_rejects_invalid_image_before_pull(ab, fake_env, config, image):
+    with pytest.raises(ab.InstallerError, match="image reference"):
+        make_applier(ab, config, {}).resolve_nemoclaw_image(image, "/test.sock")
+    assert fake_env.other_calls("podman") == []
+
+
+@pytest.mark.parametrize("digests", [None, [], ["other.example/agent@sha256:" + "b" * 64]])
+def test_native_nemoclaw_rejects_unresolved_tag(ab, fake_env, config, digests):
+    image = "registry.example:5000/agent:latest"
+    (fake_env.state / "registry-images.json").write_text(json.dumps({image: {"RepoDigests": digests}}))
+    with pytest.raises(ab.InstallerError, match="registry digest"):
+        make_applier(ab, config, {}).resolve_nemoclaw_image(image, "/test.sock")
+
+
+def test_only_plain_openclaw_gets_an_installer_keepalive(ab, fake_env, config, profiles, creds):
     make_applier(ab, config, creds).apply(profiles)
     tees = [c for c in fake_env.other_calls("sudo") if c["args"][:2] == ["-n", "tee"]]
     units = {c["args"][2]: c["stdin"] for c in tees}
-    assert set(units) == {"/etc/systemd/system/openshell-sandbox-notebook.service",
-                          "/etc/systemd/system/openshell-sandbox-cuda-sandbox.service"}
-    cuda = units["/etc/systemd/system/openshell-sandbox-cuda-sandbox.service"]
-    assert "--workspace cuda-dev" in cuda and "User=cloud-user" in cuda
+    assert set(units) == {"/etc/systemd/system/openshell-sandbox-notebook.service"}
 
 
 def test_second_apply_is_idempotent(ab, fake_env, config, profiles, creds):
@@ -110,10 +154,9 @@ def test_second_apply_is_idempotent(ab, fake_env, config, profiles, creds):
     assert after["providers"] == before["providers"]
     assert after["sandboxes"] == before["sandboxes"]
     creates = [c for c in fake_env.openshell_calls() if c[:2] == ["sandbox", "create"]]
-    assert len(creates) == 2          # existing Ready sandboxes are not recreated
-    # Live: on a reboot `nemoclaw onboard --fresh` refused the running gateway
-    # (gateway.port.uncontested). A running sandbox is onboarded only once.
-    assert len(fake_env.other_calls("nemoclaw")) == 1
+    assert len(creates) == 1          # only the notebook is installer-created
+    # Native onboarding validates its own registration on each apply.
+    assert len(fake_env.other_calls("nemoclaw")) == 2
 
 
 def test_broken_nemoclaw_sandbox_is_onboarded_again(ab, fake_env, config, profiles, creds, monkeypatch):

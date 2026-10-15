@@ -8,5 +8,18 @@ from pathlib import Path
 state = Path(os.environ["FAKE_STATE"])
 with open(state / "nemoclaw.log", "a") as log:
     log.write(json.dumps({"args": sys.argv[1:],
+                          "runtime": os.environ.get("NEMOCLAW_GATEWAY_RUNTIME"),
+                          "socket": os.environ.get("OPENSHELL_PODMAN_SOCKET"),
+                          "workspace": os.environ.get("OPENSHELL_WORKSPACE"),
                           "has_key": bool(os.environ.get("NEMOCLAW_PROVIDER_KEY"))}) + "\n")
-sys.exit(1 if (state / "nemoclaw-fail").exists() else 0)
+if (state / "nemoclaw-fail").exists():
+    sys.exit(1)
+if sys.argv[1:2] == ["onboard"]:
+    path = state / "openshell.json"
+    data = json.loads(path.read_text()) if path.exists() else {"sandboxes": {}}
+    name = sys.argv[sys.argv.index("--name") + 1]
+    image = sys.argv[sys.argv.index("--from-image") + 1]
+    workspace = os.environ.get("OPENSHELL_WORKSPACE", "default")
+    data["sandboxes"][f"{workspace}/{name}"] = {
+        "image": image, "providers": ["nvidia"], "phase": "Ready"}
+    path.write_text(json.dumps(data))

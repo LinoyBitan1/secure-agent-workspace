@@ -37,6 +37,19 @@ args = sys.argv[1:]
 with open(state / "podman.log", "a") as log:
     log.write(json.dumps(args) + "\n")
 
+if args[:1] == ["--url"]:
+    args = args[2:]
+    registry_file = state / "registry-images.json"
+    registry = json.loads(registry_file.read_text()) if registry_file.exists() else {}
+    image = args[-1]
+    if image not in registry:
+        sys.exit(125)
+    if args[:2] == ["image", "inspect"]:
+        print(json.dumps(registry[image].get("RepoDigests")))
+        sys.exit(0)
+    if args[:1] == ["pull"]:
+        sys.exit(0)
+
 images = json.loads((state / "images.json").read_text()) if (state / "images.json").exists() else {}
 containers_file = state / "containers.json"
 containers = json.loads(containers_file.read_text()) if containers_file.exists() else {}

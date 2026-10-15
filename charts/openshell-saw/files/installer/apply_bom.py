@@ -3197,13 +3197,43 @@ class ProfileApplier:
             log(f"Attaching provider '{prov}' to existing sandbox '{sb.name}'")
             self.cli("sandbox", "provider", "attach", sb.name, prov, *ws_args(ws.name), check=False)
 
+    def resolve_nemoclaw_image(self, image, socket):
+        """Resolve the profile's CI tag through the runtime NemoClaw will use."""
+        if DIGEST_IMAGE_RE.fullmatch(image or ""):
+            return image
+        if not image or not IMAGE_RE.fullmatch(image) or "@" in image:
+            raise InstallerError("nemoclaw sandbox image is not a valid image reference")
+        podman = ["podman", "--url", f"unix://{socket}"]
+        self.sh.run([*podman, "pull", "--quiet", image], timeout=900)
+        result = self.sh.run([*podman, "image", "inspect", "--format",
+                              "{{json .RepoDigests}}", image], quiet=True)
+        if self.sh.dry_run:
+            return image
+        try:
+            digests = json.loads(result.out)
+        except json.JSONDecodeError as exc:
+            raise InstallerError(f"could not read registry digests for {image}") from exc
+        prefix, separator, basename = image.rpartition("/")
+        repository = prefix + separator + basename.split(":", 1)[0]
+        matches = set()
+        if isinstance(digests, list):
+            matches = {ref for ref in digests if isinstance(ref, str)
+                       and ref.startswith(repository + "@") and DIGEST_IMAGE_RE.fullmatch(ref)}
+        if len(matches) != 1:
+            raise InstallerError(f"could not resolve one registry digest for {image}")
+        return matches.pop()
+
     def onboard_nemoclaw(self, ws, sb, provider):
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        socket = os.environ.get("OPENSHELL_PODMAN_SOCKET") or f"{runtime_dir}/podman/podman.sock"
+        image = self.resolve_nemoclaw_image(sb.image, socket)
         home = Path(os.environ.get("HOME", "/home/cloud-user"))
         mgmt_path = home / "gateway-management.json"
         mgmt = {
             "version": 1, "mode": "externally-supervised",
             "endpoint": f"https://127.0.0.1:{GATEWAY_PORT}",
-            "stateDir": str(home / ".local" / "state" / "openshell"),
+            # External gateway registration imports the installer's admin TLS.
+            "stateDir": str(home / ".local" / "state" / "saw-installer"),
             "supervisor": {"kind": "systemd-user", "serviceName": "openshell-gateway.service",
                            "execPath": "/usr/local/bin/openshell-gateway"},
         }
@@ -3214,6 +3244,9 @@ class ProfileApplier:
         env = {
             "NEMOCLAW_GATEWAY_MANAGEMENT": str(mgmt_path),
             "NEMOCLAW_GATEWAY_PORT": str(GATEWAY_PORT),
+            "NEMOCLAW_GATEWAY_RUNTIME": "podman",
+            "OPENSHELL_PODMAN_SOCKET": socket,
+            "OPENSHELL_WORKSPACE": ws.name,
             "NEMOCLAW_IGNORE_RUNTIME_RESOURCES": "1",
             "NEMOCLAW_OPENSHELL_GATEWAY_BIN": "/usr/local/bin/openshell-gateway",
             "NEMOCLAW_OPENSHELL_SANDBOX_BIN": "/usr/local/bin/openshell-supervisor",
@@ -3227,8 +3260,9 @@ class ProfileApplier:
             env[PROVIDER_CRED_MAP[nc_provider]] = credential
         result = self.sh.run(["nemoclaw", "onboard", "--fresh", "--non-interactive",
                               "--name", sb.name, "--agent", sb.agent or "openclaw",
+                              "--from-image", image,
                               "--yes", "--yes-i-accept-third-party-software"],
-                             env=env, check=False, timeout=900)
+                             env=env, timeout=900)
         return result.ok
 
     EXEC_READY_SECONDS = 300
@@ -3572,21 +3606,22 @@ class ProfileApplier:
 
     def apply_sandbox(self, ws, sb):
         provider = self.find_provider(ws, sb.providers)
-        if provider is None and sb.type in ("nemoclaw", "openclaw"):
+        if sb.type == "nemoclaw":
+            if provider is None:
+                raise InstallerError(f"no usable provider for nemoclaw sandbox '{sb.name}'")
+            # NemoClaw owns sandbox identity, creation and agent readiness.
+            try:
+                self.onboard_nemoclaw(ws, sb, provider)
+            finally:
+                self.cli("gateway", "select", self.gateway, check=False)
+            self.remember("sandbox", ws.name, sb.name)
+            return
+        if provider is None and sb.type == "openclaw":
             log(f"WARN: no usable provider for {sb.type} sandbox '{sb.name}'; "
                 "creating it without agent onboarding")
             self.create_sandbox(ws, sb)
             return
-        if sb.type == "nemoclaw":
-            # Onboard once: on later boots the sandbox exists and nemoclaw
-            # refuses to attach to the already running gateway.
-            if self.sandbox_state(ws, sb) == "running":
-                log(f"Sandbox '{sb.name}' already onboarded; skipping nemoclaw onboard")
-            elif not self.onboard_nemoclaw(ws, sb, provider):
-                log(f"nemoclaw onboard failed for '{sb.name}'; continuing with plain sandbox create")
-            self.create_sandbox(ws, sb, configure_harness=False)
-            self.start_openclaw(ws, sb, provider)
-        elif sb.type == "openclaw":
+        if sb.type == "openclaw":
             self.create_sandbox(ws, sb, configure_harness=False)
             self.start_openclaw(ws, sb, provider)
         else:

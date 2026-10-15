@@ -121,6 +121,9 @@ def fake_env(tmp_path, monkeypatch):
         target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     state = tmp_path / "fakestate"
     state.mkdir()
+    repository = "ghcr.io/validatedpatterns-sandbox/nemoclaw-sandbox"
+    (state / "registry-images.json").write_text(json.dumps({repository + ":latest": {
+        "RepoDigests": [repository + "@sha256:" + "a" * 64]}}))
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     monkeypatch.setenv("FAKE_STATE", str(state))
     monkeypatch.setenv("FAKE_PYTHON", sys.executable)
