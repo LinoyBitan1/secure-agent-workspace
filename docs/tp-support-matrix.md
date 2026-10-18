@@ -2,7 +2,8 @@
 
 Tracking work: APPENG-6705, Determine support matrix for providers and drivers.
 
-Status: initial assessment; no combination has been live-validated in this work.
+Status: test environment deployed; Codex sign-in is blocked before inference.
+No combination has been live-validated in this work.
 The parent spike link and live verification of provider configuration are pending.
 
 ## Scope and terminology
@@ -30,8 +31,8 @@ qualifying live test has been recorded; it does not mean unsupported.
 
 | Provider | Podman compute driver | Kubernetes compute driver |
 | --- | --- | --- |
-| Codex (primary) | **Not tested.** Upstream Codex uses OAuth; the installer currently supplies a single API key. Option A deployment is in progress. | **Not tested.** An upstream Kubernetes driver exists, but this SAW chart does not configure it. |
-| Anthropic (secondary) | **Not tested.** Native provider onboarding needs investigation; Option A deployment is in progress. | **Not tested.** No Kubernetes compute-driver deployment path identified in the current chart. |
+| Codex (primary) | **Not tested (blocked).** The shipped OpenClaw OAuth flow rejects OpenShell's synthetic DNS address before issuing a login code. See the [live attempt](#codex--podman-live-preparation-attempt). | **Not tested.** An upstream Kubernetes driver exists, but this SAW chart does not configure it. |
+| Anthropic (secondary) | **Not tested.** Native provider onboarding and credentials still need validation. The OpenClaw/Podman environment is running. | **Not tested.** No Kubernetes compute-driver deployment path identified in the current chart. |
 
 ## Implementation findings
 
@@ -121,6 +122,73 @@ These tests use fakes or local fixtures; they do not validate any matrix cell.
 could not complete: the CLI attempted to refresh an expired gateway OIDC token
 against the unreachable configured cluster. Profile lint success is therefore
 not claimed.
+
+## Codex + Podman live preparation attempt
+
+Date: 2026-10-18. Deployment commit:
+`14fe6e0` on `docs/appeng-6705-support-matrix`.
+Cluster: `cluster-r4js8`, OpenShift 4.22.18.
+VM: `saw-tp-validation/tp-validation`.
+Sandbox: `default/notebook`, Ready.
+VM OS: Fedora Linux 44 (Cloud Edition), `x86_64`.
+Effective gateway configuration: `compute_driver = "podman"`.
+
+Verified live:
+
+- OpenShell CLI and installed components: `0.1.2-rhaiv.0`.
+- Podman: `5.8.1`.
+- OpenClaw: `2026.9.6 (eb377ac)`, using the digest-pinned AIPCC image in
+  [the test profile](../charts/saw-bom/profiles/tp-validation/default/sandbox.yaml).
+- `saw-install.service` and `saw-apply.service` both report phase `Done` in
+  `/var/lib/saw/status.json`.
+- The only attached provider is the NVIDIA baseline. No Codex credential or
+  successful Codex inference is claimed.
+
+From the gateway VM, attempted the shipped OpenClaw device-code flow:
+
+```bash
+openshell --gateway saw-installer sandbox exec --name notebook --tty \
+  --timeout 180 -- \
+  env OPENCLAW_HOME=/sandbox SQLITE_TMPDIR=/sandbox/.openclaw/state \
+  TMPDIR=/sandbox/.openclaw/state OPENCLAW_NIX_MODE=0 \
+  openclaw models auth login --provider openai --device-code
+```
+
+Result: exit status 1 from the remote command, before any login code was issued:
+
+```text
+[security] blocked URL fetch (openai-chatgpt-device-code)
+targetOrigin=https://auth.openai.com
+reason=Blocked: resolves to private/internal/special-use IP address
+```
+
+The initial non-TTY attempt was refused because this CLI requires an interactive
+TTY; the command above includes that requirement and reaches the OAuth request.
+
+Reproduced the DNS results through Node inside the same sandbox using
+`require("node:dns").promises.lookup(host, {all: true})`:
+
+```text
+auth.openai.com              198.18.0.7
+api.openai.com               198.18.0.8
+integrate.api.nvidia.com     198.18.0.5
+```
+
+OpenShell's `policy_dns/runtime.rs` allocates synthetic addresses from
+`198.18.0.0/15`. Inspection of the installed OpenClaw file
+`dist/extensions/openai/openai-chatgpt-device-code.js` shows that OAuth calls
+`fetchWithSsrFGuard` for
+`https://auth.openai.com/api/accounts/deviceauth/usercode`. Together, the live
+DNS answers and the rejection identify a compatibility issue between the
+OAuth request guard and the sandbox's synthetic DNS. No broad private-network
+exception or agent code patch was applied.
+
+Next prerequisite: establish a supported authentication route compatible with
+OpenShell's DNS and credential handling. The current gateway catalog also does
+not serve a Codex profile, and the namespace egress rules do not yet include
+Codex authentication hosts. These need configuration before a full inference
+test, even after the OAuth guard issue is resolved. Account authorization and
+the `SAW_TP_OK` inference check have not run.
 
 ## Test procedure
 
@@ -214,8 +282,10 @@ Failure or not-tested reason:
   Keycloak account through `make keycloak-add-users`; generated passwords stay
   in a cluster Secret. The installer validates the new profile, and
   `tests/charts/test_saw_users_chart.py` plus
-  `tests/charts/test_saw_bom_chart.py` passed (45 tests). VM creation and
-  provider inference still need live verification.
+  `tests/charts/test_saw_bom_chart.py` passed (45 tests). Argo CD created the
+  VM and the `notebook` sandbox; both are running, and both installer phases
+  are Done. The Codex authentication attempt and remaining integration gaps
+  are recorded above; provider inference still needs live verification.
 - **Provider integration:** use the upstream OAuth-based Codex route as the
   working interpretation, verify the actual runtime in the pinned image, and
   establish how its credentials reach the workload. A direct API-key test
