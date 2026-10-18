@@ -129,6 +129,7 @@ BASE_URL_CONFIG_KEYS = {
 # requests to the profile's endpoints from the profile's binaries. A
 # provider's baseUrl overrides these.
 NATIVE_BASE_URLS = {
+    "codex": "https://api.openai.com/v1",
     "nvidia": "https://integrate.api.nvidia.com/v1",
     "build": "https://integrate.api.nvidia.com/v1",
     "openai": "https://api.openai.com/v1",
@@ -3280,11 +3281,14 @@ class ProfileApplier:
             return
         # key_var is a constant (PROVIDER_CRED_MAP); everything that comes from
         # the profile or a Secret is quoted for the sandbox's shell.
+        # OpenShell keeps type codex; OpenClaw uses its canonical OpenAI
+        # API-key transport, avoiding its legacy codex OAuth provider name.
+        openclaw_provider = "openai" if provider.type == "codex" else provider.type
         onboarded = self.cli(*exec_cmd, "sh", "-c",
                  f"{oc_env} CUSTOM_API_KEY=\"${key_var}\" openclaw onboard --non-interactive "
                  "--accept-risk --mode local --auth-choice custom-api-key "
                  f"--custom-base-url {shlex.quote(base_url)} "
-                 f"--custom-provider-id {shlex.quote(provider.type)} "
+                 f"--custom-provider-id {shlex.quote(openclaw_provider)} "
                  f"--custom-model-id {shlex.quote(model)} "
                  "--custom-compatibility openai --skip-channels --skip-health", check=False)
         # Re-onboarding an existing sandbox with a different provider or model

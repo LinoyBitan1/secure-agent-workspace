@@ -462,6 +462,7 @@ The existing Python CLI has a smaller command set than Make. See
 | Google Gemini | `gemini` | `gemini-2.5-flash` |
 | Anthropic | `anthropic` | `claude-sonnet-4-6` |
 | OpenAI | `openai` | `gpt-4o` |
+| Codex (API key, OpenClaw agent) | `codex` | `gpt-6-luna`; see [Codex configuration](docs/codex.md) |
 | NVIDIA Build | `build` | `meta/llama-3.3-70b-instruct` |
 | OpenRouter | `openrouter` | `anthropic/claude-sonnet-4-6` |
 | Ollama (local) | `ollama` | `llama3` |

@@ -95,7 +95,7 @@ def test_allowlist_has_no_unexplained_reverse_drift():
 
 def test_installer_profile_copies_match_governance_policy():
     copies = sorted(SAW_COPIES.glob("*.yaml"))
-    assert [p.name for p in copies] == ["brave.yaml", "nvidia.yaml", "openai.yaml"]
+    assert [p.name for p in copies] == ["brave.yaml", "codex.yaml", "nvidia.yaml", "openai.yaml"]
     for path in copies:
         twin = PROFILES / path.name
         assert path.read_text() == twin.read_text(), (

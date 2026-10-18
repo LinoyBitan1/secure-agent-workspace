@@ -1,0 +1,12 @@
+apiVersion: saw.redhat.com/v1alpha1
+kind: Providers
+metadata:
+  profile: codex
+spec:
+  providers:
+    - name: codex
+      type: codex
+      credentialSecret: inference
+      credentialSecretKey: api_key
+      modelSecretKey: model
+      model: gpt-6-luna
