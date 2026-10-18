@@ -469,9 +469,13 @@ The existing Python CLI has a smaller command set than Make. See
 
 #### Custom inference provider
 
-Use a model server of your own (vLLM, Ollama, or any OpenAI-compatible API) instead of a cloud provider. The installer creates an `openai` provider with the endpoint's base URL and onboards OpenClaw against that URL. OpenShell 0.1.x has no inference routing: the agent sends a placeholder key, and the sandbox proxy puts in the real one only for the hosts the provider profile names, so the profile must name your endpoint's host (see [docs/custom-inference.md](docs/custom-inference.md)).
+Use the OpenAI API or an OpenAI-compatible model server such as vLLM or Ollama. The installer creates an `openai` provider with the endpoint's base URL and onboards OpenClaw against that URL. OpenShell 0.1.x has no inference routing: the agent sends a placeholder key, and the sandbox proxy puts in the real one only for the hosts the provider profile names, so the profile must name your endpoint's host (see [docs/custom-inference.md](docs/custom-inference.md)).
 
 Select the `custom-inference` SAW-BOM profile and give the endpoint's URL, model and key.
+
+For **OpenAI**, replace the `inference` fields using the OpenAI
+example in [`values-secret.yaml.template`](values-secret.yaml.template).
+Save your API key in `~/.openai-api-key`. Retain the profile's `web-search` secret.
 
 **Option A (Validated Pattern)** — in `~/values-secret-secure-agent-workspace.yaml`, use the commented custom example of the `inference` secret (`provider: openai`, `model`, `url`, `api_key`), and select the profile in `charts/saw-bom/values.yaml` (committed to the branch the pattern deploys):
 
@@ -494,6 +498,9 @@ Notes:
 - The **gateway VM** calls the URL, not your laptop: use a cluster Service or Route host. `localhost` is refused.
 - With governance on, the `openai` provider type must be in the governance catalog (`charts/governance-policy/profiles/openai.yaml`, shipped with the chart).
 - Self-hosted models can be slow; the profile sets a 300-second inference timeout.
+- With governance disabled, supply a complete static policy allowing the endpoint for OpenClaw's Node binary.
+
+Recorded TP results: [provider / driver matrix](docs/provider-driver-matrix.md).
 
 Details: [docs/custom-inference.md](docs/custom-inference.md).
 
