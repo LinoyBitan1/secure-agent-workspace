@@ -457,6 +457,9 @@ The existing Python CLI has a smaller command set than Make. See
 
 #### Supported inference providers
 
+For the SAW 3.6 TP provider/compute-driver validation results and outstanding
+test gaps, see the [TP support matrix](docs/tp-support-matrix.md).
+
 | Provider | Key | Example model |
 |---|---|---|
 | Google Gemini | `gemini` | `gemini-2.5-flash` |

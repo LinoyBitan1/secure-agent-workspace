@@ -26,10 +26,11 @@ spec:
       profile:
         title: Profile
         type: string
-        enum: [custom-inference, data-science]
+        enum: [custom-inference, data-science, tp-validation]
         enumNames: ['custom-inference: Agent workspace backed by a custom OpenAI-compatible endpoint (vLLM,
             Ollama, ...)', 'data-science: Data science workspace with NVIDIA inference and web search;
-            CUDA development workspace with NVIDIA inference']
+            CUDA development workspace with NVIDIA inference', 'tp-validation: SAW TP validation: OpenClaw
+            with the baseline inference provider']
         default: data-science
     dependencies:
       profile:
@@ -53,6 +54,11 @@ spec:
             web_search__api_key: {title: 'web-search: API key', type: string, 'ui:field': Secret, description: Stored
                 in Vault for your workspace only (provider brave)}
           required: [inference__api_key, web_search__api_key]
+        - properties:
+            profile: {const: tp-validation}
+            inference__api_key: {title: 'inference: API key', type: string, 'ui:field': Secret, description: Stored
+                in Vault for your workspace only (provider nvidia)}
+          required: [inference__api_key]
   steps:
   - id: request
     name: Submit the request

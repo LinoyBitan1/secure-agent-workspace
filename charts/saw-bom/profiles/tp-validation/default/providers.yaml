@@ -1,0 +1,12 @@
+apiVersion: saw.redhat.com/v1alpha1
+kind: Providers
+metadata:
+  profile: tp-validation
+spec:
+  providers:
+    - name: nvidia
+      type: nvidia
+      nemoclawProvider: build
+      model: nvidia/nemotron-3-super-120b-a12b
+      credentialSecret: inference
+      credentialSecretKey: api_key

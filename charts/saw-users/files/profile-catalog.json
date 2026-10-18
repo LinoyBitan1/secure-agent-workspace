@@ -138,6 +138,40 @@
           ]
         }
       ]
+    },
+    "tp-validation": {
+      "description": "SAW TP validation: OpenClaw with the baseline inference provider",
+      "secrets": {
+        "inference": {
+          "fields": [
+            {
+              "key": "api_key",
+              "kind": "secret",
+              "required": true,
+              "title": "API key"
+            }
+          ],
+          "provider": "nvidia",
+          "providers": [
+            "nvidia"
+          ]
+        }
+      },
+      "workspaces": [
+        {
+          "description": "SAW TP validation: OpenClaw with the baseline inference provider",
+          "enabled": true,
+          "name": "default",
+          "sandboxes": [
+            {
+              "enabled": true,
+              "name": "notebook",
+              "type": "openclaw",
+              "uiRoute": false
+            }
+          ]
+        }
+      ]
     }
   }
 }
