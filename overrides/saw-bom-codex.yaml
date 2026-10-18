@@ -1,3 +1,0 @@
-# Select OpenClaw with OpenAI API-key inference; no native Codex runtime.
-profiles:
-  - codex

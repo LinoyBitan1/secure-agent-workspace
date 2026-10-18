@@ -1,7 +1,0 @@
-apiVersion: saw.redhat.com/v1alpha1
-kind: Workspace
-metadata:
-  name: default
-  description: OpenClaw with OpenAI API-key inference (SAW Codex API-key choice)
-spec:
-  enabled: true
