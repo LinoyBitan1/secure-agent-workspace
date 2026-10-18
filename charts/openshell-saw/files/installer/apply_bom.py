@@ -1428,6 +1428,9 @@ def check_provider_type(provider, configured):
     if not configured:
         return
     valid = {v for v in (provider.type, provider.nemoclaw_provider) if v}
+    # SAW's Codex API-key choice uses OpenAI's API provider, not Codex OAuth.
+    if provider.type == "openai" and configured == "codex":
+        return
     if configured not in valid:
         raise InstallerError(
             f"provider '{provider.name}' expects a {' or '.join(sorted(valid))} "

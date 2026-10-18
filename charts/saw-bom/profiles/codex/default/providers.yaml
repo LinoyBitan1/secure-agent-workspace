@@ -1,0 +1,14 @@
+apiVersion: saw.redhat.com/v1alpha1
+kind: Providers
+metadata:
+  profile: codex
+spec:
+  providers:
+    # Codex is the SAW API-key choice; OpenShell uses its existing OpenAI
+    # API profile. Its separate codex OAuth profile is not changed.
+    - name: openai
+      type: openai
+      credentialSecret: inference
+      credentialSecretKey: api_key
+      modelSecretKey: model
+      model: gpt-6-luna

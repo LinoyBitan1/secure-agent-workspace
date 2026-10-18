@@ -1,5 +1,46 @@
 {
   "profiles": {
+    "codex": {
+      "description": "OpenClaw with OpenAI API-key inference (SAW Codex API-key choice)",
+      "secrets": {
+        "inference": {
+          "fields": [
+            {
+              "key": "api_key",
+              "kind": "secret",
+              "required": true,
+              "title": "API key"
+            },
+            {
+              "default": "gpt-6-luna",
+              "key": "model",
+              "kind": "text",
+              "required": true,
+              "title": "Model"
+            }
+          ],
+          "provider": "openai",
+          "providers": [
+            "openai"
+          ]
+        }
+      },
+      "workspaces": [
+        {
+          "description": "OpenClaw with OpenAI API-key inference (SAW Codex API-key choice)",
+          "enabled": true,
+          "name": "default",
+          "sandboxes": [
+            {
+              "enabled": true,
+              "name": "notebook",
+              "type": "openclaw",
+              "uiRoute": false
+            }
+          ]
+        }
+      ]
+    },
     "custom-inference": {
       "description": "Agent workspace backed by a custom OpenAI-compatible endpoint (vLLM, Ollama, ...)",
       "secrets": {

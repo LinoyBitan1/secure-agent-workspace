@@ -467,6 +467,11 @@ The existing Python CLI has a smaller command set than Make. See
 | Ollama (local) | `ollama` | `llama3` |
 | Custom OpenAI-compatible endpoint (vLLM, Ollama, ...) | `openai` + `ENDPOINT_URL` | the model the server serves; see [Custom inference provider](#custom-inference-provider) |
 
+For SAW's Codex API-key choice, select `profiles: [codex]` and configure
+`provider: codex`, the model, and your OpenAI API-key file. See
+[Codex API-key configuration](docs/codex-api-key.md) for the values and the
+distinction from Codex OAuth and the native Codex agent runtime.
+
 #### Custom inference provider
 
 Use a model server of your own (vLLM, Ollama, or any OpenAI-compatible API) instead of a cloud provider. The installer creates an `openai` provider with the endpoint's base URL and onboards OpenClaw against that URL. OpenShell 0.1.x has no inference routing: the agent sends a placeholder key, and the sandbox proxy puts in the real one only for the hosts the provider profile names, so the profile must name your endpoint's host (see [docs/custom-inference.md](docs/custom-inference.md)).
