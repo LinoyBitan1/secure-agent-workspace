@@ -32,6 +32,16 @@ def test_defaults_sync_everything_from_the_hub():
                       "openshell-aap-ssh": {"secret/data/hub/ssh"}}
 
 
+def test_optional_codex_secret_preserves_oauth_fields():
+    got = keys("--set", "secrets={codex}", "--set", "vaultPrefix=secret/data/hub/saw-tp")
+    assert got["codex"] == {"secret/data/hub/saw-tp/codex"}
+    out = subprocess.run([HELM, "template", "x", str(CHART), "--set", "secrets={codex}"],
+                         capture_output=True, text=True, check=True).stdout
+    (secret,) = [d for d in yaml.safe_load_all(out) if d and d["metadata"]["name"] == "codex"]
+    assert secret["spec"]["target"] == {"name": "codex"}
+    assert "data" not in secret["spec"]
+
+
 def test_a_user_prefix_keeps_the_shared_ssh_key(tmp_path):
     values = tmp_path / "v.yaml"
     values.write_text(yaml.safe_dump({"vaultPrefix": "secret/data/hub/saw-bob",

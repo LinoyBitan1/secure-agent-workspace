@@ -354,6 +354,9 @@ egress:
     - integrate.api.nvidia.com
     - api.search.brave.com
     - api.openai.com
+    - auth.openai.com
+    - chatgpt.com
+    - ab.chatgpt.com
     - api.tavily.com
     - registry.npmjs.org
     - github.com

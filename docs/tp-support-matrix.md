@@ -2,7 +2,7 @@
 
 Tracking work: APPENG-6705, Determine support matrix for providers and drivers.
 
-Status: test environment deployed; Codex sign-in is blocked before inference.
+Status: Codex/Podman validation attempted and failed at placeholder compatibility.
 No combination has been live-validated in this work.
 The parent spike link and live verification of provider configuration are pending.
 
@@ -31,7 +31,7 @@ qualifying live test has been recorded; it does not mean unsupported.
 
 | Provider | Podman compute driver | Kubernetes compute driver |
 | --- | --- | --- |
-| Codex (primary) | **Not tested (blocked).** The shipped OpenClaw OAuth flow rejects OpenShell's synthetic DNS address before issuing a login code. See the [live attempt](#codex--podman-live-preparation-attempt). | **Not tested.** An upstream Kubernetes driver exists, but this SAW chart does not configure it. |
+| Codex (primary) | **Failed validation.** Host OAuth credentials reached the provider, but OpenClaw cannot extract an account ID from OpenShell's access-token placeholder. See the [inference evidence](validation/2026-10-18-codex-podman.md). | **Not tested.** An upstream Kubernetes driver exists, but this SAW chart does not configure it. |
 | Anthropic (secondary) | **Not tested.** Native provider onboarding and credentials still need validation. The OpenClaw/Podman environment is running. | **Not tested.** No Kubernetes compute-driver deployment path identified in the current chart. |
 
 ## Implementation findings
@@ -40,17 +40,18 @@ qualifying live test has been recorded; it does not mean unsupported.
   `OPENSHELL_COMPUTE_DRIVER=podman`, `compute_driver = "podman"`, and a
   `[openshell.drivers.podman]` configuration. A Kubernetes driver is not exposed
   by this configuration.
-- The [installer](../charts/openshell-saw/files/installer/apply_bom.py), in
-  `PROVIDER_CRED_MAP`, recognizes `codex`/`openai` with `OPENAI_API_KEY` and
-  `anthropic`/`claude-code` with `ANTHROPIC_API_KEY`. Recognition alone is not
-  end-to-end validation.
+- The [installer](../charts/openshell-saw/files/installer/apply_bom.py) reads
+  Codex OAuth access/refresh tokens and an account ID (optional ID token),
+  while `openai` uses `OPENAI_API_KEY` and `anthropic`/`claude-code` use
+  `ANTHROPIC_API_KEY`. Credential transport alone is not end-to-end validation.
 - The installer's `NATIVE_BASE_URLS` includes `openai`, `nvidia`, and `build`,
   but not `codex` or `anthropic`. `start_openclaw()` skips onboarding when no
   endpoint is known and passes `--custom-compatibility openai` when onboarding.
   Native Anthropic compatibility therefore needs investigation.
 - The [fallback provider profiles](../charts/openshell-saw/files/provider-profiles/)
-  contain `openai`, `nvidia`, and `brave`; they do not contain `codex` or
-  `anthropic`. The default
+  contain `codex`, `openai`, `nvidia`, and `brave`; they do not contain
+  `anthropic`. The governance catalog also ships the Codex profile and the VM
+  hostname allowlist includes its four upstream HTTPS hosts. The default
   [OpenClaw sandbox](../charts/saw-bom/profiles/data-science/default/sandbox.yaml)
   attaches NVIDIA, so an unchanged default install does not validate either
   requested provider.
@@ -70,9 +71,9 @@ NemoClaw to the TP deployment.
 - **Codex:** OpenShell's
   [Codex example](https://github.com/NVIDIA/OpenShell/blob/v0.1.2/providers/codex.yaml)
   requires OAuth access and refresh tokens plus an account ID; an ID token is
-  optional. Its allowed binaries target the Codex CLI. This differs from the
-  SAW installer's `codex -> OPENAI_API_KEY` mapping and single-credential
-  `apply_provider()` path. The example is not automatically loaded and must
+  optional. Its allowed binaries target the Codex CLI. The SAW installer now
+  transports these credentials together instead of treating Codex as an API
+  key. The example is not automatically loaded and must
   be adapted to the actual executable paths in the deployed image.
 - **OpenClaw's Codex route:** the versioned
   [OpenAI provider documentation](https://github.com/openclaw/openclaw/blob/v2026.9.6/docs/providers/openai.md)
@@ -183,12 +184,127 @@ DNS answers and the rejection identify a compatibility issue between the
 OAuth request guard and the sandbox's synthetic DNS. No broad private-network
 exception or agent code patch was applied.
 
-Next prerequisite: establish a supported authentication route compatible with
-OpenShell's DNS and credential handling. The current gateway catalog also does
-not serve a Codex profile, and the namespace egress rules do not yet include
-Codex authentication hosts. These need configuration before a full inference
-test, even after the OAuth guard issue is resolved. Account authorization and
-the `SAW_TP_OK` inference check have not run.
+This failure applies to the attempted in-sandbox OAuth flow; it does not prove
+that all Codex authentication paths are blocked. The upstream host-credential
+reference below avoids that login step inside the sandbox. At the time of this
+attempt, the gateway catalog lacked Codex and the namespace egress rules lacked
+its authentication hosts. Those gaps were addressed for the later
+[host-login inference attempt](validation/2026-10-18-codex-podman.md), which
+failed at access-token placeholder decoding instead.
+
+## Upstream Codex host-credential reference
+
+Read upstream main on 2026-10-18: OpenShell commit
+`55bf786453395f3fe1858a187152537b457de77d` and NemoClaw commit
+`8da11a7952539e8a990f576c7b353ad8c86cacd0`. These are source references, not
+versions deployed or validated by this spike.
+
+OpenShell's runnable
+[host-side demo](https://github.com/NVIDIA/OpenShell/blob/55bf786453395f3fe1858a187152537b457de77d/examples/agent-driven-policy-management/demo.sh#L207)
+uses this flow:
+
+1. Sign into Codex on the host, outside the OpenShell sandbox.
+2. Read that host's Codex authentication material and export the access token,
+   refresh token, and account ID as `CODEX_AUTH_*` variables.
+3. Create a `codex` provider using three bare `--credential` variable names,
+   so the CLI reads values from its environment rather than command arguments.
+4. Attach the provider when creating the sandbox.
+5. The [sandbox bootstrap](https://github.com/NVIDIA/OpenShell/blob/55bf786453395f3fe1858a187152537b457de77d/examples/agent-driven-policy-management/sandbox-agent.sh#L24)
+   prepares the auth-file layout expected by Codex from the injected variables,
+   then runs Codex CLI. It does not perform browser/device-code login there.
+
+The upstream `discover_from_profile()` implementation reads the environment
+variables declared by the profile. `provider create --from-existing` alone
+does not automatically parse a Codex auth file; the demo performs that extraction
+explicitly on the host. The
+[Codex profile](https://github.com/NVIDIA/OpenShell/blob/55bf786453395f3fe1858a187152537b457de77d/providers/codex.yaml)
+must be imported and its executable paths adapted for the actual image.
+
+NemoClaw's current
+[hosted provider definitions](https://github.com/NVIDIA/NemoClaw/blob/8da11a7952539e8a990f576c7b353ad8c86cacd0/src/lib/inference/native-provider/hosted.ts)
+configure OpenAI using `OPENAI_API_KEY` and Anthropic using `ANTHROPIC_API_KEY`.
+This is separate from the OpenShell Codex OAuth example. No OpenClaw-specific
+Codex OAuth adapter was identified in the inspected NemoClaw provider paths.
+
+The runnable OpenShell example uses **Codex CLI directly**, not OpenClaw.
+It therefore supplies an authentication reference but is not sufficient
+evidence for the parent spike's OpenClaw deployment. The next investigation is
+how the shipped OpenClaw Codex runtime consumes OpenShell-provided credentials,
+including the provider profile, allowed executables, endpoint access, and
+credential refresh. The previous in-sandbox login failure must not be treated
+as proof that this alternative cannot work.
+
+### Optional Codex secret configuration
+
+The commented `codex` example in
+[values-secret.yaml.template](../values-secret.yaml.template) stores separate
+`access_token`, `refresh_token`, and `account_id` fields, plus an optional
+`id_token`. These come from host-side Codex sign-in; they are not an OpenAI API
+key. Leave the ID-token field out when it is unavailable. Local token files and
+the populated values file must remain outside Git.
+
+The installer resolves these fixed Secret keys for a provider with
+`type: codex` and `credentialSecret: codex`. It sends every credential on create
+and update using environment variables and bare `--credential NAME` arguments,
+and masks all credential values in installer logs.
+
+For a manually configured deployment, include `codex` in
+`pattern-secrets.secrets` so the optional ExternalSecret copies all OAuth
+fields from `<vaultPrefix>/codex`; also include it in
+`openshell-saw.additionalProviderSecrets` to mount it in the VM. Existing
+NVIDIA defaults remain enabled. No Codex profile is published in the portal
+catalog yet; its secret-field generator still assumes a single API key.
+
+The Codex provider profile and endpoint allowlist are now shipped, but
+OpenClaw runtime/auth-file setup and refresh behavior still need work.
+The installer does not yet onboard
+OpenClaw with Codex OAuth; adding the optional YAML secret does not change the
+matrix result. NemoClaw OAuth onboarding is explicitly rejected.
+
+### Host-login preparation, 2026-10-18
+
+- Local Codex sign-in contains all three required credential fields and the
+  optional ID token. The access token was locally checked for expiry; values
+  were not displayed or written to this repository.
+- Imported the upstream Codex provider profile into workspace `default` on
+  the `tp-validation` VM, adapting its allowed binaries to the image's
+  `/usr/bin/node-26`, `/usr/sbin/node`, and `/usr/local/sbin/openclaw`.
+  The import succeeded; this does not establish inference success.
+- The pinned image's `openclaw migrate list` exposes only `claude` and
+  `hermes`, so its documented Codex migration command is unavailable in this
+  image. A manual provider-auth SDK bootstrap accepted the placeholders and
+  passed config validation, but its inference request failed during JWT decoding.
+- After explicit approval, transferred the local OAuth credentials over SSH
+  stdin to the VM and created `codex-tp` in workspace `default`. After adding
+  Codex to the configured governance catalog and reloading that service,
+  provider creation and attachment to `default/notebook` succeeded.
+  Only placeholders were placed in the sandbox's isolated OpenClaw auth store.
+- The live inference command exited 1 with `Failed to extract accountId from
+  token`; no `SAW_TP_OK` response was produced. See the
+  [sanitized evidence](validation/2026-10-18-codex-podman.md). Credential refresh
+  and the native Codex app-server runtime remain untested.
+
+### Credential and profile regression checks
+
+```bash
+.venv/bin/python -m pytest -q -p no:cacheprovider \
+  tests/installer/test_profiles.py \
+  tests/installer/test_codex_credentials.py \
+  tests/charts/test_pattern_secrets_chart.py \
+  tests/charts/test_egress_profile_parity.py \
+  tests/charts/test_openshell_saw_chart.py \
+  tests/charts/test_governance_apf.py
+```
+
+Result: **189 passed, 1 skipped**. The skipped check requires an APF bundle
+that is not present; this deployment uses the interceptor engine. The checks
+cover required/optional OAuth fields, missing-field rejection, credential
+redaction, create/update environment transport, optional Secret rendering,
+profile packaging, exact endpoint egress rules, and existing chart behavior.
+Updated the namespace test to check configured users rather than assume the
+user list is empty. These local tests do not validate provider inference.
+
+`git diff --check` and `scripts/saw-profile-catalog.py --check` also passed.
 
 ## Test procedure
 
@@ -260,8 +376,8 @@ Failure or not-tested reason:
   and no degradation. The temporary `saw-tp-virtualization` OperatorGroup was
   removed after the pattern created its own OperatorGroup. Some API calls returned
   intermittent Unauthorized errors; subsequent explicit-context reads worked.
-  Cluster monitoring is reported unavailable. No provider inference test has
-  run; credentials are excluded from this record.
+  Cluster monitoring is reported unavailable. This preflight preceded the
+  Codex request attempt; credentials are excluded from this record.
 - **Option A preparation:** `make prereqs-check` passed. Existing SSH keys and
   secret files were preserved; the inference secret currently selects NVIDIA
   (`build`). Published branch `docs/appeng-6705-support-matrix` to origin at

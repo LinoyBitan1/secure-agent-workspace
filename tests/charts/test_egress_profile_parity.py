@@ -95,12 +95,24 @@ def test_allowlist_has_no_unexplained_reverse_drift():
 
 def test_installer_profile_copies_match_governance_policy():
     copies = sorted(SAW_COPIES.glob("*.yaml"))
-    assert [p.name for p in copies] == ["brave.yaml", "nvidia.yaml", "openai.yaml"]
+    assert [p.name for p in copies] == ["brave.yaml", "codex.yaml", "nvidia.yaml", "openai.yaml"]
     for path in copies:
         twin = PROFILES / path.name
         assert path.read_text() == twin.read_text(), (
             f"copy charts/governance-policy/profiles/{path.name} to "
             f"charts/openshell-saw/files/provider-profiles/{path.name}")
+
+
+def test_codex_profile_accepts_oauth_and_the_shipped_openclaw_process():
+    profile = yaml.safe_load((PROFILES / "codex.yaml").read_text())
+    required = {env for credential in profile["credentials"] if credential.get("required")
+                for env in credential["env_vars"]}
+    assert required == {"CODEX_AUTH_ACCESS_TOKEN", "CODEX_AUTH_REFRESH_TOKEN", "CODEX_AUTH_ACCOUNT_ID"}
+    assert "/usr/bin/node-*" in profile["binaries"]
+    assert {endpoint["host"] for endpoint in profile["endpoints"]} == {
+        "api.openai.com", "auth.openai.com", "chatgpt.com", "ab.chatgpt.com"}
+    assert all(endpoint["port"] == 443 and endpoint["enforcement"] == "enforce"
+               for endpoint in profile["endpoints"])
 
 
 @pytest.mark.skipif(not HELM, reason="helm is not installed")

@@ -106,12 +106,17 @@ PROVIDER_CRED_MAP = {
     "google-vertex-ai": "GOOGLE_API_KEY",
     "claude-code": "ANTHROPIC_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
-    "codex": "OPENAI_API_KEY",
+    "codex": "CODEX_AUTH_ACCESS_TOKEN",
     "openai": "OPENAI_API_KEY",
     "nvidia": "NVIDIA_API_KEY",
     "build": "NVIDIA_INFERENCE_API_KEY",
     "brave": "BRAVE_API_KEY",
     "tavily": "TAVILY_API_KEY",
+}
+CODEX_CREDENTIAL_KEYS = {
+    "CODEX_AUTH_ACCESS_TOKEN": "access_token",
+    "CODEX_AUTH_REFRESH_TOKEN": "refresh_token",
+    "CODEX_AUTH_ACCOUNT_ID": "account_id",
 }
 SANDBOX_TYPES = {"generic", "openclaw", "nemoclaw"}
 # Provider config key that records a provider's base URL. OpenShell 0.1.x has
@@ -1435,7 +1440,7 @@ def check_provider_type(provider, configured):
 
 
 def resolve_credentials(profiles, secrets_dir):
-    """Return {workspace: {provider: key}} read from mounted Secret files.
+    """Return {workspace: {provider: key or Codex credential env map}}.
 
     A missing credential is an error: the old flow silently fell back to
     `--from-existing`, which created providers without keys.
@@ -1447,16 +1452,22 @@ def resolve_credentials(profiles, secrets_dir):
             if not p.enabled:
                 continue
             base = secrets_dir / p.credential_secret
-            key_file = base / p.credential_secret_key
-            try:
-                value = key_file.read_text(encoding="utf-8").strip()
-            except OSError:
-                value = ""
-            if not value:
-                raise InstallerError(
-                    f"credential for provider '{p.name}' in workspace '{ws.name}' not found: "
-                    f"Secret '{p.credential_secret}' key '{p.credential_secret_key}'. "
-                    "List the Secret in openshell-saw additionalProviderSecrets and make sure it exists.")
+            required = (CODEX_CREDENTIAL_KEYS if p.type == "codex"
+                        else {PROVIDER_CRED_MAP[p.type]: p.credential_secret_key})
+            resolved = {}
+            for env_name, secret_key in required.items():
+                value = read_secret_value(base, secret_key)
+                if not value:
+                    raise InstallerError(
+                        f"credential for provider '{p.name}' in workspace '{ws.name}' not found: "
+                        f"Secret '{p.credential_secret}' key '{secret_key}'. "
+                        "List the Secret in openshell-saw additionalProviderSecrets and make sure it exists.")
+                resolved[env_name] = value
+            if p.type == "codex":
+                id_token = read_secret_value(base, "id_token")
+                if id_token:
+                    resolved["CODEX_AUTH_ID_TOKEN"] = id_token
+            value = resolved if p.type == "codex" else resolved[PROVIDER_CRED_MAP[p.type]]
             type_file = base / "provider"
             configured = type_file.read_text(encoding="utf-8").strip() if type_file.is_file() else ""
             check_provider_type(p, configured)
@@ -2575,7 +2586,8 @@ class ProfileApplier:
         self.sandbox_failures = []    # "sandbox '<name>': <error>" kept for the raise at end
         for workspace in creds.values():
             for value in workspace.values():
-                shell.add_secret(value)
+                for secret in (value.values() if isinstance(value, dict) else [value]):
+                    shell.add_secret(secret)
 
     def cli(self, *args, **kwargs):
         return self.sh.run(["openshell", *args], **kwargs)
@@ -2700,14 +2712,15 @@ class ProfileApplier:
         environment variable NAME, so the key never appears in argv
         (/proc/<pid>/cmdline) or in logs."""
         credential = self.creds[ws.name][provider.name]
-        env_name = PROVIDER_CRED_MAP[provider.type]
-        env = {env_name: credential}
+        env = (credential if provider.type == "codex"
+               else {PROVIDER_CRED_MAP[provider.type]: credential})
+        credential_args = tuple(arg for name in env for arg in ("--credential", name))
         # A custom endpoint is recorded on the provider; start_openclaw
         # points the agent at it.
         config = (("--config", f"{BASE_URL_CONFIG_KEYS[provider.type]}={provider.base_url}")
                   if provider.base_url else ())
         create = ("provider", "create", "--name", provider.name, "--type", provider.type,
-                  *ws_args(ws.name), "--credential", env_name, *config)
+                  *ws_args(ws.name), *credential_args, *config)
         created = self.cli(*create, env=env, ok_if_exists=True, check=False)
         if (not created.ok and NO_PROFILE_RE.search(created.out + " " + created.err)
                 and provider.type in self.provider_profiles):
@@ -2730,7 +2743,7 @@ class ProfileApplier:
                                  f"'{ws.name}' (openshell provider create failed)")
         if created.existed:
             updated = self.cli("provider", "update", provider.name, *ws_args(ws.name),
-                               "--credential", env_name, *config, env=env, check=False)
+                               *credential_args, *config, env=env, check=False)
             if not updated.ok:
                 log(f"WARN: could not refresh the credential of existing provider '{provider.name}'")
         self.remember("provider", ws.name, provider.name)
@@ -3198,6 +3211,8 @@ class ProfileApplier:
             self.cli("sandbox", "provider", "attach", sb.name, prov, *ws_args(ws.name), check=False)
 
     def onboard_nemoclaw(self, ws, sb, provider):
+        if provider.type == "codex":
+            raise InstallerError("Codex OAuth onboarding through NemoClaw is not implemented")
         home = Path(os.environ.get("HOME", "/home/cloud-user"))
         mgmt_path = home / "gateway-management.json"
         mgmt = {

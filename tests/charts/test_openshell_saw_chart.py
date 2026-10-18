@@ -482,6 +482,9 @@ DEFAULT_EGRESS_HOSTS = [
     "integrate.api.nvidia.com",
     "api.search.brave.com",
     "api.openai.com",
+    "auth.openai.com",
+    "chatgpt.com",
+    "ab.chatgpt.com",
     "api.tavily.com",
     "registry.npmjs.org",
     "github.com",
@@ -912,7 +915,10 @@ def test_pattern_puts_keycloak_and_each_saw_in_their_own_namespaces():
     assert users_app["extraValueFiles"] == ["/overrides/saw-users.yaml"]
     assert users_app["syncPolicy"]["automated"]["prune"] is True
     listed = yaml.safe_load((ROOT / "overrides/saw-users.yaml").read_text())["users"]
-    assert listed == []
+    for user in listed:
+        # Configured users are rendered by saw-users, never static hub entries.
+        assert f"saw-{user['name']}" not in namespaces
+        assert f"saw-{user['name']}" not in apps
     for app in ("governance-interceptor", "governance-policy"):
         assert apps[app]["namespace"] == "openshell-agents", app
 
@@ -994,7 +1000,7 @@ def test_installer_disk_ships_provider_profiles(default_docs, ab, tmp_path):
     assert data["provider-profile-brave.yaml"] == (SAW_PROFILES / "brave.yaml").read_text()
     for key, value in data.items():
         (tmp_path / key).write_text(value)
-    assert set(ab.provider_profiles(tmp_path)) == {"brave", "nvidia", "openai"}
+    assert set(ab.provider_profiles(tmp_path)) == {"brave", "codex", "nvidia", "openai"}
 
 
 def test_create_script_passes_the_keycloak_it_finds():
