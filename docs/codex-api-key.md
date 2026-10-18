@@ -37,3 +37,8 @@ Store the actual key only in the private file referenced by `api_key.path`.
 
 After changing credentials or profiles on an existing VM without live inputs,
 sync its Argo CD applications and restart the VM to apply the mounted inputs.
+
+For headless validation, pass the configured model explicitly to
+`openclaw agent exec --model openai/gpt-6-luna`; the headless command can
+otherwise choose its own default. Check the returned provider and model as
+well as the answer. See the [validation matrix](provider-driver-matrix.md).
