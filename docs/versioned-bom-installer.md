@@ -493,9 +493,36 @@ field in its `inference` Secret. Both NVIDIA workspaces (`default` and
 `cuda-dev`) read this override, as OpenAI and Anthropic do from their own
 Secrets. A missing or empty Secret field keeps the profile's `model`.
 For a new SAW, `make saw-create ... PROVIDER=nvidia MODEL=<model-id> API_KEY=<key>`
-writes this field. For an existing SAW, update the Secret through its normal
-configuration source and run `make saw-restart` to apply it. A repeat
-`saw-create` without `API_KEY` preserves the existing Secret, including its model.
+writes this field.
+
+To switch an existing SAW to another model — say while the default one is
+unavailable — change only the Secret, then `make saw-restart`. How depends on
+who owns the Secret:
+
+- **Vault-managed SAWs** (the Validated Pattern flow, where `pattern-secrets`
+  creates an `inference` ExternalSecret): change the `model` field of the
+  `inference` entry in `~/values-secret-<pattern>.yaml` and run
+  `./pattern.sh make load-secrets`. External Secrets resyncs within its
+  refresh interval (15 s by default). A workspace created through the
+  self-service portal keeps its model in the portal's own Vault prefix, so
+  change it there instead.
+- **Portal-managed SAWs**: re-run the portal's workspace template with the new
+  model; it writes Vault, and External Secrets syncs from there.
+- **Standalone SAWs** (Secret created by `make saw-create`, no ExternalSecret):
+  patch the Secret directly.
+
+```bash
+oc patch secret inference -n saw-<name> --type=merge \
+-p '{"stringData":{"model":"<model-id>"}}'
+```
+
+Do not use `make saw-create` for a model-only change: it also re-runs
+`helm upgrade` for the SAW, and options you do not repeat on that command line
+fall back to their defaults (for example `governance.engine=interceptor` and
+disabled dashboard routes). Pass the SAW's original options if you use it
+anyway. Its Secret write merge-patches only the fields it is given, so an
+`API_KEY` rotation no longer drops an existing `model` override — but on a
+Vault-managed SAW that write is reverted on the next refresh.
 
 The governance profiles in `charts/governance-policy/profiles/` control allowed
 endpoints and binaries; model selection belongs in the SAW-BOM providers above.

@@ -32,6 +32,8 @@ case "$1" in
          echo '{"items":[{"addressType":"IPv4","ports":[{"port":6443,"protocol":"TCP"}],"endpoints":[{"addresses":["10.10.10.10"],"conditions":{"ready":true}}]}]}'
        elif [[ "$2" == secret ]]; then
          [[ " ${EXISTING_SECRETS:-} " == *" $3 "* ]] && echo "secret/$3"
+       elif [[ "$2" == externalsecret ]]; then
+         [[ " ${EXISTING_EXTERNAL_SECRETS:-} " == *" $3 "* ]] && echo "externalsecret/$3"
        elif [[ "$2" == keycloak ]]; then
          echo '{"items":[{"metadata":{"name":"openshell-keycloak"}}]}'
        elif [[ "$2" == secrets ]]; then
@@ -269,6 +271,40 @@ def test_profile_rerun_keeps_existing_inference_secret(run):
                  PROVIDER="", MODEL="", API_KEY="")
     assert "oc create secret generic inference" not in log
     assert "inference.secretName=" not in _saw_helm(log)
+
+
+def test_model_change_on_existing_saw_patches_only_the_model(run):
+    """A model that went unavailable is swapped without an API key."""
+    log, _ = run(EXISTING_SECRETS="inference", PROVIDER="", MODEL="nvidia/other", API_KEY="")
+    secret = next(line for line in log.splitlines()
+                  if line.startswith("oc create secret generic inference"))
+    assert "--from-literal=model=nvidia/other" in secret
+    assert "api_key=" not in secret and "provider=" not in secret
+    assert "oc patch secret inference -n saw-cinf --type=merge" in log
+
+
+def test_vault_managed_secret_warns_that_the_change_reverts(run):
+    result, _, _ = run.invoke(EXISTING_SECRETS="inference", MODEL="nvidia/other",
+                              EXISTING_EXTERNAL_SECRETS="inference", PROVIDER="", API_KEY="")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "External Secrets manages 'inference'" in result.stderr
+    assert "load-secrets" in result.stderr
+
+
+def test_standalone_secret_change_does_not_warn(run):
+    result, _, _ = run.invoke(EXISTING_SECRETS="inference", MODEL="nvidia/other",
+                              PROVIDER="", API_KEY="")
+    assert result.returncode == 0
+    assert "External Secrets manages" not in result.stderr
+
+
+def test_key_rotation_keeps_the_model_override(run):
+    log, _ = run(EXISTING_SECRETS="inference", PROVIDER="", MODEL="", API_KEY="k2")
+    secret = next(line for line in log.splitlines()
+                  if line.startswith("oc create secret generic inference"))
+    assert "--from-file=api_key=" in secret
+    assert "model=" not in secret
+    assert "oc patch secret inference" in log
 
 
 def test_external_dashboard_opt_in(run):
