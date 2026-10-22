@@ -88,7 +88,8 @@ def run(tmp_path):
             (scripts / "keycloak-host.sh").unlink()
             (scripts / "keycloak-host.sh").symlink_to(ROOT / "scripts" / "keycloak-host.sh")
         full = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FAKE_LOG": str(log),
-                "FAKE_DIR": str(tmp_path), "OPENSHELL_SAW_NAME": "cinf", "SAW_CHART": "charts/openshell-saw",
+                "FAKE_DIR": str(tmp_path), "OPENSHELL_SAW_NAME": "cinf", "SAW_NS": "saw-cinf",
+                "SAW_CHART": "charts/openshell-saw",
                 "OWNER": "alice", "OWNER_SUBJECT": "", "OIDC_ISSUER": "none",
                 "OIDC_TOKEN_DIR": str(tmp_path / "oidc"), "SCRIPTS_DIR": str(scripts), **env}
         if unset_issuer:
