@@ -459,12 +459,13 @@ delete`, and `provider profile delete` exist. `workspace create` and
 
 ## Official API providers
 
-The `data-science` profile uses NVIDIA
-`nvidia/nemotron-3.5-lightning-30b-a3b` by default. Its `default/notebook`
+The `data-science` profile uses NVIDIA's provider-profile `default_model`.
+Its `default/notebook`
 sandbox can also attach the optional `openai` and `anthropic` providers;
 both are disabled until enabled in the profile and listed in the sandbox's
 `providers`. They read separate `inference-openai` and `inference-anthropic`
-Secrets. Each Secret contains `provider`, `model`, and `api_key`; official
+Secrets. Each Secret contains `provider` and `api_key`; `model` is an optional
+override of the provider profile's default. Official
 APIs need no `url`. See the [provider setup steps](../README.md#supported-inference-providers).
 
 OpenClaw uses the built-in model catalog for these official APIs. A provider
@@ -475,14 +476,19 @@ only for allowed requests.
 
 ### Choosing a model
 
-Set `model` in the SAW-BOM provider definition, for example in
-`charts/saw-bom/profiles/data-science/default/providers.yaml`:
+Set the shared default in `default_model` in the provider profile under
+`charts/governance-policy/profiles/` and mirror it into
+`charts/openshell-saw/files/provider-profiles/`. These profiles are the only
+shipped defaults for NVIDIA, OpenAI, and Anthropic. The BOM, Secret template,
+and portal do not pin another default.
+
+For an explicit override, set `model` in the SAW-BOM provider definition or
+the provider's Secret. The shipped NVIDIA definition is:
 
 ```yaml
 - name: nvidia
   type: nvidia
   nemoclawProvider: build
-  model: nvidia/nemotron-3.5-lightning-30b-a3b
   credentialSecret: inference
   credentialSecretKey: api_key
   modelSecretKey: model
@@ -491,9 +497,29 @@ Set `model` in the SAW-BOM provider definition, for example in
 `modelSecretKey: model` lets each SAW override that default with the `model`
 field in its `inference` Secret. Both NVIDIA workspaces (`default` and
 `cuda-dev`) read this override, as OpenAI and Anthropic do from their own
-Secrets. A missing or empty Secret field keeps the profile's `model`.
-For a new SAW, `make saw-create ... PROVIDER=nvidia MODEL=<model-id> API_KEY=<key>`
-writes this field.
+Secrets. A missing or empty Secret field keeps an explicit BOM `model`, if
+one is set; otherwise the provider profile supplies the model. In the portal,
+leave the optional Model field blank to use this default, or enter an override.
+Custom endpoints require an explicit model and never inherit the official API
+provider's default.
+
+The installer resolves a sandbox's model in this order, with no hardcoded
+fallback anywhere:
+
+1. the sandbox's own `model`;
+2. the SAW-BOM provider's `model`, which its Secret's `model` field replaces
+   when `modelSecretKey` is set;
+3. `default_model` in the provider profile
+   (`charts/governance-policy/profiles/{nvidia,openai,anthropic}.yaml`, mirrored
+   in `charts/openshell-saw/files/provider-profiles/`). Change it to move every
+   SAW that names no model of its own — for example when a model is withdrawn.
+   The installer strips the field before importing a profile into the gateway,
+   which knows only endpoint policy.
+
+With no model from any of the three, the installer logs a warning and leaves
+the sandbox running without onboarding OpenClaw, rather than guessing.
+For a new SAW, `make saw-create ... PROVIDER=nvidia API_KEY=<key>` uses the
+profile default. Add `MODEL=<model-id>` to write an explicit Secret override.
 
 To switch an existing SAW to another model — say while the default one is
 unavailable — change only the Secret, then `make saw-restart`. How depends on
@@ -524,13 +550,10 @@ anyway. Its Secret write merge-patches only the fields it is given, so an
 `API_KEY` rotation no longer drops an existing `model` override — but on a
 Vault-managed SAW that write is reverted on the next refresh.
 
-The governance profiles in `charts/governance-policy/profiles/` control allowed
-endpoints and binaries; model selection belongs in the SAW-BOM providers above.
-Choose a model served by the provider's allowed endpoint.
-
-The installer has no built-in model fallback. If neither the sandbox nor its
-provider specifies a model, it logs a warning and skips OpenClaw onboarding
-while keeping the sandbox running.
+The governance profiles control allowed endpoints and binaries as well as
+carrying the installer model default. Choose a model served by the provider's
+allowed endpoint. Existing nonempty Secret or BOM models remain explicit
+overrides; remove them to follow the profile default after upgrading.
 
 ## Custom inference
 

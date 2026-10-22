@@ -2,7 +2,8 @@
 # Provision a sandbox — detects owner from OIDC token, deploys via helm.
 #
 # Required env vars: OPENSHELL_SAW_NAME, SAW_CHART
-# New inference Secrets need PROVIDER and MODEL; API_KEY may be empty.
+# New inference Secrets need PROVIDER; MODEL overrides the profile default.
+# Custom endpoints also need MODEL. API_KEY may be empty.
 # On an existing SAW, PROVIDER, MODEL, API_KEY or ENDPOINT_URL update just
 # those fields of the inference Secret; the others keep their values.
 # Optional: OWNER, OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_TOKEN_DIR, NS, SAW_NS,
@@ -90,8 +91,12 @@ if [[ -n "$(oc get namespace "${SAW_NS}" -o name --ignore-not-found)" ]]; then
     inference_exists=true
   fi
 fi
-if [[ "${inference_exists}" == false && ( -z "${PROVIDER}" || -z "${MODEL}" ) ]]; then
-  echo "Error: PROVIDER and MODEL are required when the inference Secret is absent." >&2
+if [[ "${inference_exists}" == false && -z "${PROVIDER}" ]]; then
+  echo "Error: PROVIDER is required when the inference Secret is absent." >&2
+  exit 1
+fi
+if [[ "${inference_exists}" == false && -n "${ENDPOINT_URL}" && -z "${MODEL}" ]]; then
+  echo "Error: MODEL is required for a custom endpoint." >&2
   exit 1
 fi
 if [[ -z "${OWNER}" && ! -f "${OIDC_TOKEN_DIR}/token.json" ]]; then

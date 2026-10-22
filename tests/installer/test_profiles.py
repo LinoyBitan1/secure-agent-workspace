@@ -166,6 +166,20 @@ def test_nvidia_model_override_in_both_workspaces(
         assert ws.providers[0].model == (model or defaults[name])
 
 
+@pytest.mark.parametrize("kind", ["nvidia", "openai", "anthropic"])
+def test_provider_profile_is_the_only_shipped_model_default(ab, shipped_profile_files, kind):
+    profiles = ab.parse_profiles(shipped_profile_files)
+    providers = [p for profile in profiles for ws in profile.workspaces
+                 for p in ws.providers if p.type == kind]
+    assert providers and all(not p.model for p in providers)
+    applier = ab.ProfileApplier(ab.Shell(dry_run=True), {"mtlsGateway": "test"}, {},
+                                {kind: "default_model: replacement-model\n"})
+    assert all(applier.model_for(p) == "replacement-model" for p in providers)
+    for p in providers:
+        p.model = "user-model"
+        assert applier.model_for(p) == "user-model"
+
+
 def test_missing_secret_is_an_error_naming_it(ab, shipped_profile_files, secrets_dir):
     for f in (secrets_dir / "web-search").iterdir():
         f.unlink()

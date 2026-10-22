@@ -283,6 +283,21 @@ def test_model_change_on_existing_saw_patches_only_the_model(run):
     assert "oc patch secret inference -n saw-cinf --type=merge" in log
 
 
+@pytest.mark.parametrize("provider", ["nvidia", "openai", "anthropic"])
+def test_new_secret_can_use_the_provider_profile_model(run, provider):
+    log, _ = run(PROVIDER=provider, MODEL="", API_KEY="key")
+    secret = next(line for line in log.splitlines()
+                  if line.startswith("oc create secret generic inference"))
+    assert "--from-literal=model=" not in secret
+
+
+def test_new_custom_endpoint_requires_an_explicit_model(run):
+    result, log, _ = run.invoke(PROVIDER="openai", MODEL="", API_KEY="key",
+                                ENDPOINT_URL="https://models.example/v1")
+    assert result.returncode != 0 and "MODEL is required" in result.stderr
+    assert "oc create secret" not in log
+
+
 def test_vault_managed_secret_warns_that_the_change_reverts(run):
     result, _, _ = run.invoke(EXISTING_SECRETS="inference", MODEL="nvidia/other",
                               EXISTING_EXTERNAL_SECRETS="inference", PROVIDER="", API_KEY="")
@@ -336,11 +351,11 @@ def test_missing_provider_settings_fail_before_cluster_work(tmp_path):
     oc.chmod(0o755)
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", MARKER=str(marker),
                OPENSHELL_SAW_NAME="cinf", SAW_CHART="charts/openshell-saw",
-               OWNER="alice", PROVIDER="build", MODEL="", API_KEY="k")
+               OWNER="alice", PROVIDER="", MODEL="", API_KEY="k")
     result = subprocess.run(["bash", str(SCRIPT)], env=env, cwd=ROOT,
                             capture_output=True, text=True)
     assert result.returncode != 0
-    assert "PROVIDER and MODEL" in result.stderr
+    assert "PROVIDER is required" in result.stderr
 
 
 def test_missing_login_token_fails_before_cluster_write(tmp_path):

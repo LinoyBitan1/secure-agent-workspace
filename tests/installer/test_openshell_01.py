@@ -150,7 +150,9 @@ def test_missing_model_skips_onboarding_and_keeps_sandbox_alive(
     notebook = next(sb for sb in ws.sandboxes if sb.name == "notebook")
     notebook.model = ""
 
-    make_applier(ab, config, creds).apply(profiles)
+    applier = make_applier(ab, config, creds)
+    applier.provider_profiles = {}
+    applier.apply(profiles)
 
     calls = [c for c in fake_env.openshell_calls() if "notebook" in c]
     assert not any("openclaw onboard " in " ".join(c) for c in calls)
