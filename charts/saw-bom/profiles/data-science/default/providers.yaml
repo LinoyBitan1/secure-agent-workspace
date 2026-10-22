@@ -14,16 +14,16 @@ spec:
       type: brave
       credentialSecret: web-search
       credentialSecretKey: api_key
-    # Optional APIs: enable and add their names to notebook.providers.
+    # Test-cluster configuration: all three inference providers are enabled.
     - name: openai
       type: openai
-      enabled: false
+      enabled: true
       credentialSecret: inference-openai
       credentialSecretKey: api_key
       modelSecretKey: model
     - name: anthropic
       type: anthropic
-      enabled: false
+      enabled: true
       credentialSecret: inference-anthropic
       credentialSecretKey: api_key
       modelSecretKey: model
