@@ -50,9 +50,10 @@ spec:
                 signed in with Keycloak, for you only: notebook (default), cuda-sandbox (cuda-dev)'}
             inference__api_key: {title: 'inference: API key', type: string, 'ui:field': Secret, description: Stored
                 in Vault for your workspace only (provider nvidia)}
+            inference__model: {title: 'inference: Model', type: string, default: nvidia/nemotron-3.5-lightning-30b-a3b}
             web_search__api_key: {title: 'web-search: API key', type: string, 'ui:field': Secret, description: Stored
                 in Vault for your workspace only (provider brave)}
-          required: [inference__api_key, web_search__api_key]
+          required: [inference__api_key, inference__model, web_search__api_key]
   steps:
   - id: request
     name: Submit the request

@@ -501,6 +501,10 @@ The governance profiles in `charts/governance-policy/profiles/` control allowed
 endpoints and binaries; model selection belongs in the SAW-BOM providers above.
 Choose a model served by the provider's allowed endpoint.
 
+The installer has no built-in model fallback. If neither the sandbox nor its
+provider specifies a model, it logs a warning and skips OpenClaw onboarding
+while keeping the sandbox running.
+
 ## Custom inference
 
 A self-hosted OpenAI-compatible endpoint (vLLM, Ollama, ...) is an `openai`

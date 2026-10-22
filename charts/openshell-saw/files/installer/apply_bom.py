@@ -3563,7 +3563,13 @@ class ProfileApplier:
         # No /sandbox chown: OpenShell 0.1.x runs the workload without
         # capabilities (root in the container cannot even read /sandbox) and
         # already gives /sandbox to the image's user.
-        model = sb.model or provider.model or "nvidia/nemotron-3.5-lightning-30b-a3b"
+        model = sb.model or provider.model
+        if not model:
+            log(f"WARN: no model for provider '{provider.name}'; "
+                "set model on the sandbox or provider. Skipping OpenClaw onboarding")
+            self.install_tool_gate(ws, sb, enable=False)
+            self.install_keepalive(ws, sb)
+            return
         oc_env = OPENCLAW_EXEC_ENV
         # OpenShell 0.1.x: no inference.local. OpenClaw calls the provider's
         # own endpoint with the placeholder key this exec receives in the
