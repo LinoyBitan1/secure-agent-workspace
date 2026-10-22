@@ -151,6 +151,21 @@ def test_credentials_resolve_from_mounted_secrets(ab, shipped_profile_files, sec
                      "cuda-dev": {"nvidia": "nvapi-TEST-KEY-123"}}
 
 
+@pytest.mark.parametrize("model", [None, "", "nvidia/alternative-model"])
+def test_nvidia_model_override_in_both_workspaces(
+        ab, shipped_profile_files, secrets_dir, model):
+    profiles = ab.parse_profiles(shipped_profile_files)
+    workspaces = ws_by_name(profiles)
+    defaults = {name: ws.providers[0].model for name, ws in workspaces.items()}
+    if model is not None:
+        (secrets_dir / "inference" / "model").write_text(model + "\n")
+
+    ab.resolve_credentials(profiles, secrets_dir)
+
+    for name, ws in workspaces.items():
+        assert ws.providers[0].model == (model or defaults[name])
+
+
 def test_missing_secret_is_an_error_naming_it(ab, shipped_profile_files, secrets_dir):
     for f in (secrets_dir / "web-search").iterdir():
         f.unlink()

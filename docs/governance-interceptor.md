@@ -81,6 +81,10 @@ overwrites it from the filename anyway, but OpenShell's own parser requires it, 
 file also works with `openshell provider profile import -f <file>` (the SAW installer imports
 `brave.yaml` this way when governance is off).
 
+For inference providers, choose the model in the SAW-BOM provider definition
+or its Secret, rather than in this endpoint policy. See
+[Choosing a model](versioned-bom-installer.md#choosing-a-model).
+
 ```yaml
 id: github
 display_name: GitHub

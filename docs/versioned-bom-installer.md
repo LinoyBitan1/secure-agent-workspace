@@ -473,6 +473,34 @@ OpenAI API-key chats use the OpenClaw runtime. In both cases, the sandbox
 receives placeholder keys and OpenShell substitutes the real credentials
 only for allowed requests.
 
+### Choosing a model
+
+Set `model` in the SAW-BOM provider definition, for example in
+`charts/saw-bom/profiles/data-science/default/providers.yaml`:
+
+```yaml
+- name: nvidia
+  type: nvidia
+  nemoclawProvider: build
+  model: nvidia/nemotron-3.5-lightning-30b-a3b
+  credentialSecret: inference
+  credentialSecretKey: api_key
+  modelSecretKey: model
+```
+
+`modelSecretKey: model` lets each SAW override that default with the `model`
+field in its `inference` Secret. Both NVIDIA workspaces (`default` and
+`cuda-dev`) read this override, as OpenAI and Anthropic do from their own
+Secrets. A missing or empty Secret field keeps the profile's `model`.
+For a new SAW, `make saw-create ... PROVIDER=nvidia MODEL=<model-id> API_KEY=<key>`
+writes this field. For an existing SAW, update the Secret through its normal
+configuration source and run `make saw-restart` to apply it. A repeat
+`saw-create` without `API_KEY` preserves the existing Secret, including its model.
+
+The governance profiles in `charts/governance-policy/profiles/` control allowed
+endpoints and binaries; model selection belongs in the SAW-BOM providers above.
+Choose a model served by the provider's allowed endpoint.
+
 ## Custom inference
 
 A self-hosted OpenAI-compatible endpoint (vLLM, Ollama, ...) is an `openai`

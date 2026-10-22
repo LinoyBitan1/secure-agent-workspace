@@ -10,6 +10,7 @@ spec:
       model: nvidia/nemotron-3.5-lightning-30b-a3b
       credentialSecret: inference
       credentialSecretKey: api_key
+      modelSecretKey: model
     - name: brave
       type: brave
       credentialSecret: web-search
