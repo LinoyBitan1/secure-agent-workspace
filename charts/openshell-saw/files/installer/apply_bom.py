@@ -4264,10 +4264,14 @@ class ProfileApplier:
             self.cli(*exec_cmd, "sh", "-c",
                      f"{oc_env} openclaw models auth activate {shlex.quote(profile_id)} --agent main",
                      check=False)
+        model_id = model if model.startswith(f"{provider.type}/") else f"{provider.type}/{model}"
         if auth_choice:
-            model_id = model if model.startswith(f"{provider.type}/") else f"{provider.type}/{model}"
             self.cli(*exec_cmd, "sh", "-c",
                      f"{oc_env} openclaw models set {shlex.quote(model_id)}", check=False)
+        # Onboarding/activation can pin main to a model that overrides the default.
+        self.cli(*exec_cmd, "sh", "-c",
+                 f"{oc_env} openclaw config set agents.entries.main.model "
+                 f"{shlex.quote(json.dumps(model_id))}")
         # The request timeout: OpenClaw's per-provider HTTP timeout
         # (models.providers.<id>.timeoutSeconds; the custom provider's id is
         # the --custom-provider-id above, a native one's its type).

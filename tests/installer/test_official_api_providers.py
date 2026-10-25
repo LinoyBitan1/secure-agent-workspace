@@ -123,3 +123,46 @@ def test_each_official_api_reads_its_own_secret(ab, secrets_dir):
         provider = next(p for p in workspace.providers if p.name == kind)
         assert provider.credential_secret == f"inference-{kind}"
         assert provider.model == f"test-{kind}-model"
+
+
+@pytest.mark.parametrize("kind,model", [
+    ("openai", "gpt-6-luna"),
+    ("anthropic", "claude-sonnet-4-6"),
+    ("nvidia", "nvidia/nemotron-3.5-lightning-30b-a3b"),
+])
+def test_configured_model_replaces_the_main_agents_onboarding_selection(
+        ab, fake_env, config, tmp_path, kind, model):
+    import json
+
+    secret = tmp_path / "model-key"
+    secret.mkdir()
+    (secret / "api_key").write_text("test-model-key")
+    provider = ab.Provider(name=kind, type=kind, credential_secret="model-key")
+    sandbox = ab.Sandbox(name="chat", type="openclaw", providers=[kind], inference={
+        "providerRef": kind, "model": model})
+    workspace = ab.Workspace(name="default", providers=[provider], sandboxes=[sandbox])
+    profiles = [ab.Profile(name="test", workspaces=[workspace])]
+    creds = ab.resolve_credentials(profiles, tmp_path)
+    ab.ProfileApplier(ab.Shell(), config, creds).apply(profiles)
+    state = fake_env.openshell_state()
+    saved = state["sandboxes"]["default/chat"].setdefault("openclawConfig", {})
+    # Onboarding can pin a model on main, which wins over models set's default.
+    saved["agents.entries.main.model"] = f"{kind}/onboarding-default"
+    saved["agents.entries.other.model"] = "other/keep-me"
+    fake_env.set_openshell_state(state)
+    profile_id = f"{kind}:setup-df67c47c-d3f2-46f5-b698-c42390c67b5d"
+    (fake_env.state / "exec-output.json").write_text(json.dumps({
+        "openclaw onboard": "Replacement credential saved but inactive.\n"
+        f"openclaw models auth activate {profile_id} --agent main"}))
+    before = len(fake_env.openshell_calls())
+    ab.ProfileApplier(ab.Shell(), config, creds).apply(profiles)
+    current = fake_env.openshell_state()["sandboxes"]["default/chat"]["openclawConfig"]
+    expected = model if model.startswith(kind + "/") else f"{kind}/{model}"
+    assert current["agents.entries.main.model"] == expected
+    assert current["agents.entries.other.model"] == "other/keep-me"
+    scripts = [c[-1] for c in fake_env.openshell_calls()[before:]
+               if c[:2] == ["sandbox", "exec"]]
+    activate = next(i for i, s in enumerate(scripts) if "models auth activate " in s)
+    select = next(i for i, s in enumerate(scripts)
+                  if "config set agents.entries.main.model " in s)
+    assert select > activate
