@@ -6,11 +6,27 @@ deny.json lists operations (e.g. "workspace create") that fail with a
 permission error, to test error paths.
 """
 import json
+import gzip
+import hashlib
+import io
 import os
 import re
 import shlex
 import sys
+import tarfile
 from pathlib import Path
+
+
+def archive_bytes(content):
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as archive:
+        for name, value in sorted(content.items()):
+            data = value.encode()
+            member = tarfile.TarInfo(name)
+            member.uid = member.gid = 1000
+            member.mode, member.size = 0o644, len(data)
+            archive.addfile(member, io.BytesIO(data))
+    return gzip.compress(raw.getvalue(), mtime=0)
 
 state_dir = Path(os.environ["FAKE_STATE"])
 args = sys.argv[1:]
@@ -316,7 +332,7 @@ elif op == "sandbox create":
 elif op == "sandbox download":
     # `sandbox download <sb> <remote> <local>`: the preserve archive. The
     # fake sandbox's "files" are a dict kept in its state; the archive is
-    # that dict as JSON, so a restore can put it back.
+    # a real tar archive, so the installer's ownership normalization runs too.
     key = f"{ws}/{head[2]}"
     sb = state["sandboxes"].get(key)
     if not sb:
@@ -328,7 +344,7 @@ elif op == "sandbox download":
         fail(f"Error: download source {remote!r} escapes the sandbox working directory")
     if remote not in sb.get("archives", {}):
         fail(f"Error: {remote}: no such file")
-    Path(local).write_text(json.dumps(sb["archives"][remote]))
+    Path(local).write_bytes(archive_bytes(sb["archives"][remote]))
 elif op == "sandbox upload":
     key = f"{ws}/{head[2]}"
     sb = state["sandboxes"].get(key)
@@ -344,7 +360,11 @@ elif op == "sandbox upload":
     local, remote = head[-2], head[-1]
     if not remote.startswith("/sandbox/"):
         fail(f"Error: upload destination {remote!r} escapes the sandbox working directory")
-    sb.setdefault("archives", {})[remote] = json.loads(Path(local).read_text())
+    with tarfile.open(local, "r:gz") as archive:
+        content = {member.name: archive.extractfile(member).read().decode()
+                   for member in archive if member.isfile()}
+    sb.setdefault("archives", {})[remote] = content
+    sb.setdefault("archiveDigests", {})[remote] = hashlib.sha256(Path(local).read_bytes()).hexdigest()
 elif op == "sandbox delete":
     key = f"{ws}/{head[2]}"
     delay = state.get("deleteDelay", 0)
@@ -356,10 +376,7 @@ elif op == "sandbox exec":
     script = args[-1] if args[-3:-1] == ["sh", "-c"] else ""
 
     def archive_digest(content):
-        # The archive's sha256, as `sha256sum` prints it: the fake archive is
-        # its files as JSON, and `sandbox download` writes exactly that.
-        import hashlib
-        return hashlib.sha256(json.dumps(content).encode()).hexdigest()
+        return hashlib.sha256(archive_bytes(content)).hexdigest()
 
     if "tar -czf " in script and "sha256sum" in script:
         # preserve_sandbox: archive /sandbox (the fake's "files"), print its checksum.
@@ -381,7 +398,8 @@ elif op == "sandbox exec":
         if archive not in sb.get("archives", {}):
             fail(f"tar: {archive}: Cannot open: No such file or directory", 2)
         expected = re.search(r"= '?([0-9a-f]{64})'? \]", script)
-        if expected and archive_digest(sb["archives"][archive]) != expected.group(1):
+        digest = sb.get("archiveDigests", {}).get(archive, archive_digest(sb["archives"][archive]))
+        if expected and digest != expected.group(1):
             sys.exit(4)
         sb.setdefault("files", {}).update(sb["archives"].pop(archive))
         save()

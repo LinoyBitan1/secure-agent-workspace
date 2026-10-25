@@ -4871,36 +4871,64 @@ class ProfileApplier:
         local = Path(record["archive"])
         if not self.sh.dry_run and not local.is_file():
             raise InstallerError(f"the archive to restore into '{sb.name}' is missing: {local}")
-        # A leftover archive from an earlier attempt (a restore that failed
-        # after the upload) makes the next upload fail ("failed to add
-        # .saw-preserve.tar to tar archive", found live): remove it first.
-        self.cli("sandbox", "exec", "-n", sb.name, *ws_args(ws.name), "--no-tty", "--",
-                 "rm", "-f", self.PRESERVE_ARCHIVE, check=False, quiet=True)
-        # --no-git-ignore: `sandbox upload` filters by .gitignore rules by
-        # default and stops when the file is filtered (found live: the
-        # archive was refused and the restore never ran).
-        put = self.cli("sandbox", "upload", sb.name, *ws_args(ws.name), "--no-git-ignore",
-                       str(local), self.PRESERVE_ARCHIVE, check=False)
-        if not put.ok:
-            raise InstallerError(f"could not upload the archive into '{sb.name}'; the restore "
-                                 "is retried on the next apply")
-        q = shlex.quote
-        script = (f"[ \"$(sha256sum {self.PRESERVE_ARCHIVE} | cut -d' ' -f1)\" = "
-                  f"{q(record['sha256'])} ] || exit 4; cd /sandbox || exit 3; "
-                  # --no-overwrite-dir: an existing directory (the image's
-                  # .openclaw, say) keeps its metadata; a new one gets the
-                  # archived mode. The diff covers the non-directory members:
-                  # directory mtimes drift as soon as anything is written.
-                  f"tar -xzf {self.PRESERVE_ARCHIVE} --no-overwrite-dir && "
-                  f"tar -tzf {self.PRESERVE_ARCHIVE} | grep -v '/$' | "
-                  f"tar -dzf {self.PRESERVE_ARCHIVE} -T - && rm -f {self.PRESERVE_ARCHIVE}")
-        done = self.cli("sandbox", "exec", "-n", sb.name, *ws_args(ws.name), "--no-tty", "--",
-                        "sh", "-c", script, check=False)
-        if not done.ok:
-            why = {3: "no /sandbox", 4: "the uploaded archive does not match its checksum"}.get(
-                done.rc, f"exit {done.rc}")
-            raise InstallerError(f"could not restore the files of '{sb.name}' ({why}); the "
-                                 "restore is retried on the next apply")
+        with tempfile.TemporaryDirectory(prefix="saw-restore-") as tmp:
+            digest = record["sha256"]
+            if not self.sh.dry_run:
+                if sha256_file(local) != digest:
+                    raise InstallerError(f"the archive of '{sb.name}' does not match its checksum")
+                ids = [self.cli("sandbox", "exec", "-n", sb.name, *ws_args(ws.name),
+                                "--no-tty", "--", "id", flag, quiet=True).out.strip()
+                       for flag in ("-u", "-g")]
+                if not all(value.isdigit() for value in ids):
+                    raise InstallerError(f"cannot determine restore uid/gid for '{sb.name}'")
+                # Sandbox exec cannot restore foreign ownership. Normalize a copy;
+                # keep the original recovery archive and verify all other metadata.
+                normalized = Path(tmp) / "restore.tar.gz"
+                try:
+                    with tarfile.open(local, "r:gz") as source, tarfile.open(normalized, "w:gz") as target:
+                        for member in source:
+                            member.uid, member.gid = map(int, ids)
+                            member.uname = member.gname = ""
+                            for key in ("uid", "gid", "uname", "gname"):
+                                member.pax_headers.pop(key, None)
+                            if member.isfile():
+                                with source.extractfile(member) as payload:
+                                    target.addfile(member, payload)
+                            else:
+                                target.addfile(member)
+                except (tarfile.TarError, OSError) as exc:
+                    raise InstallerError(f"cannot prepare restore archive for '{sb.name}': {exc}") from exc
+                local, digest = normalized, sha256_file(normalized)
+            # A leftover archive from an earlier attempt (a restore that failed
+            # after the upload) makes the next upload fail ("failed to add
+            # .saw-preserve.tar to tar archive", found live): remove it first.
+            self.cli("sandbox", "exec", "-n", sb.name, *ws_args(ws.name), "--no-tty", "--",
+                     "rm", "-f", self.PRESERVE_ARCHIVE, check=False, quiet=True)
+            # --no-git-ignore: `sandbox upload` filters by .gitignore rules by
+            # default and stops when the file is filtered (found live: the
+            # archive was refused and the restore never ran).
+            put = self.cli("sandbox", "upload", sb.name, *ws_args(ws.name), "--no-git-ignore",
+                           str(local), self.PRESERVE_ARCHIVE, check=False)
+            if not put.ok:
+                raise InstallerError(f"could not upload the archive into '{sb.name}'; the restore "
+                                     "is retried on the next apply")
+            q = shlex.quote
+            script = (f"[ \"$(sha256sum {self.PRESERVE_ARCHIVE} | cut -d' ' -f1)\" = "
+                      f"{q(digest)} ] || exit 4; cd /sandbox || exit 3; "
+                      # --no-overwrite-dir: an existing directory (the image's
+                      # .openclaw, say) keeps its metadata; a new one gets the
+                      # archived mode. The diff covers the non-directory members:
+                      # directory mtimes drift as soon as anything is written.
+                      f"tar -xzf {self.PRESERVE_ARCHIVE} --same-permissions --no-same-owner --no-overwrite-dir && "
+                      f"tar -tzf {self.PRESERVE_ARCHIVE} | grep -v '/$' | "
+                      f"tar -dzf {self.PRESERVE_ARCHIVE} -T - && rm -f {self.PRESERVE_ARCHIVE}")
+            done = self.cli("sandbox", "exec", "-n", sb.name, *ws_args(ws.name), "--no-tty", "--",
+                            "sh", "-c", script, check=False)
+            if not done.ok:
+                why = {3: "no /sandbox", 4: "the uploaded archive does not match its checksum"}.get(
+                    done.rc, f"exit {done.rc}")
+                raise InstallerError(f"could not restore the files of '{sb.name}' ({why}); the "
+                                     "restore is retried on the next apply")
 
     def complete_migration(self, ws, sb):
         """The restore verified: forget the record and the archive. The only

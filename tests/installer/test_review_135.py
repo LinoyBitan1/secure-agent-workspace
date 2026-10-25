@@ -261,7 +261,12 @@ def test_the_backup_excludes_only_the_installers_mounts(ab, tmp_path):
         pass
 
     def capture(*args, **kwargs):
-        if args[:2] == ("sandbox", "upload") or "rm" in args:   # restore: cleanup + upload succeed
+        if args[-2:] in (("id", "-u"), ("id", "-g")):
+            return ab.Result(0, str(os.getuid() if args[-1] == "-u" else os.getgid()), "")
+        if args[:2] == ("sandbox", "upload"):
+            (fresh / ".saw-preserve.tar.gz").write_bytes(Path(args[-2]).read_bytes())
+            return ab.Result(0, "", "")
+        if "rm" in args:   # restore: cleanup succeeds
             return ab.Result(0, "", "")
         captured.append(args[-1])
         raise Captured()
