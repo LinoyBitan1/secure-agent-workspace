@@ -118,7 +118,7 @@ sequenceDiagram
   A->>VM: namespace, ExternalSecrets, BOM, VM, routes
   P->>K: tasks argo-cd-apps, vm, vm-running: wait for each
   VM->>VM: installer creates sandboxes, starts OpenClaw, UI proxy
-  P->>VM: task sandboxes: wait until every sandbox UI route answers
+  P->>VM: task sandboxes: wait until the OpenShell web UI and every sandbox UI route answer
   R->>K: catalog refresh: Component saw-user with status and UI links
   loop run page, one step per pipeline task
     R->>K: GET /saw-status (generator): task state, then the pipeline's log
@@ -154,7 +154,7 @@ call the generator's `/status` through the RHDH proxy endpoint `/saw-status`
 | Call | Answers |
 |---|---|
 | `GET /status/run/<pipelinerun>[?task=<task>]&wait=20` | the run's phase, each task's state and its log, for the user who made the request and for administrators (once the log shows who that was; anyone else gets 404); with `task`, waits for that task |
-| `GET /status/workspace?for=<stage>&wait=20` | the caller's workspace: `registered` (registry entry), `apps` (the four Argo CD applications), `vm` (VirtualMachine defined), `running`, `ready` (every sandbox UI route answers, i.e. the installer finished) |
+| `GET /status/workspace?for=<stage>&wait=20` | the caller's workspace: `registered` (registry entry), `apps` (the four Argo CD applications), `vm` (VirtualMachine defined), `running`, `ready` (the OpenShell web UI and every sandbox UI route answer) |
 | `...&assert=1` / `assert=ready` | 422 when the run failed or did not end / the workspace failed or is not ready, so the step fails |
 
 `wait` holds the answer until the stage is reached, a stage fails (Argo CD
