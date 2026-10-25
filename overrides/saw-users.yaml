@@ -1,3 +1,6 @@
-# Add real account names here after creating them with keycloak-add-users.
-# Each entry creates saw-<name>. Demo entries are in saw-users-demo.yaml.
-users: []
+# PR #135 live test on cvml5
+users:
+  - name: pr135ds
+    profiles: [data-science]
+  - name: pr135custom
+    profiles: [custom-inference]
