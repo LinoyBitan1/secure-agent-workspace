@@ -892,6 +892,45 @@ def states(st):
     return {s["id"]: s["state"] for s in st["steps"]}
 
 
+@pytest.mark.parametrize("webui_up", [False, True])
+def test_a_profile_without_sandbox_ui_waits_for_the_openshell_webui(
+        portal, world, catalog, webui_up):
+    fake, signer = world
+    fake.request("saw-req-custom", {"action": "create", "token": signer.token(),
+                 "profile": "custom-inference", "inference.api_key": "dummy",
+                 "inference.url": "https://example.com/v1", "inference.model": "model",
+                 "web-search.api_key": "dummy"})
+    assert portal.main(["create", "saw-req-custom"]) == 0
+    add_apps(fake)
+    add_vm(fake, "Running")
+    checked = []
+
+    def ping(url):
+        checked.append(url)
+        return webui_up
+
+    st = portal.workspace_status(portal.kube(), "alice", catalog, "saw-portal",
+                                 "vp-gitops", "example.com", ping=ping)
+    assert st["ready"] is webui_up
+    assert st["phase"] == ("ready" if webui_up else "running")
+    assert checked == ["https://alice-webui-saw-alice.apps.example.com"]
+
+
+def test_sandbox_uis_do_not_hide_an_unavailable_openshell_webui(portal, world):
+    fake = world[0]
+    fake.objects[REGISTRY] = {"metadata": {"name": "saw-ws-alice"},
+                              "data": {"user.json": json.dumps({"profiles": ["ui-profile"]})}}
+    catalog = {"ui-profile": {"workspaces": [{"name": "default", "enabled": True,
+               "sandboxes": [{"name": "notebook", "enabled": True, "uiRoute": True}]}]}}
+    add_apps(fake)
+    add_vm(fake, "Running")
+    st = portal.workspace_status(portal.kube(), "alice", catalog, "saw-portal",
+                                 "vp-gitops", "example.com",
+                                 ping=lambda url: "-webui-" not in url)
+    assert not st["ready"] and st["phase"] == "running"
+    assert "OpenShell web UI" in st["steps"][-1]["detail"]
+
+
 def test_a_workspace_goes_through_its_stages(portal, world, catalog):
     fake = world[0]
     st = status(portal, catalog)
@@ -908,7 +947,7 @@ def test_a_workspace_goes_through_its_stages(portal, world, catalog):
     add_vm(fake, "Running")
     st = status(portal, catalog)
     assert (st["phase"], st["title"]) == ("running", "Installing")
-    assert "waiting for notebook UI (default)" in st["text"] and not st["ready"]
+    assert "waiting for OpenShell web UI, notebook UI (default)" in st["text"] and not st["ready"]
     st = status(portal, catalog, up=True)
     assert st["ready"] and set(states(st).values()) == {"done"}
     assert "https://alice-default-notebook-ui.apps.example.com" in st["text"]

@@ -5,7 +5,7 @@ Standard library only; one file:
 
   portal.py create REQUEST        pipeline saw-workspace-create, task register
   portal.py wait-<stage> USER [S] its later tasks: wait for apps, vm, running,
-                                  ready (the sandbox UIs answer)
+                                  ready (OpenShell and sandbox UIs answer)
   portal.py delete REQUEST        pipeline saw-workspace-delete, task unregister
   portal.py wait-gone USER [S]    then: wait until Argo CD removed the workspace
   portal.py finish-delete USER    then: the registry entry and the Vault keys
@@ -824,13 +824,15 @@ def workspace_status(k8s, user, catalog, ns, argo_ns, domain, ping=None):
     if vm_state in VM_FAILED:
         failure = failure or f"VM {user} is {vm_state}"
 
-    uis = sandbox_ui_links(user, profiles, catalog, domain)
+    # The OpenShell web UI starts after profile apply, including for sandboxes
+    # without a dedicated UI route. A running VM alone is not ready.
+    uis = ui_links(user, profiles, catalog, domain)
     if not reached["running"]:
         reached["ready"] = False
         details["ready"] = "after the VM starts (about 10 minutes)"
     elif not uis:
-        reached["ready"] = True
-        details["ready"] = "no sandbox UI to check (see the OpenShell web UI)"
+        reached["ready"] = False
+        details["ready"] = "installing; waiting for workspace routes"
     else:
         down = [title for title, url in uis if not ping(url)]
         reached["ready"] = not down
@@ -853,7 +855,7 @@ def workspace_status(k8s, user, catalog, ns, argo_ns, domain, ping=None):
     message = (failure or {"none": "not registered", "registered": "waiting for Argo CD",
                            "apps": "Argo CD is creating the VM", "vm": f"VM {vm_state or 'starting'}",
                            "running": "installing OpenShell and the sandboxes",
-                           "ready": "all sandbox UIs answer"}[phase])
+                           "ready": "OpenShell and sandbox UIs answer"}[phase])
     links = [{"title": t, "url": u} for t, u in ui_links(user, profiles, catalog, domain)]
     marks = {"done": "[x]", "active": "[ ]", "waiting": "[ ]", "failed": "[!]"}
     lines = [f"{PHASE_TITLES[phase]}: {message}", ""]

@@ -185,7 +185,7 @@ follows it, one task per stage, and the run page shows one step per task
 | `argo-cd-apps` | `portal-ws-carol` and the three `saw-carol*` apps exist |
 | `vm` | VirtualMachine `carol` exists |
 | `vm-running` | the VM is `Running` |
-| `sandboxes` (Install OpenShell and the sandboxes) | every sandbox UI route answers (the installer finished) |
+| `sandboxes` (Install OpenShell and the sandboxes) | the OpenShell web UI and every sandbox UI route answer |
 
 Then "Pipeline log" shows each task's log (who the request is for, the Vault
 paths, each stage as it changed) and "Check the pipeline" turns the run red
