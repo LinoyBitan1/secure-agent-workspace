@@ -264,8 +264,9 @@ controller runs with a global `--policy`; the default allows it.)
   workspaces and sandboxes (with their UI flag), and each Secret its providers
   read with the fields it needs: the credential (`credentialSecretKey`, or each
   entry of a `credentials:` mapping), `baseUrlSecretKey` / `modelSecretKey`
-  when set, and every `secretKeyRef` input of a sandbox's `inference:` and
-  `env:` (labelled by its `title`, pre-filled with its `default`, required
+  when set, and every active `secretKeyRef` input of a sandbox's `inference:`
+  (including `inference.models` for enabled, attached providers;
+  labelled by its `title`, pre-filled with its `default`, required
   exactly when the installer would refuse an absent value);
 - `charts/openshell-rhdh/files/create-workspace.yaml`: the RHDH template. It
   lists the profiles, and for the chosen one asks only for its fields. API

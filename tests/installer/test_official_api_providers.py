@@ -2,6 +2,71 @@
 import pytest
 
 
+def test_attached_models_resolve_and_register_without_changing_default(
+        ab, fake_env, config, secrets_dir):
+    from conftest import profile_files
+
+    profiles = ab.parse_profiles(profile_files())
+    ws = next(w for w in profiles[0].workspaces if w.name == "default")
+    sb = ws.sandboxes[0]
+    assert {name: src["default"] for name, src in sb.inference["models"].items()} == {
+        "openai": "gpt-6-luna", "anthropic": "claude-sonnet-4-6"}
+    # Disabled providers neither require Secrets nor appear in chat configuration.
+    ab.validate_profiles(profiles)
+    ab.resolve_credentials(profiles, secrets_dir)
+    assert sb.inference_values["models"] == {}
+    for p in ws.providers:
+        if p.name in sb.inference["models"]:
+            p.enabled = True
+            sb.providers.append(p.name)
+            secret = secrets_dir / p.credential_secret
+            secret.mkdir()
+            (secret / "api_key").write_text("test-key")
+    (secrets_dir / "inference-openai" / "model").write_text("selected-openai")
+    ab.validate_profiles(profiles)
+    creds = ab.resolve_credentials(profiles, secrets_dir)
+    assert sb.inference_values["models"] == {
+        "openai": "selected-openai", "anthropic": "claude-sonnet-4-6"}
+    sb.harness_ref = {}
+    ab.ProfileApplier(ab.Shell(), config, creds).apply(profiles)
+    saved = fake_env.openshell_state()["sandboxes"]["default/notebook"]["openclawConfig"]
+    choices = saved["agents.defaults.models"]
+    assert "openai/selected-openai" in choices
+    assert "anthropic/claude-sonnet-4-6" in choices
+    assert "nvidia/nemotron-3.5-lightning-30b-a3b" in choices
+    assert choices["openai/selected-openai"]["agentRuntime"] == {"id": "openclaw"}
+    assert saved["agents.entries.main.model"].startswith("nvidia/")
+    state = fake_env.openshell_state()
+    choices = state["sandboxes"]["default/notebook"]["openclawConfig"]["agents.defaults.models"]
+    choices["other/user-choice"] = {"alias": "keep"}
+    choices["anthropic/claude-sonnet-4-6"] = {"alias": "Claude"}
+    fake_env.set_openshell_state(state)
+    ab.ProfileApplier(ab.Shell(), config, creds).apply(profiles)
+    saved = fake_env.openshell_state()["sandboxes"]["default/notebook"]["openclawConfig"]
+    assert saved["agents.defaults.models"]["other/user-choice"] == {"alias": "keep"}
+    assert saved["agents.defaults.models"]["anthropic/claude-sonnet-4-6"] == {"alias": "Claude"}
+    assert saved["agents.entries.main.model"].startswith("nvidia/")
+
+
+@pytest.mark.parametrize("models,message", [
+    ([], "models must be a mapping"),
+    ({"typo": "model"}, "unknown provider"),
+    ({"openai": ""}, "non-empty"),
+    ({"openai": {"secretKeyRef": {"name": "x", "key": "model"},
+                 "default": "", "required": False}}, "non-empty"),
+    ({"brave": "model"}, "native OpenAI or Anthropic"),
+])
+def test_invalid_attached_models_fail_validation(ab, models, message):
+    providers = [ab.Provider(name="nvidia", type="nvidia", credential_secret="inference"),
+                 ab.Provider(name="openai", type="openai", enabled=False),
+                 ab.Provider(name="brave", type="brave", credential_secret="brave")]
+    sb = ab.Sandbox(name="chat", type="openclaw", providers=["nvidia"], inference={
+        "providerRef": "nvidia", "model": "nvidia/test", "models": models})
+    with pytest.raises(ab.InstallerError, match=message):
+        ab.validate_profiles([ab.Profile(name="test", workspaces=[
+            ab.Workspace(name="default", providers=providers, sandboxes=[sb])])])
+
+
 @pytest.mark.parametrize("kind", ["openai", "anthropic"])
 @pytest.mark.parametrize("native", [True, False])
 def test_existing_custom_settings_are_cleared_only_for_native_apis(
@@ -90,6 +155,7 @@ def test_shipped_optional_apis_do_not_require_keys_by_default(ab, secrets_dir):
     optional = [p for p in workspace.providers if p.type in ("openai", "anthropic")]
     assert {p.type for p in optional} == {"openai", "anthropic"}
     assert all(not p.enabled and not p.base_url_secret_key for p in optional)
+    assert all(not p.model and not p.model_secret_key for p in optional)
     assert workspace.sandboxes[0].providers == ["nvidia"]
     nvidia = next(p for p in workspace.providers if p.name == "nvidia")
     # The model is the sandbox's (inference.model); the provider holds credentials only.
@@ -122,7 +188,42 @@ def test_each_official_api_reads_its_own_secret(ab, secrets_dir):
     for kind in ("openai", "anthropic"):
         provider = next(p for p in workspace.providers if p.name == kind)
         assert provider.credential_secret == f"inference-{kind}"
-        assert provider.model == f"test-{kind}-model"
+        assert provider.model == "" and provider.model_secret_key == ""
+
+
+@pytest.mark.parametrize("kind,default_model", [
+    ("openai", "gpt-6-luna"),
+    ("anthropic", "claude-sonnet-4-6"),
+])
+def test_shipped_native_provider_model_is_selected_by_sandbox_inference(
+        ab, secrets_dir, kind, default_model):
+    from conftest import profile_files
+
+    profiles = ab.parse_profiles(profile_files())
+    workspace = next(ws for ws in profiles[0].workspaces if ws.name == "default")
+    provider = next(p for p in workspace.providers if p.name == kind)
+    assert provider.model == "" and provider.model_secret_key == ""
+    provider.enabled = True
+    sandbox = workspace.sandboxes[0]
+    sandbox.providers.append(kind)
+    sandbox.inference = {
+        "providerRef": kind,
+        "model": {"secretKeyRef": {"name": f"inference-{kind}", "key": "model"},
+                  "default": default_model, "title": "Model (notebook)"},
+    }
+    secret = secrets_dir / f"inference-{kind}"
+    secret.mkdir()
+    (secret / "api_key").write_text(f"test-{kind}-key")
+    ab.validate_profiles(profiles)
+    credentials = ab.resolve_credentials(profiles, secrets_dir)
+    assert credentials["default"][kind] == f"test-{kind}-key"
+    assert sandbox.inference_values["providerRef"] == kind
+    assert ab.sandbox_model(sandbox, provider) == default_model
+    # Model inputs belong to the sandbox; changing one never changes the provider.
+    (secret / "model").write_text("selected-model")
+    ab.resolve_credentials(profiles, secrets_dir)
+    assert ab.sandbox_model(sandbox, provider) == "selected-model"
+    assert provider.model == "" and provider.model_secret_key == ""
 
 
 @pytest.mark.parametrize("kind,model", [

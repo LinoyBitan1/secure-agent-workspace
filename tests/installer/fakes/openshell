@@ -538,7 +538,8 @@ elif op == "sandbox exec":
                 val = json.loads(tokens[0]) if tokens else None
             except (ValueError, json.JSONDecodeError):
                 val = rest.strip("'\"")
-            if key.startswith(("plugins.load", "skills.load", "models.providers.", "agents.entries.")):
+            if key.startswith(("plugins.load", "skills.load", "models.providers.", "agents.entries.",
+                               "agents.defaults.")):
                 sb.setdefault("openclawConfig", {})[key] = val
             save()
             sys.exit(0)

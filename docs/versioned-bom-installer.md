@@ -465,8 +465,40 @@ The `data-science` profile uses NVIDIA
 sandbox can also attach the optional `openai` and `anthropic` providers;
 both are disabled until enabled in the profile and listed in the sandbox's
 `providers`. They read separate `inference-openai` and `inference-anthropic`
-Secrets. Each Secret contains `provider`, `model`, and `api_key`; official
-APIs need no `url`. See the [provider setup steps](../README.md#supported-inference-providers).
+Secrets. Each Secret contains `api_key`, an optional `provider` check, and
+an optional `model` override; official APIs need no `url`.
+See the [provider setup steps](../README.md#supported-inference-providers).
+
+Providers hold credentials. The notebook's `inference.providerRef` and
+`inference.model` select the startup model (NVIDIA by default).
+`inference.models` adds native OpenAI and Anthropic choices to the same
+OpenClaw chat without changing that startup model:
+
+```yaml
+inference:
+  providerRef: nvidia
+  model: nvidia/nemotron-3.5-lightning-30b-a3b
+  models:
+    openai:
+      secretKeyRef:
+        name: inference-openai
+        key: model
+      default: gpt-6-luna
+    anthropic:
+      secretKeyRef:
+        name: inference-anthropic
+        key: model
+      default: claude-sonnet-4-6
+```
+
+These additional model inputs use the same literal or typed Secret input
+syntax as `inference.model`. They are resolved and added to OpenClaw only
+when their provider is enabled and attached to this sandbox; disabled
+providers require no keys or portal fields. Existing OpenClaw model
+entries are retained. This map supports native OpenAI and Anthropic APIs
+on `openclaw` sandboxes; custom endpoints still use the primary inference
+block. Changing the startup provider also requires changing its primary
+`inference.model`.
 
 OpenClaw uses the built-in model catalog for these official APIs. A provider
 with `baseUrl` or `baseUrlSecretKey` instead uses custom endpoint onboarding.

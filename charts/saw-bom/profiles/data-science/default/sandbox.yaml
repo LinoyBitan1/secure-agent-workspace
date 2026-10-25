@@ -11,6 +11,9 @@ spec:
       image: quay.io/aipcc/base-images/agentic/openclaw@sha256:896d1526ee29b53167034ba65d1c758c8da777f441ed094e19f3bcf6d7445c61
       providers:
         - nvidia
+        # Enable the matching provider in providers.yaml before uncommenting:
+        # - openai
+        # - anthropic
       # The harness bundle is mounted read-only at /sandbox/harness, as is,
       # from a volume the installer fills; an update refills it in place:
       #   harnessRef: {name: <bundle>}   inline, from charts/saw-bom/harness/
@@ -19,6 +22,7 @@ spec:
       #                                  published by CI from harness-bundles/
       harnessRef:
         name: ds-default
+      # Providers hold credentials; inference sets this sandbox's default model.
       # How the agent reaches its model: the `nvidia` provider's credential
       # over the OpenAI protocol (NVIDIA's API is OpenAI-compatible), with
       # the model from the `inference` Secret, else this default (the RHDH
@@ -31,6 +35,20 @@ spec:
             key: model
           default: nvidia/nemotron-3.5-lightning-30b-a3b
           title: Model (notebook)
+        # Additional chat choices; read only when the provider is enabled and attached.
+        models:
+          openai:
+            secretKeyRef:
+              name: inference-openai
+              key: model
+            default: gpt-6-luna
+            title: OpenAI model (notebook)
+          anthropic:
+            secretKeyRef:
+              name: inference-anthropic
+              key: model
+            default: claude-sonnet-4-6
+            title: Anthropic model (notebook)
       # ui.route: publish the agent's web UI (OpenClaw control UI, port
       # 18789) on its own route, <user>-<workspace>-<sandbox>-ui, behind an
       # oauth2-proxy that signs in with Keycloak and admits only the

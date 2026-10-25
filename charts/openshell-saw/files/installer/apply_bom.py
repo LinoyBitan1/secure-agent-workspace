@@ -649,7 +649,8 @@ class Sandbox:
     # (the agent, and argv, can read these): those stay on providers.
     env: dict = field(default_factory=dict)
     # `inference:` -- how the agent reaches its model: {providerRef, protocol,
-    # baseUrl?, model, timeoutSeconds?}. Each of baseUrl/model/timeoutSeconds
+    # baseUrl?, model, models?, timeoutSeconds?}. models maps optional native
+    # provider names to additional chat model inputs. baseUrl/model/timeoutSeconds
     # is a literal or an input ({secretKeyRef: {name, key}, default?,
     # required?, title?}); inference_values is it resolved. The installer onboards the
     # agent from it (by protocol, so any profile-backed provider type works).
@@ -1638,7 +1639,8 @@ def validate_profiles(profiles, known_profiles=(), governed=False):
                 errors.append(f"{where}: {s.type} sandbox '{s.name}' needs at least one provider")
             if s.inference:
                 errors += [f"{where}: sandbox '{s.name}' {p}"
-                           for p in sandbox_inference_problems(s, provider_types)]
+                           for p in sandbox_inference_problems(
+                               s, provider_types, {p.name: p.type for p in ws.providers})]
             if not isinstance(s.env, dict):
                 errors.append(f"{where}: sandbox '{s.name}' env must be a mapping of NAME to "
                               "{value} or {secret, secretKey}")
@@ -1786,7 +1788,7 @@ def secret_ref_problems(src):
     if set(src["secretKeyRef"]) - {"name", "key"}:
         out.append("secretKeyRef takes only name and key")
     return out
-INFERENCE_KEYS = {"providerRef", "protocol", "baseUrl", "model", "timeoutSeconds"}
+INFERENCE_KEYS = {"providerRef", "protocol", "baseUrl", "model", "models", "timeoutSeconds"}
 # The API protocols the installer can onboard an agent with. A provider's
 # *profile* (type) says which hosts a credential may reach; the protocol says
 # how the agent talks to them, so a governed profile for another host (e.g.
@@ -1924,7 +1926,7 @@ def inference_protocol(spec, provider_type):
     return spec.get("protocol") or PROVIDER_PROTOCOLS.get(provider_type or "", "")
 
 
-def sandbox_inference_problems(sb, provider_types):
+def sandbox_inference_problems(sb, provider_types, declared_provider_types=None):
     """What is wrong with a sandbox's `inference:` block ([] when fine).
     `provider_types` maps the workspace's enabled provider names to their
     types."""
@@ -1958,6 +1960,22 @@ def sandbox_inference_problems(sb, provider_types):
     for key in ("baseUrl", "model"):
         if key in spec:
             out += [f"inference {key} {p}" for p in input_problems(spec[key])]
+    models = spec.get("models", {})
+    if not isinstance(models, dict):
+        out.append("inference models must be a mapping of provider names to model inputs")
+    else:
+        declared = declared_provider_types if declared_provider_types is not None else provider_types
+        if models and sb.type != "openclaw":
+            out.append("inference models is supported only for openclaw sandboxes")
+        for name, model in models.items():
+            if name not in declared:
+                out.append(f"inference models names unknown provider '{name}'")
+            elif declared[name] not in ("openai", "anthropic"):
+                out.append(f"inference models '{name}' needs a native OpenAI or Anthropic provider")
+            out += [f"inference models '{name}' {p}" for p in input_problems(model)]
+            if model == "" or (isinstance(model, dict) and not model.get("default")
+                              and not model.get("required", "default" not in model)):
+                out.append(f"inference models '{name}' must be non-empty")
     if "timeoutSeconds" in spec:
         out += [f"inference timeoutSeconds {p}"
                 for p in input_problems(spec["timeoutSeconds"], (str, int))]
@@ -1988,6 +2006,23 @@ def resolve_sandbox_inference(ws, sb, secrets_dir):
     if timeout and (not str(timeout).isdigit() or int(timeout) < 0):
         raise InstallerError(f"{where}: inference timeoutSeconds must be a non-negative integer")
     out["timeoutSeconds"] = int(timeout) if timeout else 0
+    if "models" in spec:
+        out["models"] = {}
+        for name, src in spec["models"].items():
+            attached = next((p for p in ws.providers if p.enabled and p.name == name
+                             and name in sb.providers), None)
+            if attached is None:
+                continue
+            if attached.base_url or attached.base_url_secret_key:
+                raise InstallerError(f"{where}: inference models '{name}' needs a native API")
+            model = resolve_input(src, secrets_dir, f"{where}: inference models '{name}'")
+            if not model:
+                raise InstallerError(f"{where}: inference models '{name}' is empty")
+            try:
+                check_env_value(model)
+            except ValueError as exc:
+                raise InstallerError(f"{where}: inference models '{name}': {exc}") from None
+            out["models"][name] = model
     for key in ("model", "baseUrl"):
         try:
             check_env_value(out[key])
@@ -4279,6 +4314,27 @@ class ProfileApplier:
         if auth_choice:
             self.cli(*exec_cmd, "sh", "-c",
                      f"{oc_env} openclaw models set {shlex.quote(model_id)}", check=False)
+        if (sb.inference_values or {}).get("models"):
+            current_models = self.cli(*exec_cmd, "sh", "-c",
+                                     f"{oc_env} openclaw config get agents.defaults.models --json",
+                                     check=False, quiet=True)
+            try:
+                choices = json.loads(current_models.out) if current_models.ok else {}
+                if not isinstance(choices, dict):
+                    raise ValueError("expected a mapping")
+            except ValueError as exc:
+                raise InstallerError(f"cannot read OpenClaw model choices: {exc}") from None
+            choices.setdefault(model_id, {})
+            for name, selected_model in sb.inference_values["models"].items():
+                kind = next(p.type for p in ws.providers if p.name == name)
+                selected_id = (selected_model if selected_model.startswith(f"{kind}/")
+                               else f"{kind}/{selected_model}")
+                choices.setdefault(selected_id, {})
+                if kind == "openai":
+                    choices[selected_id]["agentRuntime"] = {"id": "openclaw"}
+            self.cli(*exec_cmd, "sh", "-c",
+                     f"{oc_env} openclaw config set agents.defaults.models "
+                     + shlex.quote(json.dumps(choices)))
         # Keep activation's credential binding: old profiles may hold stale placeholders.
         current = self.cli(*exec_cmd, "sh", "-c",
                            f"{oc_env} openclaw config get agents.entries.main.model --json",
