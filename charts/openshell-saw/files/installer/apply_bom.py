@@ -1951,6 +1951,10 @@ def sandbox_inference_problems(sb, provider_types):
                    f"provider type '{provider_types[ref]}' does not imply one")
     if "model" not in spec:
         out.append("inference needs model")
+    model = spec.get("model")
+    if model == "" or (isinstance(model, dict) and not model.get("default")
+                       and not model.get("required", "default" not in model)):
+        out.append("inference model must be non-empty: use a non-empty default or required: true")
     for key in ("baseUrl", "model"):
         if key in spec:
             out += [f"inference {key} {p}" for p in input_problems(spec[key])]

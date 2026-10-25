@@ -383,6 +383,17 @@ def test_unreadable_labels_fail_before_a_running_sandbox_is_changed(ab, fake_env
                    for c in fake_env.openshell_calls()[before:])
 
 
+@pytest.mark.parametrize("model", ["", {"secretKeyRef": {"name": "inference", "key": "model"},
+                                       "default": ""},
+                                  {"secretKeyRef": {"name": "inference", "key": "model"},
+                                       "required": False}])
+def test_a_model_cannot_be_optional_without_a_nonempty_default(ab, model):
+    provider, sandbox, profiles = _env_sandbox(ab, {})
+    sandbox.inference = {"providerRef": provider.name, "protocol": "openai", "model": model}
+    with pytest.raises(ab.InstallerError, match="inference model.*non-empty"):
+        ab.validate_profiles(profiles)
+
+
 def test_a_surviving_original_is_never_overwritten_by_its_old_snapshot(
         ab, fake_env, config, tmp_path, monkeypatch):
     monkeypatch.setattr(ab.ProfileApplier, "POLL_SECONDS", 0)       # the denied delete's wait

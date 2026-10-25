@@ -516,7 +516,11 @@ A literal (`model: llama-3.1-8b`) is fixed by the profile. The RHDH "create
 workspace" form asks for every `secretKeyRef` input: `title` is its label,
 `default` pre-fills it, and it is required exactly when the installer would
 refuse an absent value, so the form and the installer never disagree (an
-empty `default: ""` makes a field optional). The Secret must be mounted on
+empty `default: ""` makes a field optional). Inference models must be
+non-empty: an optional model needs a non-empty default; otherwise set
+`required: true` or omit both `default` and `required`. Invalid optional
+model definitions are rejected by the installer and catalog generator.
+The Secret must be mounted on
 the VM: `inference.secretName` or `additionalProviderSecrets` in the
 openshell-saw values, which `saw-users` sets from the catalog.
 
