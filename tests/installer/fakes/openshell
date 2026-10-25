@@ -402,6 +402,9 @@ elif op == "sandbox exec":
         if expected and digest != expected.group(1):
             sys.exit(4)
         sb.setdefault("files", {}).update(sb["archives"].pop(archive))
+        stamp = re.search(r"printf '%s' '?([0-9a-f]{64})'? > /sandbox/.saw-preserve.sha256", script)
+        if stamp:
+            sb["restoredDigest"] = stamp.group(1)
         save()
         sys.exit(0)
     if args[-2:] in (["id", "-u"], ["id", "-g"]):
@@ -416,6 +419,9 @@ elif op == "sandbox exec":
     # the fake podman's volume directory, as the real mount would show it.
     if len(args) >= 2 and args[-2] == "cat":
         sb = state["sandboxes"].get(f"{ws}/{opt('-n')}") or {}
+        if args[-1] == "/sandbox/.saw-preserve.sha256" and sb.get("restoredDigest"):
+            print(sb["restoredDigest"])
+            sys.exit(0)
         # The installer's record of the MCP servers it declared in openclaw.json.
         if args[-1] == "/sandbox/.openclaw/saw-mcp-servers.json":
             if "sawMcpState" not in sb:

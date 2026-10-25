@@ -516,7 +516,11 @@ A literal (`model: llama-3.1-8b`) is fixed by the profile. The RHDH "create
 workspace" form asks for every `secretKeyRef` input: `title` is its label,
 `default` pre-fills it, and it is required exactly when the installer would
 refuse an absent value, so the form and the installer never disagree (an
-empty `default: ""` makes a field optional). The Secret must be mounted on
+empty `default: ""` makes a field optional). Inference models must be
+non-empty: an optional model needs a non-empty default; otherwise set
+`required: true` or omit both `default` and `required`. Invalid optional
+model definitions are rejected by the installer and catalog generator.
+The Secret must be mounted on
 the VM: `inference.secretName` or `additionalProviderSecrets` in the
 openshell-saw values, which `saw-users` sets from the catalog.
 
@@ -589,6 +593,9 @@ one line of at most 8 KiB.
   (a changed, added or removed variable), recreates it, carrying `/sandbox`
   over. Open sessions end; files outside `/sandbox` are not kept. Inference
   changes need no recreation: the agent is onboarded again.
+  Recreating a sandbox to correct its trusted mounts uses the same archive
+  and recovery path. If the running sandbox's identity labels cannot be
+  read, the apply fails before attempting recreation.
 
   The files are never put at risk: `/sandbox` is archived and checksummed
   in the sandbox, downloaded to `<state dir>/sandbox-archives/` and
@@ -601,7 +608,10 @@ one line of at most 8 KiB.
   sandbox deleted. After the new sandbox is created the archive is
   uploaded, verified, unpacked and compared against the archive
   (`tar -df`); a failure fails the apply and the record stays, so the next
-  apply finishes the restore. Every `sandbox create` stamps a random
+  apply finishes the restore. A verified restore writes an archive SHA-256
+  stamp inside the replacement before returning. If the installer stops
+  before clearing its migration record, the next apply sees the stamp and
+  keeps any user edits made since the restore. Every `sandbox create` stamps a random
   `saw.redhat.com/instance` label, and the record names the original's and
   the replacement's instance: the restore goes only into the sandbox with
   the replacement's instance, never by env (a desired env can be rolled

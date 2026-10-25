@@ -77,6 +77,7 @@ def test_restore_still_rejects_changed_content_or_modes(ab, restore, damage):
     with pytest.raises(ab.InstallerError, match="could not restore"):
         applier.restore_sandbox(ws, sb, record)
     assert archive.exists() and (fresh / ".saw-preserve.tar.gz").exists()
+    assert not (fresh / ".saw-preserve.sha256").exists()
 
 
 def test_restore_rejects_corrupted_source_archive_before_upload(ab, restore):
@@ -85,3 +86,22 @@ def test_restore_rejects_corrupted_source_archive_before_upload(ab, restore):
     with pytest.raises(ab.InstallerError, match="checksum"):
         applier.restore_sandbox(ws, sb, record)
     assert not any(c[:2] == ("sandbox", "upload") for c in calls)
+
+
+def test_retry_after_verified_restore_keeps_new_user_edits(restore):
+    applier, ws, sb, record, fresh, _, calls, _ = restore
+    applier.restore_sandbox(ws, sb, record)
+    (fresh / ".bashrc").write_text("new work after restore")
+    calls.clear()
+    # The installer died before removing the migration record.
+    applier.restore_sandbox(ws, sb, record)
+    assert (fresh / ".bashrc").read_text() == "new work after restore"
+    assert not any(c[:2] == ("sandbox", "upload") for c in calls)
+
+
+def test_a_stamp_for_another_archive_does_not_skip_restore(restore):
+    applier, ws, sb, record, fresh, _, _, _ = restore
+    (fresh / ".saw-preserve.sha256").write_text("0" * 64)
+    applier.restore_sandbox(ws, sb, record)
+    assert (fresh / ".bashrc").read_text() == "payload"
+    assert (fresh / ".saw-preserve.sha256").read_text() == record["sha256"]

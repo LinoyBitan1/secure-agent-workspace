@@ -80,6 +80,37 @@ def add_profile(repo, name="demo-new"):
         f.write_text(f.read_text().replace("profile: custom-inference", f"profile: {name}"))
 
 
+@pytest.mark.parametrize("file,key", [("providers.yaml", "secretKey"), ("sandbox.yaml", "name")])
+def test_invalid_profile_reports_its_source_without_a_traceback(scratch, file, key):
+    repo, env, _ = scratch
+    source = repo / "charts/saw-bom/profiles/custom-inference/default" / file
+    doc = yaml.safe_load(source.read_text())
+    if key == "secretKey":
+        doc["spec"]["providers"][0]["credentials"] = {"api_key": {}}
+    else:
+        doc["spec"]["sandboxes"][0].pop("name")
+    source.write_text(yaml.safe_dump(doc))
+    before = {p: (repo / p).read_bytes() for p in outputs() if (repo / p).is_file()}
+    result = subprocess.run([sys.executable, "scripts/saw-profile-catalog.py"], cwd=repo,
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert str(source.relative_to(repo)) in result.stderr and key in result.stderr
+    assert all((repo / p).read_bytes() == content for p, content in before.items())
+
+
+def test_the_catalog_rejects_an_optional_model_with_an_empty_default(scratch):
+    repo, env, _ = scratch
+    source = repo / "charts/saw-bom/profiles/custom-inference/default/sandbox.yaml"
+    doc = yaml.safe_load(source.read_text())
+    doc["spec"]["sandboxes"][0]["inference"]["model"]["default"] = ""
+    source.write_text(yaml.safe_dump(doc))
+    result = subprocess.run([sys.executable, "scripts/saw-profile-catalog.py", "--check"],
+                            cwd=repo, env=env, capture_output=True, text=True)
+    assert result.returncode == 1 and "Traceback" not in result.stderr
+    assert "inference model must be non-empty" in result.stderr
+
+
 def test_the_hook_regenerates_and_commits_the_form_for_a_new_profile(scratch):
     repo, env, git = scratch
     add_profile(repo)

@@ -70,7 +70,14 @@ def input_field(src, kind, fallback_title):
     return field
 
 
-def secret_fields(provider):
+def required_string(obj, key, source):
+    value = obj.get(key) if isinstance(obj, dict) else None
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{source}: {key} must be a non-empty string")
+    return value
+
+
+def secret_fields(provider, source="provider"):
     """The fields a provider reads from its Secret, as the installer does
     (resolve_credentials): the credential(s), and optionally a base URL and
     a model (the older provider-level fields)."""
@@ -78,7 +85,8 @@ def secret_fields(provider):
     if isinstance(creds, dict) and creds:
         fields = []
         for i, (cname, entry) in enumerate(creds.items()):
-            fields.append({"key": entry["secretKey"], "kind": "secret", "required": True,
+            fields.append({"key": required_string(entry, "secretKey", f"{source}: credential {cname}"),
+                           "kind": "secret", "required": True,
                            "title": entry.get("title") or ("API key" if i == 0 else
                                                           f"Credential ({cname})")})
     else:
@@ -134,6 +142,7 @@ def catalog():
             enabled = spec.get("enabled", True)
             sandboxes = []
             for sb in (load(wdir / "sandbox.yaml").get("spec") or {}).get("sandboxes") or []:
+                required_string(sb, "name", (wdir / "sandbox.yaml").relative_to(ROOT))
                 ui = sb.get("ui") or {}
                 sandboxes.append({"name": sb["name"], "type": sb.get("type", "generic"),
                                   "enabled": sb.get("enabled", True),
@@ -148,13 +157,19 @@ def catalog():
                 entry = secrets.setdefault(prov["credentialSecret"],
                                            {"providers": [], "fields": []})
                 entry["providers"] = sorted(set(entry["providers"]) | {prov.get("type", "")})
-                for f in secret_fields(prov):
+                for f in secret_fields(prov, (wdir / "providers.yaml").relative_to(ROOT)):
                     if f["key"] not in {x["key"] for x in entry["fields"]}:
                         entry["fields"].append(f)
             # The inputs a sandbox reads from a Secret (inference, env).
             for sb in (load(wdir / "sandbox.yaml").get("spec") or {}).get("sandboxes") or []:
                 if not sb.get("enabled", True):
                     continue
+                inference = sb.get("inference") or {}
+                model = inference.get("model")
+                if model == "" or (isinstance(model, dict) and not model.get("default")
+                                   and not model.get("required", "default" not in model)):
+                    raise ValueError(f"{(wdir / 'sandbox.yaml').relative_to(ROOT)}: inference model "
+                                     "must be non-empty: use a non-empty default or required: true")
                 for secret, f in sandbox_fields(sb):
                     entry = secrets.setdefault(secret, {"providers": [], "fields": []})
                     if f["key"] not in {x["key"] for x in entry["fields"]}:
@@ -459,7 +474,11 @@ def main(argv=None):
                      ADMIN_TEMPLATE_OUTPUT, ADMIN_DELETE_TEMPLATE, *mirror, INSTALLER_PROFILES):
             print(path.relative_to(ROOT))
         return 0
-    text = render()
+    try:
+        text = render()
+    except (ValueError, yaml.YAMLError) as exc:
+        print(f"invalid profile catalog: {exc}", file=sys.stderr)
+        return 1
     outputs = [(path, text) for path in CATALOG_OUTPUTS]
     outputs.append((TEMPLATE_OUTPUT, render_template(json.loads(text))))
     outputs.append((DELETE_TEMPLATE, render_delete_template()))
