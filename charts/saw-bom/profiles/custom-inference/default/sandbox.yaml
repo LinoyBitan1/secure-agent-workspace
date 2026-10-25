@@ -31,6 +31,3 @@ spec:
           title: Model
         # Self-hosted models can take longer than the agent's default.
         timeoutSeconds: "300"
-      env:
-        PR135_TEST_MARKER:
-          value: env-added
