@@ -150,10 +150,12 @@ def test_a_writable_harness_mount_recreates_the_sandbox(
     make_applier(ab, config, creds).apply(profiles)
     state = fake_env.openshell_state()
     state["sandboxes"]["default/notebook"]["driverConfig"]["podman"]["mounts"][0]["read_only"] = False
+    state["sandboxes"]["default/notebook"]["files"] = {"notes.md": "keep user work"}
     fake_env.set_openshell_state(state)
     make_applier(ab, config, creds).apply(profiles)
     assert notebook_deletes(fake_env)
     assert notebook(fake_env)["driverConfig"]["podman"]["mounts"][0]["read_only"] is True
+    assert notebook(fake_env)["files"] == {"notes.md": "keep user work"}
 
 
 def test_drifted_openclaw_harness_config_fails_verify(

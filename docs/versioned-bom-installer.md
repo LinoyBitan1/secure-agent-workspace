@@ -589,6 +589,9 @@ one line of at most 8 KiB.
   (a changed, added or removed variable), recreates it, carrying `/sandbox`
   over. Open sessions end; files outside `/sandbox` are not kept. Inference
   changes need no recreation: the agent is onboarded again.
+  Recreating a sandbox to correct its trusted mounts uses the same archive
+  and recovery path. If the running sandbox's identity labels cannot be
+  read, the apply fails before attempting recreation.
 
   The files are never put at risk: `/sandbox` is archived and checksummed
   in the sandbox, downloaded to `<state dir>/sandbox-archives/` and
@@ -601,7 +604,10 @@ one line of at most 8 KiB.
   sandbox deleted. After the new sandbox is created the archive is
   uploaded, verified, unpacked and compared against the archive
   (`tar -df`); a failure fails the apply and the record stays, so the next
-  apply finishes the restore. Every `sandbox create` stamps a random
+  apply finishes the restore. A verified restore writes an archive SHA-256
+  stamp inside the replacement before returning. If the installer stops
+  before clearing its migration record, the next apply sees the stamp and
+  keeps any user edits made since the restore. Every `sandbox create` stamps a random
   `saw.redhat.com/instance` label, and the record names the original's and
   the replacement's instance: the restore goes only into the sandbox with
   the replacement's instance, never by env (a desired env can be rolled

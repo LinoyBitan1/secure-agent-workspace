@@ -261,7 +261,14 @@ def test_the_backup_excludes_only_the_installers_mounts(ab, tmp_path):
         pass
 
     def capture(*args, **kwargs):
-        if args[:2] == ("sandbox", "upload") or "rm" in args:   # restore: cleanup + upload succeed
+        if args[-2:] == ("cat", ab.ProfileApplier.PRESERVE_SUM):
+            return ab.Result(1, "", "")
+        if args[-2:] in (("id", "-u"), ("id", "-g")):
+            return ab.Result(0, str(os.getuid() if args[-1] == "-u" else os.getgid()), "")
+        if args[:2] == ("sandbox", "upload"):
+            (fresh / ".saw-preserve.tar.gz").write_bytes(Path(args[-2]).read_bytes())
+            return ab.Result(0, "", "")
+        if "rm" in args:   # restore: cleanup succeeds
             return ab.Result(0, "", "")
         captured.append(args[-1])
         raise Captured()
@@ -287,6 +294,7 @@ def test_the_backup_excludes_only_the_installers_mounts(ab, tmp_path):
     # leftover from an interrupted run is replaced, not nested.
     archive = root / ".saw-preserve.tar.gz"
     archive.write_text("stale")
+    (root / ".saw-preserve.sha256").write_text("previous restore")
     assert ab.ProfileApplier.PRESERVE_ARCHIVE == "/sandbox/.saw-preserve.tar.gz"
     run = script.replace("cd /sandbox", f"cd {root}").replace(
         "/sandbox/.saw-preserve.tar.gz", str(archive))
@@ -315,7 +323,8 @@ def test_the_backup_excludes_only_the_installers_mounts(ab, tmp_path):
     restore = captured[0]
     assert "--no-overwrite-dir" in restore and "tar -dzf" in restore and "grep -v '/$'" in restore
     run = restore.replace("cd /sandbox", f"cd {fresh}").replace(
-        "/sandbox/.saw-preserve.tar.gz", str(fresh / ".saw-preserve.tar.gz"))
+        "/sandbox/.saw-preserve.tar.gz", str(fresh / ".saw-preserve.tar.gz")).replace(
+        "/sandbox/.saw-preserve.sha256", str(fresh / ".saw-preserve.sha256"))
     done = subprocess.run(["sh", "-c", run], capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     assert (fresh / "project/harness/test.py").read_text() == "project/harness/test.py"
@@ -325,6 +334,53 @@ def test_the_backup_excludes_only_the_installers_mounts(ab, tmp_path):
     assert (fresh / "truly-empty").is_dir()
     assert (fresh / "private").stat().st_mode & 0o777 == 0o700
     assert (fresh / ".saw").stat().st_mode & 0o777 == 0o555       # left alone
+
+
+def test_an_empty_sandbox_can_be_archived_with_gnu_tar(ab, tmp_path):
+    import subprocess
+    import tarfile
+    if "GNU tar" not in subprocess.run(["tar", "--version"], capture_output=True, text=True).stdout:
+        pytest.skip("needs GNU tar")
+    root = tmp_path / "sandbox"
+    (root / ".saw" / "trusted").mkdir(parents=True)
+    (root / ".saw" / "trusted" / "ignored").write_text("mount")
+    archive = root / ".saw-preserve.tar.gz"
+    applier = ab.ProfileApplier(ab.Shell(), {"mtlsGateway": "g"}, {})
+    ws, sb = ab.Workspace(name="default"), ab.Sandbox(name="empty")
+
+    def cli(*args, **kwargs):
+        if args[:2] == ("sandbox", "exec"):
+            command = [c.replace("/sandbox", str(root)) for c in args[args.index("--") + 1:]]
+            result = subprocess.run(command, capture_output=True, text=True)
+            return ab.Result(result.returncode, result.stdout, result.stderr)
+        if args[:2] == ("sandbox", "download"):
+            Path(args[-1]).write_bytes(archive.read_bytes())
+            return ab.Result(0, "", "")
+        if args[:2] == ("sandbox", "upload"):
+            archive.write_bytes(Path(args[-2]).read_bytes())
+            return ab.Result(0, "", "")
+        raise AssertionError(args)
+
+    applier.cli = cli
+    applier.archive_dir = lambda: tmp_path
+    record = applier.preserve_sandbox(ws, sb)
+    with tarfile.open(record["archive"]) as packed:
+        assert packed.getnames() == []
+    applier.restore_sandbox(ws, sb, record)
+    assert not archive.exists()
+    assert (root / ".saw-preserve.sha256").read_text() == record["sha256"]
+
+
+def test_unreadable_labels_fail_before_a_running_sandbox_is_changed(ab, fake_env, config, tmp_path):
+    _, _, profiles = _env_sandbox(ab, {})
+    _secret(tmp_path, "inference", api_key="k")
+    _apply(ab, config, tmp_path, profiles)
+    before = len(fake_env.openshell_calls())
+    (fake_env.state / "json-get-fails").write_text("")
+    with pytest.raises(ab.InstallerError, match="labels cannot be read"):
+        _apply(ab, config, tmp_path, profiles)
+    assert not any(c[:2] in (["sandbox", "delete"], ["sandbox", "create"])
+                   for c in fake_env.openshell_calls()[before:])
 
 
 def test_a_surviving_original_is_never_overwritten_by_its_old_snapshot(
