@@ -2007,6 +2007,17 @@ def sandbox_model(sb, provider, default=""):
     return sb.model or (provider.model if provider else "") or default
 
 
+def openclaw_agent_model(model_ref, current):
+    """Change the model without dropping its provider's selected credential."""
+    primary = current.get("primary", "") if isinstance(current, dict) else current
+    provider = model_ref.split("/", 1)[0]
+    if isinstance(primary, str) and primary.startswith(provider + "/"):
+        binding = primary.partition("@")[2]
+        if binding.startswith(provider + ":"):
+            model_ref += "@" + binding
+    return {**current, "primary": model_ref} if isinstance(current, dict) else model_ref
+
+
 def sandbox_endpoint(sb, provider):
     """The endpoint the agent is onboarded against: `inference.baseUrl`, else
     the provider's own base URL ("" = the protocol's native API)."""
@@ -4260,10 +4271,21 @@ class ProfileApplier:
             self.cli(*exec_cmd, "sh", "-c",
                      f"{oc_env} openclaw models auth activate {shlex.quote(profile_id)} --agent main",
                      check=False)
+        model_id = model if model.startswith(f"{provider.type}/") else f"{provider.type}/{model}"
         if auth_choice:
-            model_id = model if model.startswith(f"{provider.type}/") else f"{provider.type}/{model}"
             self.cli(*exec_cmd, "sh", "-c",
                      f"{oc_env} openclaw models set {shlex.quote(model_id)}", check=False)
+        # Keep activation's credential binding: old profiles may hold stale placeholders.
+        current = self.cli(*exec_cmd, "sh", "-c",
+                           f"{oc_env} openclaw config get agents.entries.main.model --json",
+                           check=False, quiet=True)
+        try:
+            selected = json.loads(current.out) if current.ok else None
+        except ValueError:
+            selected = None
+        self.cli(*exec_cmd, "sh", "-c",
+                 f"{oc_env} openclaw config set agents.entries.main.model "
+                 f"{shlex.quote(json.dumps(openclaw_agent_model(model_id, selected)))}")
         # The request timeout: OpenClaw's per-provider HTTP timeout
         # (models.providers.<id>.timeoutSeconds; the custom provider's id is
         # the --custom-provider-id above, a native one's its type).
