@@ -147,10 +147,10 @@ def test_configured_model_replaces_the_main_agents_onboarding_selection(
     state = fake_env.openshell_state()
     saved = state["sandboxes"]["default/chat"].setdefault("openclawConfig", {})
     # Onboarding can pin a model on main, which wins over models set's default.
-    saved["agents.entries.main.model"] = f"{kind}/onboarding-default"
+    profile_id = f"{kind}:setup-df67c47c-d3f2-46f5-b698-c42390c67b5d"
+    saved["agents.entries.main.model"] = f"{kind}/onboarding-default@{profile_id}"
     saved["agents.entries.other.model"] = "other/keep-me"
     fake_env.set_openshell_state(state)
-    profile_id = f"{kind}:setup-df67c47c-d3f2-46f5-b698-c42390c67b5d"
     (fake_env.state / "exec-output.json").write_text(json.dumps({
         "openclaw onboard": "Replacement credential saved but inactive.\n"
         f"openclaw models auth activate {profile_id} --agent main"}))
@@ -158,7 +158,7 @@ def test_configured_model_replaces_the_main_agents_onboarding_selection(
     ab.ProfileApplier(ab.Shell(), config, creds).apply(profiles)
     current = fake_env.openshell_state()["sandboxes"]["default/chat"]["openclawConfig"]
     expected = model if model.startswith(kind + "/") else f"{kind}/{model}"
-    assert current["agents.entries.main.model"] == expected
+    assert current["agents.entries.main.model"] == f"{expected}@{profile_id}"
     assert current["agents.entries.other.model"] == "other/keep-me"
     scripts = [c[-1] for c in fake_env.openshell_calls()[before:]
                if c[:2] == ["sandbox", "exec"]]
@@ -166,3 +166,16 @@ def test_configured_model_replaces_the_main_agents_onboarding_selection(
     select = next(i for i, s in enumerate(scripts)
                   if "config set agents.entries.main.model " in s)
     assert select > activate
+
+
+@pytest.mark.parametrize("current,expected", [
+    ("anthropic/old@anthropic:current", "anthropic/new@anthropic:current"),
+    ("openai/old@openai:current", "anthropic/new"),
+    ("anthropic/old@openai:current", "anthropic/new"),
+    ("anthropic/old", "anthropic/new"),
+    (None, "anthropic/new"),
+    ({"primary": "anthropic/old@anthropic:current", "fallbacks": ["anthropic/fallback"]},
+     {"primary": "anthropic/new@anthropic:current", "fallbacks": ["anthropic/fallback"]}),
+])
+def test_agent_model_selection_preserves_only_a_matching_credential_binding(ab, current, expected):
+    assert ab.openclaw_agent_model("anthropic/new", current) == expected
