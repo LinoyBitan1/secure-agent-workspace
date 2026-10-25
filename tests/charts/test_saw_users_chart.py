@@ -103,6 +103,18 @@ def test_two_users_get_labelled_namespaces_and_six_apps(tmp_path):
         assert "ignoreMissingValueFiles" not in application["spec"]["source"]["helm"]
 
 
+def test_only_vm_apps_ignore_the_kubemacpool_transaction_timestamp(tmp_path):
+    docs = docs_from(render_file(tmp_path, [ALICE, BOB]))
+    for user in ("alice", "bob"):
+        application = app(docs, f"saw-{user}")
+        assert application["spec"].get("ignoreDifferences") == [{
+            "group": "kubevirt.io", "kind": "VirtualMachine",
+            "jsonPointers": ["/metadata/annotations/kubemacpool.io~1transaction-timestamp"],
+        }]
+        for suffix in ("-bom", "-secrets"):
+            assert "ignoreDifferences" not in app(docs, f"saw-{user}{suffix}")["spec"]
+
+
 def test_waves_release_names_and_value_overrides(tmp_path):
     docs = docs_from(render_file(tmp_path, [ALICE, BOB]))
 

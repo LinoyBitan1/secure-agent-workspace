@@ -267,6 +267,14 @@ metadata:
   {{- end }}
 spec:
   project: {{ $root.Values.argo.project }}
+  {{- if eq .path "charts/openshell-saw" }}
+  ignoreDifferences:
+    - group: kubevirt.io
+      kind: VirtualMachine
+      jsonPointers:
+        # KubeMacPool generates a new timestamp on each dry-run mutation.
+        - /metadata/annotations/kubemacpool.io~1transaction-timestamp
+  {{- end }}
   destination:
     name: {{ $root.Values.argo.destinationName }}
     namespace: {{ printf "saw-%s" $user.name }}
