@@ -52,9 +52,16 @@ spec:
                 in Vault for your workspace only (provider nvidia)}
             inference__model: {title: 'inference: Model (notebook)', type: string, default: nvidia/nemotron-3.5-lightning-30b-a3b}
             inference__cuda_model: {title: 'inference: Model (cuda-sandbox)', type: string, default: nvidia/nemotron-3.5-lightning-30b-a3b}
+            inference_anthropic__api_key: {title: 'inference-anthropic: API key', type: string, 'ui:field': Secret,
+              description: Stored in Vault for your workspace only (provider anthropic)}
+            inference_anthropic__model: {title: 'inference-anthropic: Model', type: string, default: claude-sonnet-4-6}
+            inference_openai__api_key: {title: 'inference-openai: API key', type: string, 'ui:field': Secret,
+              description: Stored in Vault for your workspace only (provider openai)}
+            inference_openai__model: {title: 'inference-openai: Model', type: string, default: gpt-4o}
             web_search__api_key: {title: 'web-search: API key', type: string, 'ui:field': Secret, description: Stored
                 in Vault for your workspace only (provider brave)}
-          required: [inference__api_key, web_search__api_key]
+          required: [inference__api_key, inference_anthropic__api_key, inference_anthropic__model, inference_openai__api_key,
+            inference_openai__model, web_search__api_key]
   steps:
   - id: request
     name: Submit the request
@@ -74,7 +81,10 @@ spec:
             }}', forUser: '${{ parameters.forUser }}', inference.api_key: '${{ secrets.inference__api_key
             }}', inference.url: '${{ parameters.inference__url }}', inference.model: '${{ parameters.inference__model
             }}', web-search.api_key: '${{ secrets.web_search__api_key }}', inference.cuda_model: '${{
-            parameters.inference__cuda_model }}'}
+            parameters.inference__cuda_model }}', inference-anthropic.api_key: '${{ secrets.inference_anthropic__api_key
+            }}', inference-anthropic.model: '${{ parameters.inference_anthropic__model }}', inference-openai.api_key: '${{
+            secrets.inference_openai__api_key }}', inference-openai.model: '${{ parameters.inference_openai__model
+            }}'}
   - id: run
     name: Start the pipeline
     action: http:backstage:request

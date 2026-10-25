@@ -91,6 +91,48 @@
             "nvidia"
           ]
         },
+        "inference-anthropic": {
+          "fields": [
+            {
+              "key": "api_key",
+              "kind": "secret",
+              "required": true,
+              "title": "API key"
+            },
+            {
+              "default": "claude-sonnet-4-6",
+              "key": "model",
+              "kind": "text",
+              "required": true,
+              "title": "Model"
+            }
+          ],
+          "provider": "anthropic",
+          "providers": [
+            "anthropic"
+          ]
+        },
+        "inference-openai": {
+          "fields": [
+            {
+              "key": "api_key",
+              "kind": "secret",
+              "required": true,
+              "title": "API key"
+            },
+            {
+              "default": "gpt-4o",
+              "key": "model",
+              "kind": "text",
+              "required": true,
+              "title": "Model"
+            }
+          ],
+          "provider": "openai",
+          "providers": [
+            "openai"
+          ]
+        },
         "web-search": {
           "fields": [
             {
@@ -128,6 +170,18 @@
               "enabled": false,
               "name": "toolbox",
               "type": "generic",
+              "uiRoute": false
+            },
+            {
+              "enabled": true,
+              "name": "openai-test",
+              "type": "openclaw",
+              "uiRoute": false
+            },
+            {
+              "enabled": true,
+              "name": "anthropic-test",
+              "type": "openclaw",
               "uiRoute": false
             }
           ]

@@ -15,14 +15,14 @@ spec:
     # Optional APIs: enable and add their names to notebook.providers.
     - name: openai
       type: openai
-      enabled: false
+      enabled: true
       model: gpt-4o
       credentialSecret: inference-openai
       credentialSecretKey: api_key
       modelSecretKey: model
     - name: anthropic
       type: anthropic
-      enabled: false
+      enabled: true
       model: claude-sonnet-4-6
       credentialSecret: inference-anthropic
       credentialSecretKey: api_key

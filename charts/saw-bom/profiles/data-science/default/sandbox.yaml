@@ -51,3 +51,31 @@ spec:
       image: base
       providers:
         - nvidia
+    # PR #135: test the official openai API with its own credential.
+    - name: openai-test
+      type: openclaw
+      enabled: true
+      image: quay.io/aipcc/base-images/agentic/openclaw@sha256:896d1526ee29b53167034ba65d1c758c8da777f441ed094e19f3bcf6d7445c61
+      providers:
+        - openai
+      inference:
+        providerRef: openai
+        model:
+          secretKeyRef:
+            name: inference-openai
+            key: model
+          default: gpt-4o
+    # PR #135: test the official anthropic API with its own credential.
+    - name: anthropic-test
+      type: openclaw
+      enabled: true
+      image: quay.io/aipcc/base-images/agentic/openclaw@sha256:896d1526ee29b53167034ba65d1c758c8da777f441ed094e19f3bcf6d7445c61
+      providers:
+        - anthropic
+      inference:
+        providerRef: anthropic
+        model:
+          secretKeyRef:
+            name: inference-anthropic
+            key: model
+          default: claude-sonnet-4-6
