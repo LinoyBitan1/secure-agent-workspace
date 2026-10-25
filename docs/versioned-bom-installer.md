@@ -500,6 +500,16 @@ on `openclaw` sandboxes; custom endpoints still use the primary inference
 block. Changing the startup provider also requires changing its primary
 `inference.model`.
 
+For a manually managed workspace, rerunning `make saw-create` with `MODEL`,
+`API_KEY`, `PROVIDER`, or `ENDPOINT_URL` updates only the supplied inference
+Secret fields. Rotating a key preserves the saved model and URL; changing
+only the model preserves the key. With the default disk inputs, restart
+the VM to make Secret changes visible to its installer.
+If External Secrets manages `inference`, update its Vault source instead:
+a direct Secret change is overwritten on reconciliation, and the command
+warns about this. The Secret template omits native model defaults so an
+unselected override does not mask a later change to the sandbox defaults.
+
 OpenClaw uses the built-in model catalog for these official APIs. A provider
 with `baseUrl` or `baseUrlSecretKey` instead uses custom endpoint onboarding.
 OpenAI API-key chats use the OpenClaw runtime. In both cases, the sandbox

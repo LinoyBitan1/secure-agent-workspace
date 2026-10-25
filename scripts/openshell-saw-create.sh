@@ -3,6 +3,7 @@
 #
 # Required env vars: OPENSHELL_SAW_NAME, SAW_CHART
 # New inference Secrets need PROVIDER and MODEL; API_KEY may be empty.
+# Existing Secrets merge only the supplied inference fields.
 # Optional: OWNER, OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_TOKEN_DIR, NS, SAW_NS,
 #           KEYCLOAK_NS, ENDPOINT_URL, WEB_SEARCH, SCRIPTS_DIR,
 #           PROFILES (comma-separated SAW-BOM profiles, default: the chart's),
@@ -19,6 +20,7 @@ set -euo pipefail
 
 cleanup_tmp() {
   if [[ -n "${inference_key_file:-}" ]]; then rm -f "${inference_key_file}"; fi
+  if [[ -n "${inference_patch_file:-}" ]]; then rm -f "${inference_patch_file}"; fi
   if [[ -n "${web_search_key_file:-}" ]]; then rm -f "${web_search_key_file}"; fi
   if [[ -n "${BOM_VALUES:-}" ]]; then rm -f "${BOM_VALUES}"; fi
   if [[ -n "${NETWORK_TOPOLOGY_VALUES:-}" ]]; then rm -f "${NETWORK_TOPOLOGY_VALUES}"; fi
@@ -234,22 +236,46 @@ fi
 # --- Provider credential Secret ---
 # The VM's installer reads provider keys only from mounted Secrets, so the
 # key goes into the "inference" Secret instead of the Helm release values.
-if [[ -n "${API_KEY}" || "${inference_exists}" == false ]]; then
+if [[ -n "${API_KEY}" || -n "${MODEL}" || -n "${PROVIDER}" || -n "${ENDPOINT_URL}" ||
+      "${inference_exists}" == false ]]; then
   umask 077
-  inference_key_file="$(mktemp)"
-  # OpenShell requires a nonempty credential even for a keyless endpoint.
-  # A keyless server ignores this local placeholder.
-  printf '%s' "${API_KEY:-unused-key-for-keyless-provider}" > "${inference_key_file}"
-  inference_fields=("--from-file=api_key=${inference_key_file}")
+  inference_fields=()
+  if [[ -n "${API_KEY}" || "${inference_exists}" == false ]]; then
+    inference_key_file="$(mktemp)"
+    # OpenShell requires a nonempty credential even for a keyless endpoint.
+    # A keyless server ignores this local placeholder.
+    printf '%s' "${API_KEY:-unused-key-for-keyless-provider}" > "${inference_key_file}"
+    inference_fields+=("--from-file=api_key=${inference_key_file}")
+  fi
   [[ -z "${PROVIDER}" ]] || inference_fields+=("--from-literal=provider=${PROVIDER}")
   [[ -z "${MODEL}" ]] || inference_fields+=("--from-literal=model=${MODEL}")
   [[ -z "${ENDPOINT_URL}" ]] || inference_fields+=("--from-literal=url=${ENDPOINT_URL}")
-  oc create secret generic inference -n "${DEPLOY_NS}" \
-    "${inference_fields[@]}" \
-    --dry-run=client -o yaml | oc apply -f - >/dev/null
-  rm -f "${inference_key_file}"
-  inference_key_file=""
+  if [[ "${inference_exists}" == true ]]; then
+    # Apply prunes omitted fields from a previous apply; merge only supplied data.
+    inference_patch_file="$(mktemp)"
+    oc create secret generic inference -n "${DEPLOY_NS}" \
+      "${inference_fields[@]}" --dry-run=client -o json \
+      | jq '{data: .data}' > "${inference_patch_file}"
+    oc patch secret inference -n "${DEPLOY_NS}" --type=merge \
+      --patch-file="${inference_patch_file}" >/dev/null
+    rm -f "${inference_patch_file}"
+    inference_patch_file=""
+  else
+    oc create secret generic inference -n "${DEPLOY_NS}" \
+      "${inference_fields[@]}" \
+      --dry-run=client -o yaml | oc apply -f - >/dev/null
+  fi
+  if [[ -n "${inference_key_file:-}" ]]; then
+    rm -f "${inference_key_file}"
+    inference_key_file=""
+  fi
   echo "Secret 'inference' updated in ${DEPLOY_NS}."
+  if [[ -n "$(oc get externalsecret inference -n "${DEPLOY_NS}" \
+              -o name --ignore-not-found 2>/dev/null)" ]]; then
+    echo "Warning: External Secrets manages 'inference' in ${DEPLOY_NS}; Vault overwrites" >&2
+    echo "         this change on the next refresh. Update Vault ('./pattern.sh make" >&2
+    echo "         load-secrets') or the self-service portal instead." >&2
+  fi
 fi
 
 if [[ -n "${WEB_SEARCH_API_KEY}" ]]; then

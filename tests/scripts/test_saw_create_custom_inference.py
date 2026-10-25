@@ -1,6 +1,8 @@
 """scripts/openshell-saw-create.sh with fake oc/helm: ENDPOINT_URL goes into
 the inference Secret's `url`, PROFILES selects the SAW-BOM profiles."""
 import os
+import base64
+import json
 import subprocess
 from pathlib import Path
 
@@ -32,6 +34,8 @@ case "$1" in
          echo '{"items":[{"addressType":"IPv4","ports":[{"port":6443,"protocol":"TCP"}],"endpoints":[{"addresses":["10.10.10.10"],"conditions":{"ready":true}}]}]}'
        elif [[ "$2" == secret ]]; then
          [[ " ${EXISTING_SECRETS:-} " == *" $3 "* ]] && echo "secret/$3"
+       elif [[ "$2" == externalsecret ]]; then
+         [[ " ${EXISTING_EXTERNAL_SECRETS:-} " == *" $3 "* ]] && echo "externalsecret/$3"
        elif [[ "$2" == keycloak ]]; then
          echo '{"items":[{"metadata":{"name":"openshell-keycloak"}}]}'
        elif [[ "$2" == secrets ]]; then
@@ -40,8 +44,24 @@ case "$1" in
          fi
          for name in ${EXISTING_SECRETS:-}; do printf 'secret/%s\n' "$name"; done
        fi ;;
-  create) echo "kind: Secret # $*"      # --dry-run=client -o yaml
+  create) if [[ " $* " == *" -o json "* ]]; then
+            python3 - "$@" <<'PY'
+import sys, json, base64
+from pathlib import Path
+data = {}
+for arg in sys.argv[1:]:
+    if arg.startswith(("--from-file=", "--from-literal=")):
+        option, pair = arg.split("=", 1)
+        key, value = pair.split("=", 1)
+        raw = Path(value).read_bytes() if option == "--from-file" else value.encode()
+        data[key] = base64.b64encode(raw).decode()
+print(json.dumps({"data": data}))
+PY
+          else echo "kind: Secret # $*"; fi
           [[ "$2" == secret ]] && echo "$4" >> "$FAKE_DIR/secrets" ;;
+  patch) for arg in "$@"; do
+           if [[ "$arg" == --patch-file=* ]]; then cat "${arg#--patch-file=}" >> "$FAKE_LOG"; fi
+         done ;;
   apply) cat >> "$FAKE_LOG" ;;
 esac
 exit 0
@@ -86,7 +106,8 @@ def run(tmp_path):
             (scripts / "keycloak-host.sh").unlink()
             (scripts / "keycloak-host.sh").symlink_to(ROOT / "scripts" / "keycloak-host.sh")
         full = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FAKE_LOG": str(log),
-                "FAKE_DIR": str(tmp_path), "OPENSHELL_SAW_NAME": "cinf", "SAW_CHART": "charts/openshell-saw",
+                "FAKE_DIR": str(tmp_path), "OPENSHELL_SAW_NAME": "cinf", "SAW_NS": "saw-cinf",
+                "SAW_CHART": "charts/openshell-saw",
                 "OWNER": "alice", "OWNER_SUBJECT": "", "OIDC_ISSUER": "none",
                 "OIDC_TOKEN_DIR": str(tmp_path / "oidc"), "SCRIPTS_DIR": str(scripts), **env}
         if unset_issuer:
@@ -269,6 +290,47 @@ def test_profile_rerun_keeps_existing_inference_secret(run):
                  PROVIDER="", MODEL="", API_KEY="")
     assert "oc create secret generic inference" not in log
     assert "inference.secretName=" not in _saw_helm(log)
+
+
+@pytest.mark.parametrize("field,value,options", [
+    ("model", "nvidia/other", {"MODEL": "nvidia/other"}),
+    ("url", "https://models.example/v1", {"ENDPOINT_URL": "https://models.example/v1"}),
+    ("provider", "openai", {"PROVIDER": "openai"}),
+])
+def test_existing_inference_updates_only_supplied_fields(run, field, value, options):
+    log, _ = run(EXISTING_SECRETS="inference", **{
+        "PROVIDER": "", "MODEL": "", "API_KEY": "", **options})
+    secret = next(line for line in log.splitlines()
+                  if line.startswith("oc create secret generic inference"))
+    assert f"--from-literal={field}={value}" in secret
+    assert "api_key=" not in secret
+    for other in {"model", "url", "provider"} - {field}:
+        assert f"--from-literal={other}=" not in secret
+    assert "oc patch secret inference -n saw-cinf --type=merge" in log
+    patch_text = log.split("--patch-file=", 1)[1].split("\n", 1)[1]
+    patch = json.JSONDecoder().raw_decode(patch_text)[0]
+    assert patch == {"data": {field: base64.b64encode(value.encode()).decode()}}
+
+
+def test_key_rotation_preserves_unsupplied_inference_fields(run):
+    log, _ = run(EXISTING_SECRETS="inference", PROVIDER="", MODEL="", API_KEY="replacement-key")
+    secret = next(line for line in log.splitlines()
+                  if line.startswith("oc create secret generic inference"))
+    assert "--from-file=api_key=" in secret
+    assert "--from-literal=" not in secret
+    assert "oc patch secret inference -n saw-cinf --type=merge" in log
+    patch_text = log.split("--patch-file=", 1)[1].split("\n", 1)[1]
+    patch = json.JSONDecoder().raw_decode(patch_text)[0]
+    assert patch == {"data": {"api_key": base64.b64encode(b"replacement-key").decode()}}
+
+
+@pytest.mark.parametrize("managed", [True, False])
+def test_vault_managed_inference_update_warns_about_reconciliation(run, managed):
+    result, _, _ = run.invoke(EXISTING_SECRETS="inference", MODEL="nvidia/other",
+                              PROVIDER="", API_KEY="",
+                              EXISTING_EXTERNAL_SECRETS="inference" if managed else "")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ("External Secrets manages 'inference'" in result.stderr) == managed
 
 
 def test_external_dashboard_opt_in(run):
