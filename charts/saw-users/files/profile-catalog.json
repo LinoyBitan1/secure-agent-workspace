@@ -121,7 +121,7 @@
               "title": "API key"
             },
             {
-              "default": "gpt-4o",
+              "default": "gpt-6-luna",
               "key": "model",
               "kind": "text",
               "required": true,

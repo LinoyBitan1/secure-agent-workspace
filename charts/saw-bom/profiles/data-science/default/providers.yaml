@@ -16,7 +16,7 @@ spec:
     - name: openai
       type: openai
       enabled: true
-      model: gpt-4o
+      model: gpt-6-luna
       credentialSecret: inference-openai
       credentialSecretKey: api_key
       modelSecretKey: model

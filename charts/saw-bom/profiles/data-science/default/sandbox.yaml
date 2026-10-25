@@ -64,7 +64,7 @@ spec:
           secretKeyRef:
             name: inference-openai
             key: model
-          default: gpt-4o
+          default: gpt-6-luna
     # PR #135: test the official anthropic API with its own credential.
     - name: anthropic-test
       type: openclaw

@@ -57,7 +57,7 @@ spec:
             inference_anthropic__model: {title: 'inference-anthropic: Model', type: string, default: claude-sonnet-4-6}
             inference_openai__api_key: {title: 'inference-openai: API key', type: string, 'ui:field': Secret,
               description: Stored in Vault for your workspace only (provider openai)}
-            inference_openai__model: {title: 'inference-openai: Model', type: string, default: gpt-4o}
+            inference_openai__model: {title: 'inference-openai: Model', type: string, default: gpt-6-luna}
             web_search__api_key: {title: 'web-search: API key', type: string, 'ui:field': Secret, description: Stored
                 in Vault for your workspace only (provider brave)}
           required: [inference__api_key, inference_anthropic__api_key, inference_anthropic__model, inference_openai__api_key,
