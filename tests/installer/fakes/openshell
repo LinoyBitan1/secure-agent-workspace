@@ -385,6 +385,8 @@ elif op == "sandbox exec":
             fail("tar: /sandbox: Cannot open", 2)
         archive = script.split("tar -czf ", 1)[1].split()[0]
         content = dict(sb.get("files", {}))
+        if "openclawConfig" in sb:
+            content[".openclaw/openclaw.json"] = json.dumps(sb["openclawConfig"])
         sb.setdefault("archives", {})[archive] = content
         print(archive_digest(content))
         save()
@@ -401,7 +403,11 @@ elif op == "sandbox exec":
         digest = sb.get("archiveDigests", {}).get(archive, archive_digest(sb["archives"][archive]))
         if expected and digest != expected.group(1):
             sys.exit(4)
-        sb.setdefault("files", {}).update(sb["archives"].pop(archive))
+        content = sb["archives"].pop(archive)
+        config = content.pop(".openclaw/openclaw.json", None)
+        if config is not None:
+            sb["openclawConfig"] = json.loads(config)
+        sb.setdefault("files", {}).update(content)
         stamp = re.search(r"printf '%s' '?([0-9a-f]{64})'? > /sandbox/.saw-preserve.sha256", script)
         if stamp:
             sb["restoredDigest"] = stamp.group(1)
@@ -478,6 +484,9 @@ elif op == "sandbox exec":
         return {}
 
     script = args[-1] if args else ""
+    if script.startswith("if [ -f /sandbox/.openclaw/saw-models.json ]"):
+        print(sb.get("files", {}).get(".openclaw/saw-models.json", "[]"))
+        sys.exit(0)
     if 'const file = "/sandbox/.openclaw/openclaw.json"' in script:
         cfg = sb.setdefault("openclawConfig", {})
         paths = cfg.get("plugins.load.paths") or []
@@ -541,6 +550,9 @@ elif op == "sandbox exec":
             if key.startswith(("plugins.load", "skills.load", "models.providers.", "agents.entries.",
                                "agents.defaults.")):
                 sb.setdefault("openclawConfig", {})[key] = val
+            record = re.search(r"printf '%s\\n' (.*) > /sandbox/.openclaw/saw-models.json", script)
+            if record:
+                sb.setdefault("files", {})[".openclaw/saw-models.json"] = shlex.split(record.group(1))[0]
             save()
             sys.exit(0)
     if "openclaw config unset " in script:
@@ -552,6 +564,11 @@ elif op == "sandbox exec":
     if "openclaw config get " in script:
         m = re.search(r"openclaw config get (\S+)", script)
         if m:
+            if m.group(1) == "agents.defaults":
+                cfg = sb.get("openclawConfig") or {}
+                print(json.dumps({"models": cfg["agents.defaults.models"]}
+                                 if "agents.defaults.models" in cfg else {}))
+                sys.exit(0)
             val = (sb.get("openclawConfig") or {}).get(m.group(1))
             if val is None:
                 sys.exit(1)

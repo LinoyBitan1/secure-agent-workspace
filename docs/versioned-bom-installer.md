@@ -494,8 +494,9 @@ inference:
 These additional model inputs use the same literal or typed Secret input
 syntax as `inference.model`. They are resolved and added to OpenClaw only
 when their provider is enabled and attached to this sandbox; disabled
-providers require no keys or portal fields. Existing OpenClaw model
-entries are retained. This map supports native OpenAI and Anthropic APIs
+providers require no keys or portal fields. Unrelated OpenClaw model entries
+are retained; profile model IDs are tracked and removed when no longer
+configured. This map supports native OpenAI and Anthropic APIs
 on `openclaw` sandboxes; custom endpoints still use the primary inference
 block. Changing the startup provider also requires changing its primary
 `inference.model`.

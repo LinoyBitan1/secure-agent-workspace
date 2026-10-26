@@ -4314,27 +4314,45 @@ class ProfileApplier:
         if auth_choice:
             self.cli(*exec_cmd, "sh", "-c",
                      f"{oc_env} openclaw models set {shlex.quote(model_id)}", check=False)
-        if (sb.inference_values or {}).get("models"):
+        model_state = "/sandbox/.openclaw/saw-models.json"
+        seen = self.cli(*exec_cmd, "sh", "-c",
+                        f"if [ -f {model_state} ]; then cat {model_state}; else printf '[]'; fi",
+                        quiet=True)
+        try:
+            previous = json.loads(seen.out) if not self.sh.dry_run else []
+            if not isinstance(previous, list) or not all(isinstance(name, str) for name in previous):
+                raise ValueError("expected a list of model IDs")
+        except ValueError as exc:
+            raise InstallerError(f"cannot read OpenClaw managed models: {exc}") from None
+        if (sb.inference_values or {}).get("models") or previous:
             current_models = self.cli(*exec_cmd, "sh", "-c",
-                                     f"{oc_env} openclaw config get agents.defaults.models --json",
-                                     check=False, quiet=True)
+                                     f"{oc_env} openclaw config get agents.defaults --json",
+                                     quiet=True)
             try:
-                choices = json.loads(current_models.out) if current_models.ok else {}
+                defaults = json.loads(current_models.out) if not self.sh.dry_run else {}
+                if not isinstance(defaults, dict):
+                    raise ValueError("expected a mapping")
+                choices = defaults.get("models", {})
                 if not isinstance(choices, dict):
                     raise ValueError("expected a mapping")
             except ValueError as exc:
                 raise InstallerError(f"cannot read OpenClaw model choices: {exc}") from None
-            choices.setdefault(model_id, {})
-            for name, selected_model in sb.inference_values["models"].items():
+            desired = {model_id: {}}
+            for name, selected_model in (sb.inference_values or {}).get("models", {}).items():
                 kind = next(p.type for p in ws.providers if p.name == name)
                 selected_id = (selected_model if selected_model.startswith(f"{kind}/")
                                else f"{kind}/{selected_model}")
-                choices.setdefault(selected_id, {})
-                if kind == "openai":
-                    choices[selected_id]["agentRuntime"] = {"id": "openclaw"}
+                desired[selected_id] = {"agentRuntime": {"id": "openclaw"}} if kind == "openai" else {}
+            # Remember profile model IDs so removal never touches unrelated user choices.
+            for name in previous:
+                if name not in desired:
+                    choices.pop(name, None)
+            for name, settings in desired.items():
+                choices.setdefault(name, {}).update(settings)
             self.cli(*exec_cmd, "sh", "-c",
                      f"{oc_env} openclaw config set agents.defaults.models "
-                     + shlex.quote(json.dumps(choices)))
+                     + shlex.quote(json.dumps(choices))
+                     + f" && printf '%s\\n' {shlex.quote(json.dumps(list(desired)))} > {model_state}")
         # Keep activation's credential binding: old profiles may hold stale placeholders.
         current = self.cli(*exec_cmd, "sh", "-c",
                            f"{oc_env} openclaw config get agents.entries.main.model --json",
