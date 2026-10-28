@@ -18,7 +18,8 @@ spec:
   http:
     httpEnabled: true
   ingress:
-    enabled: true
+    # Temporary standalone private-CA Route for issue #65 validation.
+    enabled: false
     className: openshift-default
     annotations:
       route.openshift.io/termination: edge

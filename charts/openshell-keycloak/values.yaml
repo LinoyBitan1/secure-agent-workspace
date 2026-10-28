@@ -14,7 +14,7 @@ keycloak:
   # `make keycloak-deploy` sets it when you choose to use an existing Keycloak.
   existing: ""
 
-  hostname: ""
+  hostname: "openshell-keycloak-ingress-saw-keycloak.apps.cluster-5cwfl.dyn.redhatworkshops.io"
 
   realm: openshell
   # An admin adds production users with keycloak-add-users. Demo mode may
