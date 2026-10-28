@@ -1,3 +1,9 @@
-# Add real account names here after creating them with keycloak-add-users.
-# Each entry creates saw-<name>. Demo entries are in saw-users-demo.yaml.
-users: []
+# Isolated user for issue #65 live TLS validation.
+users:
+- name: tls65
+  webSearch:
+    enabled: false
+defaults:
+  openshellSaw:
+    credentialProxy:
+      image: ghcr.io/validatedpatterns-sandbox/saw-credential-proxy@sha256:cc4fb0ba0a828869ec4b954083f32d1ae425d3f62a2e2c255b00925513d41d54
