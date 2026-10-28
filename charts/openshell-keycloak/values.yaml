@@ -129,7 +129,7 @@ redirectRegistrar:
   image: registry.access.redhat.com/ubi9/python-311:latest
   clientId: saw-redirect-registrar
   # Empty: discover the operator's <keycloak>-ingress HTTPS Route.
-  keycloakUrl: ""
+  keycloakUrl: "https://openshell-keycloak-ingress-saw-keycloak.apps.cluster-5cwfl.dyn.redhatworkshops.io"
   # Optional PEM CA for an external/private issuer. Otherwise use system
   # trust plus the cluster ingress CA for hosts under its ingress domain.
   caBundle: |
