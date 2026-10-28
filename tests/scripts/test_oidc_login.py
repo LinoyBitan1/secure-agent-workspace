@@ -31,10 +31,20 @@ if url.endswith("/.well-known/openid-configuration"):
                       "device_authorization_endpoint": "https://kc.example/device"}))
 elif url == "https://kc.example/device":
     import os
+    if os.environ.get("DEVICE_PKCE"):
+        form = dict(args[i + 1].split("=", 1) for i, arg in enumerate(args) if arg == "-d")
+        assert form.get("code_challenge_method") == "S256", "Missing PKCE S256"
+        open(os.environ["DEVICE_PKCE"], "w").write(form["code_challenge"])
     print(json.dumps({"device_code": "code", "interval": 0,
                       "verification_uri": os.environ.get("DEVICE_URI", "http://kc.example/verify")}))
 elif url == "https://kc.example/token":
-    import os
+    import os, base64, hashlib
+    if os.environ.get("DEVICE_PKCE"):
+        from pathlib import Path
+        form = dict(args[i + 1].split("=", 1) for i, arg in enumerate(args) if arg == "-d")
+        verifier = form.get("code_verifier", "")
+        expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+        assert Path(os.environ["DEVICE_PKCE"]).read_text() == expected
     if os.environ.get("DEVICE_PENDING"):
         from pathlib import Path
         pending = Path(os.environ["TOKEN_REQ"])
@@ -189,6 +199,12 @@ def test_device_poll_waits_for_authorization(env, tmp_path):
     """authorization_pending comes back as HTTP 400; curl --fail would drop it."""
     result = login(env, OIDC_FLOW="device-code", DEVICE_URI="https://kc.example/verify",
                    DEVICE_PENDING="1")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_device_pkce_waits_for_authorization(env, tmp_path):
+    result = login(env, OIDC_FLOW="device-code", DEVICE_URI="https://kc.example/verify",
+                   DEVICE_PKCE=str(tmp_path / "device-challenge"))
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Logged in as: alice" in result.stdout
     assert (tmp_path / "oidc" / "token.json").exists()
