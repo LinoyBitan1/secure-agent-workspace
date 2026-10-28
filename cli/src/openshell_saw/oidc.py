@@ -220,10 +220,12 @@ def _device_login(issuer, discovery, client_id, token_dir, ca_bundle=None):
             "Device authorization endpoint not found. Try --flow browser."
         )
 
+    verifier, challenge = _generate_pkce()
     resp = _request(requests.post,
         device_endpoint,
         ca_bundle=ca_bundle,
-        data={"client_id": client_id, "scope": "openid email profile"},
+        data={"client_id": client_id, "scope": "openid email profile",
+              "code_challenge": challenge, "code_challenge_method": "S256"},
         timeout=10,
     )
     if resp.status_code != 200:
@@ -251,6 +253,7 @@ def _device_login(issuer, discovery, client_id, token_dir, ca_bundle=None):
                 "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                 "client_id": client_id,
                 "device_code": device_code,
+                "code_verifier": verifier,
             },
             timeout=10,
         )

@@ -140,6 +140,9 @@ def test_discovery_verifies_tls():
 
 
 def test_device_authorization_and_poll_verify_tls(tmp_path):
+    import base64
+    import hashlib
+
     with patch("requests.post") as post, patch.object(oidc.time, "sleep"):
         post.side_effect = [
             MagicMock(status_code=200, json=lambda: {"device_code": "code", "interval": 0,
@@ -151,6 +154,11 @@ def test_device_authorization_and_poll_verify_tls(tmp_path):
             "token_endpoint": "https://external.test/token",
         }, "client", str(tmp_path))
     assert all(call.kwargs["verify"] is not False for call in post.call_args_list)
+    authorization, poll = [call.kwargs["data"] for call in post.call_args_list]
+    assert authorization["code_challenge_method"] == "S256"
+    verifier = poll["code_verifier"]
+    expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+    assert authorization["code_challenge"] == expected
 
 
 def test_browser_token_exchange_verifies_tls(tmp_path):

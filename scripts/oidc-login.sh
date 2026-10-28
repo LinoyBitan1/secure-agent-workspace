@@ -155,11 +155,14 @@ print(result["code"])
 do_device_login() {
   [[ -n "${DEVICE_AUTHORIZATION_ENDPOINT}" ]] || die "Device authorization endpoint not found. The OIDC provider may not support the device code flow. Try: OIDC_FLOW=browser"
 
+  generate_pkce
   local device_response
   device_response="$(curl -fsSL "${CURL_TLS_OPTS[@]}" --connect-timeout 5 --max-time 10 -X POST "${DEVICE_AUTHORIZATION_ENDPOINT}" \
     -H "Content-Type: application/x-www-form-urlencoded" \
     -d "client_id=${OIDC_CLIENT_ID}" \
     -d "scope=openid email profile" \
+    -d "code_challenge=${CODE_CHALLENGE}" \
+    -d "code_challenge_method=S256" \
     2>/dev/null)" || die "Device authorization request failed"
 
   local device_code user_code verification_uri interval
@@ -191,6 +194,7 @@ do_device_login() {
       -d "grant_type=urn:ietf:params:oauth:grant-type:device_code" \
       -d "client_id=${OIDC_CLIENT_ID}" \
       -d "device_code=${device_code}" \
+      -d "code_verifier=${CODE_VERIFIER}" \
       2>/dev/null)" || die "Token polling failed"
 
     local error
