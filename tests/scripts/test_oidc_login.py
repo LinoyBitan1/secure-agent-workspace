@@ -30,8 +30,28 @@ if url.endswith("/.well-known/openid-configuration"):
                       "token_endpoint": "https://kc.example/token",
                       "device_authorization_endpoint": "https://kc.example/device"}))
 elif url == "https://kc.example/device":
-    print(json.dumps({"device_code": "code", "verification_uri": "http://kc.example/verify"}))
+    import os
+    if os.environ.get("DEVICE_PKCE"):
+        form = dict(args[i + 1].split("=", 1) for i, arg in enumerate(args) if arg == "-d")
+        assert form.get("code_challenge_method") == "S256", "Missing PKCE S256"
+        open(os.environ["DEVICE_PKCE"], "w").write(form["code_challenge"])
+    print(json.dumps({"device_code": "code", "interval": 0,
+                      "verification_uri": os.environ.get("DEVICE_URI", "http://kc.example/verify")}))
 elif url == "https://kc.example/token":
+    import os, base64, hashlib
+    if os.environ.get("DEVICE_PKCE"):
+        from pathlib import Path
+        form = dict(args[i + 1].split("=", 1) for i, arg in enumerate(args) if arg == "-d")
+        verifier = form.get("code_verifier", "")
+        expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+        assert Path(os.environ["DEVICE_PKCE"]).read_text() == expected
+        pending = Path(os.environ["TOKEN_REQ"])
+        if not pending.exists():
+            pending.write_text("pending")
+            if "-fsSL" in args:
+                sys.exit(22)  # curl --fail discards the OAuth HTTP 400 body
+            print(json.dumps({"error": "authorization_pending"}))
+            sys.exit(0)
     open(__import__("os").environ["TOKEN_REQ"], "w").write(" ".join(args))
     print(__import__("os").environ["TOKEN_RESPONSE"])
 else:
@@ -171,3 +191,11 @@ def test_device_refuses_http_verification_url(env, tmp_path):
     assert "HTTPS" in result.stderr
     assert "http://kc.example/verify" not in result.stdout
     assert not (tmp_path / "token-req").exists()
+
+
+def test_device_pkce_waits_for_authorization(env, tmp_path):
+    result = login(env, OIDC_FLOW="device-code", DEVICE_URI="https://kc.example/verify",
+                   DEVICE_PKCE=str(tmp_path / "device-challenge"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Logged in as: alice" in result.stdout
+    assert (tmp_path / "oidc" / "token.json").exists()
