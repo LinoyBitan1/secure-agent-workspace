@@ -1,3 +1,7 @@
-# Add real account names here after creating them with keycloak-add-users.
-# Each entry creates saw-<name>. Demo entries are in saw-users-demo.yaml.
-users: []
+# Isolated live validation of issue #65 on cluster-lpzcj.
+users:
+  - name: tlscheck
+defaults:
+  openshellSaw:
+    credentialProxy:
+      image: image-registry.openshift-image-registry.svc:5000/openshell-agents/saw-credential-proxy@sha256:63b392e46608296f7805c1736a7a5b249806aac42940ef9a6aada25a6b76a3d2
