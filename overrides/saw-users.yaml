@@ -4,4 +4,5 @@ defaults:
   openshellSaw:
     credentialProxy:
       image: image-registry.openshift-image-registry.svc:5000/openshell-agents/saw-credential-proxy@sha256:5d5df2e164f1688bf9a7a8f186a03749c27aadf8185523b31496b7abb2c00579
-users: []
+users:
+    - name: alice
