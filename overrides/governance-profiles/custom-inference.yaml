@@ -19,7 +19,7 @@ discovery:
   credentials: [api_key]
 endpoints:
   # Replace with the hostname in inference.url and egress.extraAllow.
-  - host: api.inference.example.com
+  - host: integrate.api.nvidia.com
     port: 443                        # its port (443 for https without one, 8000 for a vLLM Service)
     protocol: rest
     enforcement: enforce
