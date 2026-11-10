@@ -398,7 +398,6 @@ egress:
     - api.github.com
     - api-1.github.com
     - slack.com
-    - api.notion.com
     - generativelanguage.googleapis.com
     - cloudcode-pa.googleapis.com
     - accounts.google.com
