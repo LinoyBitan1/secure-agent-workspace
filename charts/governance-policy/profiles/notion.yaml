@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+id: notion
+display_name: Notion
+description: Read-only Notion page and block access for governed sandbox agents
+category: productivity
+credentials:
+  - name: api_token
+    description: Notion integration token
+    env_vars: [NOTION_API_KEY]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+discovery:
+  credentials: [api_token]
+endpoints:
+  - host: api.notion.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow:
+          method: GET
+          path: /v1/pages/*
+      - allow:
+          method: GET
+          path: /v1/blocks/*
+      - allow:
+          method: GET
+          path: /v1/blocks/*/children
+binaries:
+  - /usr/bin/curl
+  - /usr/local/bin/curl
+  - /usr/bin/node
+  - /usr/bin/node-*
+  - /usr/local/bin/node
