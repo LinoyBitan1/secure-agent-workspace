@@ -11,6 +11,13 @@ PROFILE = Path(__file__).resolve().parents[2] / "charts/governance-policy/profil
 
 
 @pytest.mark.ci_external
+def test_notion_uses_the_supported_other_category():
+    profile = yaml.safe_load(PROFILE.read_text())
+    # The interceptor rejects unknown categories and retains its old catalog.
+    assert profile["category"] == "other"
+
+
+@pytest.mark.ci_external
 @pytest.mark.parametrize("host,method,path,expected", [
     ("api.notion.com", "GET", "/v1/pages/demo-page", True),
     ("api.notion.com", "GET", "/v1/blocks/demo-block", True),

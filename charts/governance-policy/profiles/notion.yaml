@@ -4,7 +4,7 @@
 id: notion
 display_name: Notion
 description: Read-only Notion page and block access for governed sandbox agents
-category: productivity
+category: other
 credentials:
   - name: api_token
     description: Notion integration token
