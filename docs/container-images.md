@@ -1,5 +1,15 @@
 # Container images
 
+The default VM golden disk comes from AIPCC:
+`quay.io/aipcc/saw-golden-image/saw-disk-image-container:0.1.0`.
+`make images-mirror` stores it as `openshell-gateway:latest` in the internal
+registry, preserving the published architecture list. `saw-bootc:0.1.0` is
+the source OS container, not a CDI disk import. See [AIPCC integration](aipcc-golden-image.md)
+for prerequisites, validation status and the repeatable test procedure.
+An explicit `GOLDEN_IMAGE_URL` overrides the gateway disk source; explicit
+`IMAGE_REPO` or `IMAGE_TAG` settings retain the legacy project-built source
+when `GOLDEN_IMAGE_URL` is unset. Other image selections retain their GHCR defaults.
+
 Project CI publishes public images to `ghcr.io/<lowercase repository owner>/`.
 The shipped defaults use the upstream project's public namespace,
 `ghcr.io/validatedpatterns-sandbox`. Fork CI publishes under the fork owner;
@@ -14,7 +24,7 @@ those deployment overrides local when preparing changes for upstream.
 
 | Image | CI tags | Consumers |
 | --- | --- | --- |
-| `openshell-gateway` | `latest`, `sha-<commit>` | Podman VM disk, `make images-mirror`, golden image import |
+| `openshell-gateway` | `latest`, `sha-<commit>` | Legacy Podman VM disk, selected with explicit `IMAGE_REPO`/`IMAGE_TAG` |
 | `openshell-gateway-docker` | `latest`, `sha-<commit>` | x86_64-only Docker VM disk, `make gateway-build-docker` |
 | `nemoclaw-cli` | `latest`, `sha-<commit>` | Installer BOM `spec.nemoclaw.cliImage` |
 | `nemoclaw-sandbox` | `latest`, `sha-<commit>` | Data-science default and CUDA profiles |
@@ -26,8 +36,9 @@ those deployment overrides local when preparing changes for upstream.
 `openshell-gateway`, `nemoclaw-cli`, `nemoclaw-sandbox`, `saw-credential-proxy`, `saw-kubernetes-runtime` and `governance-interceptor` tags are
 multi-architecture indexes (`linux/amd64`, `linux/arm64`): each architecture
 builds natively and pushes by digest, and the merge job joins the digests with
-`.github/actions/merge-image`. `make images-mirror` on an arm64 cluster gets
-the arm64 Podman disk ([arm64 guide](arm64.md)). The legacy
+`.github/actions/merge-image`. These describe project CI images; the AIPCC disk
+has a separate release pipeline. Check its manifest before an arm64 import
+([arm64 guide](arm64.md)). The legacy
 `openshell-gateway-docker` disk is x86_64 only and publishes its tags directly;
 ARM clusters use the default Podman runtime.
 
@@ -144,7 +155,7 @@ documented workspace lifecycle.
 Manual cluster builds keep images in the internal registry by default. To publish,
 explicitly set `IMAGE_REPO=ghcr.io/<your-owner>`; the upstream namespace
 `ghcr.io/validatedpatterns-sandbox` is refused because CI owns its tags.
-The mirror command still defaults to that upstream namespace. Authenticate to GHCR with a token
+Non-gateway mirrors still default to that upstream namespace. Authenticate to GHCR with a token
 that can write packages using `oc registry login --registry=ghcr.io`; the push
 script uses the current containers auth file. For the interceptor BuildConfig,
 create a Docker registry Secret named `ghcr-push-secret` in `BUILD_NS`, or override

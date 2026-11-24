@@ -1,4 +1,10 @@
 # Shared namespace: golden image, image builds, governance interceptor.
+# Explicit legacy repo/tag selections still select a project-built disk.
+ifeq ($(filter-out undefined,$(origin IMAGE_REPO) $(origin IMAGE_TAG)),)
+GOLDEN_IMAGE_URL ?= docker://quay.io/aipcc/saw-golden-image/saw-disk-image-container:0.1.0
+endif
+export GOLDEN_IMAGE_URL
+
 NS             ?= openshell-agents
 BUILD_NS       ?= openshell-agents
 # NemoClaw sandbox architecture. Empty detects one architecture among
@@ -10,8 +16,8 @@ PUSH_IMAGE_REPO := $(IMAGE_REPO)
 endif
 export PUSH_IMAGE_REPO
 IMAGE_REPO     ?= ghcr.io/validatedpatterns-sandbox
-# Images `make images-mirror` mirrors into the internal registry. Only the
-# gateway VM disk (golden image) is needed; the VM pulls sandbox and
+# Images `make images-mirror` mirrors into the internal registry. The gateway
+# disk comes from GOLDEN_IMAGE_URL; the VM pulls sandbox and
 # NemoClaw CLI images from GHCR itself.
 MIRROR_IMAGES  ?= openshell-gateway
 # CI publishes latest and sha-<commit>; this is an image tag, not an OpenShell release.
@@ -292,7 +298,7 @@ credential-proxy-build: ## Build the credential proxy image in-cluster (BUILD_NS
 	oc start-build saw-credential-proxy -n "$(BUILD_NS)" --from-dir=credential-proxy --follow --wait
 	@oc get istag saw-credential-proxy:latest -n "$(BUILD_NS)" -o jsonpath='{.image.dockerImageReference}{"\n"}'
 
-images-mirror: ## Mirror prebuilt images from GHCR to the internal registry
+images-mirror: ## Mirror the AIPCC golden disk (or selected images) to the internal registry
 	@$(SCRIPTS_DIR)/images-mirror.sh
 
 ##@ Pattern Lifecycle

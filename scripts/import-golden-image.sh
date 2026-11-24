@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Import a bootc golden image from a container registry into a CDI DataSource.
+# Import a disk-image container from a registry into a CDI DataSource.
 # Subsequent VMs clone from this DataSource (fast CSI clone) instead of
 # re-pulling from the registry each time.
 
@@ -7,7 +7,8 @@ set -euo pipefail
 
 NS="${NS:-openshell-agents}"
 GOLDEN_IMAGE_NAME="${GOLDEN_IMAGE_NAME:-openshell-gateway}"
-GOLDEN_IMAGE_URL="${GOLDEN_IMAGE_URL:-docker://${IMAGE_REPO:-ghcr.io/validatedpatterns-sandbox}/${GOLDEN_IMAGE_NAME}:${IMAGE_TAG:-latest}}"
+source "$(dirname "$0")/lib/golden-image.sh"
+GOLDEN_IMAGE_URL="${GOLDEN_IMAGE_URL:-$(saw_image_source "$GOLDEN_IMAGE_NAME")}"
 DISK_SIZE="${DISK_SIZE:-40Gi}"
 
 echo "============================================="
@@ -47,11 +48,11 @@ echo "Mirroring image to internal registry..."
 oc image mirror \
   "${GOLDEN_IMAGE_URL#docker://}" \
   "${INTERNAL_IMAGE}" \
-  "${REGISTRY_TLS_OPTS[@]}" 2>&1 | tail -3 || {
+  "${REGISTRY_TLS_OPTS[@]}" --keep-manifest-list=true 2>&1 | tail -3 || {
   echo "Mirror failed. Trying oc import-image..."
   oc import-image "${GOLDEN_IMAGE_NAME}:latest" \
     --from="${GOLDEN_IMAGE_URL#docker://}" \
-    --confirm -n "${NS}" 2>&1 | tail -3
+    --import-mode=PreserveOriginal --confirm -n "${NS}" 2>&1 | tail -3
 }
 
 echo ""

@@ -446,7 +446,7 @@ fi
     assert sorted(path.name for path in creds.iterdir()) == ["bob"]
 
 
-@pytest.mark.parametrize("tag", ["latest", "sha-review"])
+@pytest.mark.parametrize("tag", [None, "latest", "sha-review"])
 def test_image_mirror_uses_selected_ghcr_tag_without_fallback(tmp_path, tag):
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -463,10 +463,15 @@ def test_image_mirror_uses_selected_ghcr_tag_without_fallback(tmp_path, tag):
 esac
 ''')
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", MIRROR_LOG=str(log))
-    result = run_make("images-mirror", f"IMAGE_TAG={tag}", env=env)
+    for key in ("IMAGE_REPO", "IMAGE_TAG", "GOLDEN_IMAGE_URL", "MIRROR_IMAGES"):
+        env.pop(key, None)
+    result = run_make("images-mirror", *([f"IMAGE_TAG={tag}"] if tag else []), env=env)
     assert result.returncode == 0, result.stderr
+    source = (f"ghcr.io/validatedpatterns-sandbox/openshell-gateway:{tag}" if tag else
+              "quay.io/aipcc/saw-golden-image/saw-disk-image-container:0.1.0")
+    tag = tag or "latest"
     expected = [
-        f"image mirror ghcr.io/validatedpatterns-sandbox/openshell-gateway:{tag} "
+        f"image mirror {source} "
         f"registry.example/openshell-agents/openshell-gateway:{tag} "
         "--keep-manifest-list=true"]
     destinations = f"openshell-gateway:{tag}"

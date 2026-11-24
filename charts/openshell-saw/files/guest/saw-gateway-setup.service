@@ -1,0 +1,20 @@
+[Unit]
+Description=Prepare the SAW gateway runtime user
+After=multi-user.target openshell-gateway-setup.service
+ConditionPathExists=!/var/lib/openshell-gateway-setup.done
+StartLimitIntervalSec=1h
+StartLimitBurst=6
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/saw-gateway-setup
+ExecStartPost=/usr/bin/touch /var/lib/openshell-gateway-setup.done
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=180
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

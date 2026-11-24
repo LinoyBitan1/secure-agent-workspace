@@ -14,8 +14,8 @@ spec:
         env:
         - name: MIRROR_IMAGE
           value: "${IMAGE}"
-        - name: MIRROR_REPO
-          value: "${IMAGE_REPO}"
+        - name: MIRROR_SOURCE
+          value: "${SOURCE_REF}"
         - name: MIRROR_TAG
           value: "${VERSION}"
         - name: MIRROR_NAMESPACE
@@ -31,12 +31,12 @@ spec:
           set -euo pipefail
           mkdir -p "${HOME}" "${XDG_RUNTIME_DIR}"
           TOKEN="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
-          # Use the exact CI tag; a missing version must fail rather than use latest.
-          echo "Copying ${MIRROR_REPO}/${MIRROR_IMAGE}:${MIRROR_TAG}"
+          # Copy the selected source exactly, retaining every architecture.
+          echo "Copying ${MIRROR_SOURCE}"
           skopeo copy --all --src-tls-verify=true --dest-tls-verify=true \
             --dest-cert-dir=/etc/registry-ca \
             --dest-creds="unused:${TOKEN}" \
-            "docker://${MIRROR_REPO}/${MIRROR_IMAGE}:${MIRROR_TAG}" \
+            "${MIRROR_SOURCE}" \
             "docker://image-registry.openshift-image-registry.svc:5000/${MIRROR_NAMESPACE}/${MIRROR_IMAGE}:${MIRROR_TAG}"
           echo "Mirror complete: ${MIRROR_IMAGE}:${MIRROR_TAG} -> ${MIRROR_IMAGE}:${MIRROR_TAG}"
         volumeMounts:

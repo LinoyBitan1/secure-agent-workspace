@@ -261,7 +261,7 @@ make ssh-key-generate
 #   ~/.nvidia-api-key and ~/.brave-api-key (one line each, chmod 600)
 
 # 5. Copy pre-built images to the cluster (~5 min)
-# Mirrors images from ghcr.io/validatedpatterns-sandbox to the internal registry.
+# Mirrors the AIPCC saw-disk-image-container:0.1.0 to the internal registry.
 # No build needed — images are pre-built by maintainers.
 make images-mirror
 
@@ -334,7 +334,7 @@ Upgrading an install that still has the `openshell-saw` VM: see [Upgrading from 
 
 #### Option B: Quickstart (manual, step-by-step)
 
-Install operators from OperatorHub first, then deploy components manually. After the OpenShift Virtualization operator is installed, create a `HyperConverged` resource, or no node can run VMs; External Secrets is only needed for Option A. See [Quickstart notes](docs/deployment-guide.md#quickstart-notes). The images-mirror step mirrors CI-built GHCR images using the exact `IMAGE_TAG` (`latest` by default); see [Golden image tag](docs/deployment-guide.md#golden-image-tag). RHBK must be installed in the `saw-keycloak` namespace (step 3 sets `KEYCLOAK_NS`; point it at another namespace to reuse a Keycloak your cluster already has). Each sandbox gets its own namespace, `saw-<name>`.
+Install operators from OperatorHub first, then deploy components manually. After the OpenShift Virtualization operator is installed, create a `HyperConverged` resource, or no node can run VMs; External Secrets is only needed for Option A. See [Quickstart notes](docs/deployment-guide.md#quickstart-notes). The images-mirror step mirrors the AIPCC `saw-disk-image-container:0.1.0` into the internal registry; see [Golden image tag](docs/deployment-guide.md#golden-image-tag). RHBK must be installed in the `saw-keycloak` namespace (step 3 sets `KEYCLOAK_NS`; point it at another namespace to reuse a Keycloak your cluster already has). Each sandbox gets its own namespace, `saw-<name>`.
 
 ```bash
 # 1. Clone the repository
@@ -509,8 +509,11 @@ user access targets require `OPENSHELL_SAW_NAME`. `saw-list`, `status`, and
 CI namespace is refused. For `saw-create`, set `PROVIDER`, `MODEL`, and
 `API_KEY` in the environment for keyed providers; `OWNER` and `OWNER_SUBJECT` select another owner. The chart defaults to the published proxy image. Optionally set `CREDENTIAL_PROXY_IMAGE`, or `credentialProxy.image` through `SAW_VALUES_FILE`, to a digest-pinned mirror or custom build. A new inference Secret needs `PROVIDER` and `MODEL`; `API_KEY` may be empty for a keyless provider. A repeat `saw-create` keeps an existing inference Secret when `API_KEY` is empty.
 
-`IMAGE_TAG=latest` selects the CI-built gateway disk used by `images-mirror`;
-`IMAGE_TAG=sha-<commit>` selects a particular CI build. The chart's in-VM BOM
+`make images-mirror` selects `quay.io/aipcc/saw-golden-image/saw-disk-image-container:0.1.0`.
+Use `GOLDEN_IMAGE_URL=docker://<registry>/<disk-image>:<tag>` (or a digest)
+to select another disk. Explicit `IMAGE_TAG=latest`, `IMAGE_TAG=sha-<commit>` or
+`IMAGE_REPO` settings retain the project-built GHCR selection unless
+`GOLDEN_IMAGE_URL` is also supplied. The chart's in-VM BOM
 separately pins OpenShell `0.1.6-rhaiv.4` by digest. See
 [the deployment guide](docs/deployment-guide.md#golden-image-tag).
 

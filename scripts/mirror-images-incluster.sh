@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Mirror images from GHCR to the internal registry using in-cluster skopeo Jobs.
+# Mirror registry images using in-cluster skopeo Jobs.
 # Use this on macOS where podman-machine TCP connections drop mid-upload for large layers.
 set -euo pipefail
 
 BUILD_NS="${BUILD_NS:-openshell-agents}"
-IMAGE_REPO="${IMAGE_REPO:-ghcr.io/validatedpatterns-sandbox}"
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPTS_DIR}/lib/golden-image.sh"
 VERSION="${IMAGE_TAG:-latest}"
 # Only the gateway VM disk image is needed in the cluster (golden image);
 # sandbox and NemoClaw CLI images are pulled from GHCR by the VM itself.
 IMAGES="${IMAGES:-openshell-gateway}"
-SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [[ "${OPENSHELL_VERSION+x}" == x ]]; then
   echo "Error: OPENSHELL_VERSION no longer selects a mirror tag. Set IMAGE_TAG instead." >&2
@@ -17,7 +17,7 @@ if [[ "${OPENSHELL_VERSION+x}" == x ]]; then
 fi
 
 source "${SCRIPTS_DIR}/lib/image-repo.sh"
-validate_image_repo "$IMAGE_REPO"
+validate_image_repo "${IMAGE_REPO:-ghcr.io/validatedpatterns-sandbox}"
 [[ "$BUILD_NS" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ && ${#BUILD_NS} -le 63 ]] || { echo 'Error: invalid BUILD_NS.' >&2; exit 1; }
 [[ "$VERSION" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$ && ${#VERSION} -le 128 ]] || { echo 'Error: invalid IMAGE_TAG.' >&2; exit 1; }
 read -r -a images <<< "${IMAGES//$'\n'/ }"
@@ -35,12 +35,13 @@ oc apply -n "${BUILD_NS}" -f "${SCRIPTS_DIR}/mirror-images-rbac.yaml"
 oc adm policy add-scc-to-user nonroot -z image-mirror -n "${BUILD_NS}"
 
 for IMAGE in "${images[@]}"; do
-  export IMAGE BUILD_NS IMAGE_REPO VERSION
-  echo "Mirroring ${IMAGE}:${VERSION}..."
+  SOURCE_REF="$(saw_image_source "$IMAGE")"
+  export IMAGE BUILD_NS VERSION SOURCE_REF
+  echo "Mirroring ${SOURCE_REF} as ${IMAGE}:${VERSION}..."
   oc delete job "mirror-${IMAGE}" -n "${BUILD_NS}" --ignore-not-found=true
   # Only substitute template vars; leave runtime shell vars (e.g. ${TOKEN}) intact
   # shellcheck disable=SC2016
-  envsubst '${IMAGE} ${BUILD_NS} ${IMAGE_REPO} ${VERSION}' \
+  envsubst '${IMAGE} ${BUILD_NS} ${SOURCE_REF} ${VERSION}' \
     < "${SCRIPTS_DIR}/mirror-images-job.yaml" \
     | oc apply -n "${BUILD_NS}" -f -
   # `oc wait --for=condition=complete` would sit out its timeout on a failed Job.
@@ -50,7 +51,7 @@ for IMAGE in "${images[@]}"; do
     bad=$(oc get job "mirror-${IMAGE}" -n "${BUILD_NS}" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}')
     [[ "${ok}" == 1 ]] && break
     if [[ "${bad}" == True || $(date +%s) -gt ${deadline} ]]; then
-      echo "Error: image mirror failed for ${IMAGE_REPO}/${IMAGE}:${VERSION}. Check the tag and registry access." >&2
+      echo "Error: image mirror failed for ${SOURCE_REF#docker://}. Check the tag and registry access." >&2
       oc logs -n "${BUILD_NS}" "job/mirror-${IMAGE}" --tail=10 2>&1
       exit 1
     fi

@@ -4,6 +4,7 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${repo}"
+source "${repo}/scripts/lib/golden-image.sh"
 
 : "${TEST_CLUSTER_CONTEXT:?Set TEST_CLUSTER_CONTEXT to the dedicated oc context}"
 : "${TEST_SAW_NAME:?Set TEST_SAW_NAME to a new SAW name of at most 19 characters}"
@@ -366,7 +367,7 @@ echo "Testing commit ${commit} on context ${context}. Evidence: ${evidence}"
 record config.web-search 0 "${web_search}"
 record version.oc-client 0 "$(oc version --client | sed -n '1p')"
 record version.helm 0 "$(helm version --short)"
-record version.gateway-image 0 "${IMAGE_REPO:-ghcr.io/validatedpatterns-sandbox}/openshell-gateway:${IMAGE_TAG:-latest}"
+record version.gateway-image 0 "$(saw_image_source openshell-gateway)"
 record version.interceptor 0 "${OPENSHELL_INTERCEPTOR_REF:-v0.1.6}"
 record version.bom-gateway 0 "$(awk '/^      gateway:/{getline; print $2; exit}' charts/openshell-saw/values.yaml)"
 record initial.saw-namespaces 0 "$(jq -r '[.items[].metadata.name |

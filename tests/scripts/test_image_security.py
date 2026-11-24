@@ -115,8 +115,8 @@ def test_mirror_values_are_data_not_shell_source(tmp_path):
     template = (ROOT / "scripts/mirror-images-job.yaml").read_text()
     marker = tmp_path / "injected"
     malicious = f'ghcr.io/$(touch {marker})/example'
-    env = dict(os.environ, IMAGE="openshell-gateway", IMAGE_REPO=malicious, VERSION="latest", BUILD_NS="test-build")
-    rendered = subprocess.check_output(["envsubst", "${IMAGE} ${BUILD_NS} ${IMAGE_REPO} ${VERSION}"], input=template, env=env, text=True)
+    env = dict(os.environ, IMAGE="openshell-gateway", SOURCE_REF="docker://" + malicious + "/openshell-gateway:latest", VERSION="latest", BUILD_NS="test-build")
+    rendered = subprocess.check_output(["envsubst", "${IMAGE} ${BUILD_NS} ${SOURCE_REF} ${VERSION}"], input=template, env=env, text=True)
     job = yaml.safe_load(rendered)
     container = job["spec"]["template"]["spec"]["containers"][0]
     command = container["command"][2]

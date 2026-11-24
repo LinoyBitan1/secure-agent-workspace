@@ -33,12 +33,13 @@ def executable(path, body):
     path.chmod(0o755)
 
 
-@pytest.mark.parametrize("script,args", [
-    ("images-mirror.sh", []),
-    ("push-image.sh", ["test-build", "gateway", "ghcr.io/example", "v1"]),
-    ("import-golden-image.sh", []),
+@pytest.mark.parametrize("script,args,aipcc", [
+    ("images-mirror.sh", [], False),
+    ("push-image.sh", ["test-build", "gateway", "ghcr.io/example", "v1"], False),
+    ("import-golden-image.sh", [], False),
+    ("import-golden-image.sh", [], True),
 ])
-def test_registry_scripts_use_cluster_ca_without_insecure_retry(tmp_path, keycloak_tls, script, args):
+def test_registry_scripts_use_cluster_ca_without_insecure_retry(tmp_path, keycloak_tls, script, args, aipcc):
     _, ca = keycloak_tls
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -60,6 +61,10 @@ esac
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", TEST_CA=str(ca),
                CALLS=str(calls), APPLIED=str(tmp_path / "applied"), OIDC_CA_BUNDLE="",
                REGISTRY_CA_BUNDLE="", IMAGE_TAG="latest", IMAGE_REPO="ghcr.io/example")
+    env.pop("GOLDEN_IMAGE_URL", None)
+    if aipcc:
+        env.pop("IMAGE_REPO")
+        env.pop("IMAGE_TAG")
     result = subprocess.run(["bash", str(ROOT / "scripts" / script), *args],
                             env=env, capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
@@ -71,6 +76,10 @@ esac
             assert call["args"][call["args"].index("--certificate-authority") + 1] == call["path"]
         assert not Path(call["path"]).exists(), "temporary trust must be cleaned up"
     assert any(call["args"][:2] == ["image", "mirror"] for call in recorded)
+    if aipcc:
+        mirror = next(call["args"] for call in recorded if call["args"][:2] == ["image", "mirror"])
+        assert "quay.io/aipcc/saw-golden-image/saw-disk-image-container:0.1.0" in mirror
+        assert "--keep-manifest-list=true" in mirror
 
 
 def test_mirror_job_mounts_service_ca_and_verifies_both_registries():

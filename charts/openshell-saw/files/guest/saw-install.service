@@ -1,11 +1,12 @@
 [Unit]
 Description=SAW installer step 1: install BOM components and start the gateway
 Wants=network-online.target
+Requires=saw-gateway-setup.service
 # After multi-user.target, like the golden image's openshell-gateway-setup
 # (which is After=multi-user.target): without it, WantedBy=multi-user.target
 # would make the target wait for this unit, an ordering cycle that makes
 # systemd delete the job at boot. It also keeps image pulls off the boot path.
-After=network-online.target multi-user.target openshell-gateway-setup.service
+After=network-online.target multi-user.target openshell-gateway-setup.service saw-gateway-setup.service
 # On first boot cloud-init starts this after the golden image's first-boot
 # setup has finished; on later boots it runs on its own.
 ConditionPathExists=/var/lib/openshell-gateway-setup.done

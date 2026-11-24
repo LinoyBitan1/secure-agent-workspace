@@ -265,10 +265,10 @@ def test_runcmd_is_valid_bash_and_enables_units_first(default_docs, tmp_path):
     path = tmp_path / "runcmd.sh"
     path.write_text(run)
     assert subprocess.run(["bash", "-n", str(path)]).returncode == 0
-    assert run.index("systemctl enable saw-install.service saw-apply.service") < \
-        run.index("systemctl start openshell-gateway-setup.service")
-    assert "|| echo" in run.split("openshell-gateway-setup.service", 1)[1].splitlines()[0] + \
-        run.split("openshell-gateway-setup.service", 1)[1].splitlines()[1]
+    assert run.index("systemctl enable saw-gateway-setup.service saw-install.service saw-apply.service") < \
+        run.index("systemctl start saw-gateway-setup.service")
+    assert "|| echo" in run.split("systemctl start saw-gateway-setup.service", 1)[1].splitlines()[0] + \
+        run.split("systemctl start saw-gateway-setup.service", 1)[1].splitlines()[1]
     assert "set -e" not in run.replace("set -uo", "")
 
 
@@ -297,12 +297,15 @@ def test_installer_units_run_install_then_apply(default_docs, tmp_path):
     run = cfg["runcmd"][0]
     assert "systemctl start --no-block saw-install.service saw-apply.service" in run
     if shutil.which("systemd-analyze"):
-        for name, text in (("saw-install.service", install), ("saw-apply.service", apply)):
+        setup = written(cfg, "/etc/systemd/system/saw-gateway-setup.service")
+        for name, text in (("saw-install.service", install), ("saw-apply.service", apply),
+                           ("saw-gateway-setup.service", setup)):
             (tmp_path / name).write_text(text)
         result = subprocess.run(["systemd-analyze", "verify", *(str(tmp_path / n) for n in
-                                 ("saw-install.service", "saw-apply.service"))],
+                                 ("saw-install.service", "saw-apply.service", "saw-gateway-setup.service"))],
                                 capture_output=True, text=True)
         assert "Unknown" not in result.stderr and "Invalid" not in result.stderr, result.stderr
+        assert "ordering cycle" not in result.stderr.lower(), result.stderr
 
 
 def unit_deps(text):
@@ -312,6 +315,23 @@ def unit_deps(text):
         if sep and key in ("After", "Before", "WantedBy", "DefaultDependencies"):
             deps.setdefault(key, []).extend(value.split())
     return deps
+
+
+@pytest.mark.ci_external
+def test_chart_provisions_gateway_setup_for_images_without_legacy_service(default_docs):
+    cfg = cloud_config(default_docs)
+    setup = written(cfg, "/etc/systemd/system/saw-gateway-setup.service")
+    assert "ExecStart=/usr/local/sbin/saw-gateway-setup" in setup
+    assert "ExecStartPost=/usr/bin/touch /var/lib/openshell-gateway-setup.done" in setup
+    assert "ConditionPathExists=!/var/lib/openshell-gateway-setup.done" in setup
+    script = written(cfg, "/usr/local/sbin/saw-gateway-setup")
+    assert "loginctl enable-linger" in script
+    gateway = written(cfg, "/etc/systemd/user/openshell-gateway.service")
+    assert "ExecStart=/usr/local/bin/openshell-gateway" in gateway
+    install = written(cfg, "/etc/systemd/system/saw-install.service")
+    assert "Requires=saw-gateway-setup.service" in install
+    assert "saw-gateway-setup.service" in unit_deps(install)["After"]
+    assert "systemctl enable saw-gateway-setup.service saw-install.service saw-apply.service" in cfg["runcmd"][0]
 
 
 def golden_image_setup_unit():

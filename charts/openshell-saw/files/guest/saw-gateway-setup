@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Prepare the runtime user when the base image has no legacy first-boot setup.
+set -euo pipefail
+user=cloud-user
+uid="$(id -u "$user")"
+user_home="$(getent passwd "$user" | cut -d: -f6)"
+config_dir="${1:-/etc/openshell}"
+
+if ! python3 -c 'import sys, tomllib, yaml; assert sys.version_info >= (3, 11)'; then
+  echo "The golden image must provide Python 3.11+ with tomllib and PyYAML for the SAW installer." >&2
+  exit 1
+fi
+
+loginctl enable-linger "$user"
+systemctl start "user@${uid}.service"
+run_user() {
+  runuser -u "$user" -- env HOME="$user_home" \
+    XDG_RUNTIME_DIR="/run/user/$uid" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" "$@"
+}
+ready=false
+for ((i=0; i<90; i++)); do
+  if run_user systemctl --user show-environment >/dev/null 2>&1; then
+    ready=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$ready" != true ]]; then
+  echo "The systemd user manager for $user did not become ready." >&2
+  exit 1
+fi
+run_user systemctl --user enable --now podman.socket
+
+install -d -m 0755 "$user_home/.config/openshell"
+cp "$config_dir/gateway.env" "$user_home/.config/openshell/gateway.env"
+cp "$config_dir/gateway.toml" "$user_home/.config/openshell/gateway.toml"
+# Match the legacy Podman image's runtime bridge settings.
+cat >> "$user_home/.config/openshell/gateway.env" <<EOF
+OPENSHELL_GRPC_ENDPOINT=https://10.88.0.1:17670
+OPENSHELL_SSH_GATEWAY_HOST=10.88.0.1
+OPENSHELL_PODMAN_SOCKET=/run/user/$uid/podman/podman.sock
+EOF
+chown -R "$user:$user" "$user_home/.config"

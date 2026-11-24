@@ -2,10 +2,10 @@
 set -euo pipefail
 
 build_ns="${BUILD_NS:-openshell-agents}"
-repo="${IMAGE_REPO:-ghcr.io/validatedpatterns-sandbox}"
 version="${IMAGE_TAG:-latest}"
 images="${MIRROR_IMAGES:-openshell-gateway}"
 script_dir="$(cd "$(dirname "$0")" && pwd)"
+source "${script_dir}/lib/golden-image.sh"
 
 if [[ "${OPENSHELL_VERSION+x}" == x ]]; then
   echo "Error: OPENSHELL_VERSION no longer selects a mirror tag. Set IMAGE_TAG instead." >&2
@@ -43,11 +43,12 @@ for image in ${images}; do
     echo "Error: invalid image name: ${image}." >&2
     exit 1
   fi
-  if ! oc image mirror "${repo}/${image}:${version}" \
+  image_source="$(saw_image_source "$image")"
+  if ! oc image mirror "${image_source#docker://}" \
     "${registry}/${build_ns}/${image}:${version}" \
     "${REGISTRY_TLS_OPTS[@]}" --keep-manifest-list=true >"${log}" 2>&1; then
     cat "${log}" >&2
-    echo "Error: image mirror failed for ${repo}/${image}:${version}. Check the tag and registry access." >&2
+    echo "Error: image mirror failed for ${image_source#docker://}. Check the tag and registry access." >&2
     exit 1
   fi
   if [[ "${version}" != latest ]]; then

@@ -684,15 +684,21 @@ External Secrets is only required for Option A, which syncs the pattern's secret
 
 ### Golden image tag
 
-`make images-mirror` mirrors the CI-built GHCR golden image into the cluster.
-`IMAGE_REPO` defaults to `ghcr.io/validatedpatterns-sandbox`; `IMAGE_TAG` defaults
-to `latest`. For reproducible installs, run `make images-mirror IMAGE_TAG=sha-<full-commit>` using a commit published by CI on `main`. Both local
-and in-cluster mirroring use that exact tag and fail if it is absent; neither
-falls back to another build. The internal image also gets a `latest` alias,
-which the default VM disk source uses. For a pinned disk import, set
-`source.registryURL` to the GHCR image digest. Changing the source does not
-replace an existing VM disk. See [Container images](container-images.md) for
-CI image names, public package setup, and intentionally retained Quay dependencies.
+`make images-mirror` mirrors
+`quay.io/aipcc/saw-golden-image/saw-disk-image-container:0.1.0` into the
+internal registry as `openshell-gateway:latest`. CDI consumes this disk wrapper;
+`saw-bootc:0.1.0` is its bootable OS source, not the CDI import image.
+Local and in-cluster mirroring preserve the source's architecture manifest list.
+The published `0.1.0` disk architectures and boot compatibility still require
+validation; see the [AIPCC integration procedure](aipcc-golden-image.md).
+
+Set `GOLDEN_IMAGE_URL=docker://<registry>/<disk-image>@sha256:<digest>` for a
+specific disk. Explicit `IMAGE_REPO` or `IMAGE_TAG` settings retain the legacy
+GHCR selection, unless `GOLDEN_IMAGE_URL` is also supplied. For example,
+`make images-mirror IMAGE_TAG=sha-<full-commit>` selects a project CI build.
+The exact selected source must exist; there is no fallback to another build.
+Changing the source does not replace an existing VM disk. See
+[Container images](container-images.md) for the other images and their overrides.
 
 The default VM disk source is the `openshell-gateway:latest` image in the
 internal registry. To use another registry image, a DataSource, or an HTTP
