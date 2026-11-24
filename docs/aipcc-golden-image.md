@@ -131,5 +131,23 @@ Source inspection used upstream revision
 `fff27c4aff03c6728c40a69a3f43531731581ec6`. That source may differ from
 the published 0.1.0 artifacts. An anonymous manifest request for the disk
 release returned `unauthorized`; its digest, platforms, Python dependencies
-and boot/gateway behavior remain unverified. Complete the cluster procedure
-after registry access and a test cluster are available.
+and boot/gateway behavior remain unverified.
+
+### Cluster verification, 2026-11-24
+
+README Option A was installed from commit
+`dd192f9bef84e9a69a739caab78a84a190a10f26` on OpenShift 4.22.22 (amd64),
+with web search disabled and isolated deployment inputs outside the repository.
+The installer exited successfully. All ten Argo CD applications were
+`Synced` and `Healthy`; all eight required operators reported `Succeeded`.
+OpenShift Virtualization reported `Available=True`, `Degraded=False`, and
+four nodes exposed KVM. Developer Hub completed its Deployment rollout.
+Its HTTPS root and Keycloak's OIDC discovery endpoint both returned HTTP 200
+with TLS certificate verification enabled.
+
+A cluster-side `oc import-image --dry-run=true --import-mode=PreserveOriginal`
+probe for the requested disk reference failed with a registry access error.
+Anonymous pulls and a pull using the cluster's existing Quay credentials also
+failed. The dry-run probe created no ImageStream. No workspace VM was created.
+This verifies platform installation, not AIPCC image import, VM boot, gateway
+integration or inference. Those checks still require an accessible release.
