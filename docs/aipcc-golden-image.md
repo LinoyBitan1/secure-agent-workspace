@@ -196,8 +196,45 @@ Guest diagnostics confirmed two compatibility failures:
   the installer tested in that run required Python 3.11 or later with both
   modules.
 
-The image replacement is not ready for acceptance. Gateway startup,
+That initial image replacement was not ready for acceptance. Gateway startup,
 owner OIDC login, sandbox inference, reboot recovery and arm64 VM boot have
 not passed. Fixing the writable-path contract alone would still leave the
 Python dependency mismatch. No guest OS packages were installed or immutable
 filesystems remounted during this test.
+
+### SAW-side compatibility experiment, 2026-11-25
+
+Commit `496ec730c816d515f8d920f88d70d42c5555e109` moves SAW's host-side
+helpers and installed software to `/var/usrlocal` and embeds the pinned
+Tomli dependency in the existing signed installer artifact. The AIPCC image
+was unchanged. The task-owned test namespace and disk were recreated through
+GitOps, with all three workspace Applications pinned to that commit and the
+disk source pinned to the same index digest recorded above. The existing
+Option A platform was retained.
+
+The fresh VM passed cloud-init provisioning and gateway setup on its actual
+Python 3.9.21 runtime. `saw-gateway-setup.service` completed successfully,
+the installer reported `install: Done`, and the gateway started using the
+BOM-pinned OpenShell `0.1.6-rhaiv.4` binaries from `/var/usrlocal/bin`.
+`/usr/local` remained read-only and SELinux remained `Enforcing`.
+
+The generated workspace owner authenticated through Keycloak and listed the
+test sandbox through the gateway with OIDC and TLS certificate verification.
+The local CLI test used an isolated configuration directory.
+
+End-to-end acceptance still did not pass. The `notebook` sandbox remained in
+`Deleting` with configuration admission pending after creation timed out.
+Gateway reconciliation logged `timeout after 60s`; Podman cleanup logged
+conflicts for volumes still referenced by the sandbox container. Podman's
+API ping continued to return `OK`, while a separate `podman ps` diagnostic
+timed out. These observations do not establish the runtime timeout's root
+cause. The apply phase had not completed, so inference and reboot recovery
+were not tested. The compatibility patch resolves the two initial blockers;
+it does not establish a working sandbox runtime.
+
+Before this retest, 367 focused chart, bootstrap, packaging and installer tests
+passed, along with static checks and an independent code review. An offline
+container probe also exercised the rendered standalone installer on AIPCC's
+Python 3.9.25 bootc artifact: valid and invalid TOML handling, isolated parser
+loading and temporary-file cleanup passed. That probe supplements the fresh
+disk VM test; it is not evidence of arm64 boot or full sandbox operation.
