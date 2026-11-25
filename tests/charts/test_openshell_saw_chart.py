@@ -231,9 +231,27 @@ def test_duplicate_secret_names_attach_once():
 def test_cloud_init_ships_the_guest_files_unchanged(default_docs):
     cfg = cloud_config(default_docs)
     guest = CHART / "files" / "guest"
-    assert written(cfg, "/usr/local/sbin/saw-mount-inputs") == (guest / "saw-mount-inputs.sh").read_text()
+    assert written(cfg, "/var/usrlocal/sbin/saw-mount-inputs") == (guest / "saw-mount-inputs.sh").read_text()
     assert written(cfg, "/etc/systemd/system/saw-install.service") == (guest / "saw-install.service").read_text()
     assert written(cfg, "/etc/systemd/system/saw-apply.service") == (guest / "saw-apply.service").read_text()
+
+
+@pytest.mark.ci_external
+def test_cloud_init_uses_writable_guest_executable_paths():
+    cfg = cloud_config(render("--set", "vm.liveInputs=true"))
+    files = {entry["path"]: entry["content"] for entry in cfg["write_files"]}
+    assert not any(path.startswith("/usr/") for path in files)
+    for name in ("saw-gateway-setup", "saw-mount-inputs", "saw-with-lock",
+                 "saw-stage-installer", "saw-reconcile"):
+        path = f"/var/usrlocal/sbin/{name}"
+        assert path in files
+        assert any(path in contents for unit, contents in files.items() if unit.endswith(".service"))
+    pki = "/var/usrlocal/libexec/saw/saw-gateway-pki"
+    assert pki in files
+    assert f"ExecStartPre={pki}" in files["/etc/systemd/user/openshell-gateway.service.d/10-saw-pki.conf"]
+    gateway = files["/etc/systemd/user/openshell-gateway.service"]
+    assert "ExecStart=/var/usrlocal/bin/openshell-gateway" in gateway
+    assert '${SAW_GATEWAY_BIN:-/var/usrlocal/bin/openshell-gateway}' in files[pki]
 
 
 @pytest.mark.ci_external
@@ -278,19 +296,19 @@ def test_installer_units_run_install_then_apply(default_docs, tmp_path):
     install = written(cfg, "/etc/systemd/system/saw-install.service")
     apply = written(cfg, "/etc/systemd/system/saw-apply.service")
     assert "Wants=saw-install.service" in apply
-    assert ("ExecStart=/usr/local/sbin/saw-with-lock /usr/bin/python3 "
+    assert ("ExecStart=/var/usrlocal/sbin/saw-with-lock /usr/bin/python3 "
             "/var/lib/saw/verified/installer/apply_bom.py install "
             "--installer-dir /var/lib/saw/verified/installer" in install)
-    assert ("ExecStart=/usr/local/sbin/saw-with-lock /usr/bin/python3 "
+    assert ("ExecStart=/var/usrlocal/sbin/saw-with-lock /usr/bin/python3 "
             "/var/lib/saw/verified/installer/apply_bom.py apply "
             "--installer-dir /var/lib/saw/verified/installer" in apply)
     assert "saw-install.service" in unit_deps(apply)["After"]
     for unit in (install, apply):
-        assert "ExecStartPre=/usr/local/sbin/saw-mount-inputs" in unit
+        assert "ExecStartPre=/var/usrlocal/sbin/saw-mount-inputs" in unit
         # apply_bom.py always runs from the staged, verified copy, never the
         # live mount (PR #54 review, 2).
-        assert "ExecStartPre=/usr/local/sbin/saw-stage-installer" in unit
-        assert unit.index("saw-stage-installer") < unit.index("ExecStart=/usr/local/sbin/saw-with-lock")
+        assert "ExecStartPre=/var/usrlocal/sbin/saw-stage-installer" in unit
+        assert unit.index("saw-stage-installer") < unit.index("ExecStart=/var/usrlocal/sbin/saw-with-lock")
         assert "StandardOutput=journal+console" in unit      # visible in guest-console-log
         assert "StartLimitBurst=" in unit                     # retries are bounded
         assert "ConditionPathExists=/var/lib/openshell-gateway-setup.done" in unit
@@ -321,17 +339,26 @@ def unit_deps(text):
 def test_chart_provisions_gateway_setup_for_images_without_legacy_service(default_docs):
     cfg = cloud_config(default_docs)
     setup = written(cfg, "/etc/systemd/system/saw-gateway-setup.service")
-    assert "ExecStart=/usr/local/sbin/saw-gateway-setup" in setup
+    assert "ExecStart=/var/usrlocal/sbin/saw-gateway-setup" in setup
     assert "ExecStartPost=/usr/bin/touch /var/lib/openshell-gateway-setup.done" in setup
     assert "ConditionPathExists=!/var/lib/openshell-gateway-setup.done" in setup
-    script = written(cfg, "/usr/local/sbin/saw-gateway-setup")
+    script = written(cfg, "/var/usrlocal/sbin/saw-gateway-setup")
     assert "loginctl enable-linger" in script
     gateway = written(cfg, "/etc/systemd/user/openshell-gateway.service")
-    assert "ExecStart=/usr/local/bin/openshell-gateway" in gateway
+    assert "ExecStart=/var/usrlocal/bin/openshell-gateway" in gateway
     install = written(cfg, "/etc/systemd/system/saw-install.service")
     assert "Requires=saw-gateway-setup.service" in install
     assert "saw-gateway-setup.service" in unit_deps(install)["After"]
     assert "systemctl enable saw-gateway-setup.service saw-install.service saw-apply.service" in cfg["runcmd"][0]
+
+
+def test_signed_pki_dropin_overrides_legacy_gateway_binary(default_docs):
+    build = (ROOT / "image-builder-charts/helm/openshell-gateway-image/templates/buildconfig.yaml").read_text()
+    legacy = build.split("cat > /build/openshell-gateway.service <<'GWUNIT'\n", 1)[1].split("GWUNIT\n", 1)[0]
+    dropin = installer_data(default_docs)["openshell-gateway-pki.conf"]
+    starts = [line.strip() for line in (legacy + dropin).splitlines() if line.strip().startswith("ExecStart=")]
+    assert starts == ["ExecStart=/usr/local/bin/openshell-gateway", "ExecStart=",
+                      "ExecStart=/var/usrlocal/bin/openshell-gateway"]
 
 
 def golden_image_setup_unit():
@@ -820,13 +847,18 @@ def test_rendered_proxies_verify_issuer_tls_by_default(settings, skip):
 def test_installer_configmap_ships_the_real_files(default_docs, ab):
     data = installer_data(default_docs)
     source = (CHART / "files" / "installer" / "apply_bom.py").read_text()
-    for name in ("core", "admin", "ui_limit"):
-        shared = (CHART / "files/installer" / ("saw_"+name+".py")).read_bytes()
-        field = "_SAW_"+name.upper()+"_EMBEDDED_B64"
-        marker = field+' = "__SAW_'+name.upper()+'_SOURCE_BASE64__"'
+    for name, filename, kind in (
+        ("core", "saw_core.py", "SOURCE"),
+        ("admin", "saw_admin.py", "SOURCE"),
+        ("ui_limit", "saw_ui_limit.py", "SOURCE"),
+        ("tomli", "tomli-2.5.0-py3-none-any.whl", "WHEEL"),
+    ):
+        shared = (CHART / "files/installer" / filename).read_bytes()
+        field = f"_SAW_{name.upper()}_EMBEDDED_B64"
+        marker = f'{field} = "__SAW_{name.upper()}_{kind}_BASE64__"'
         assert source.count(marker) == 1
         source = source.replace(marker, field+' = "'+base64.b64encode(shared).decode("ascii")+'"')
-        assert "saw_"+name+".py" not in data
+        assert filename not in data
     assert data["apply_bom.py"] == source
     assert data["setup-dashboard.sh"] == (CHART / "files" / "installer" / "setup-dashboard.sh").read_text()
     bom = yaml.safe_load(data["installer-bom.yaml"])

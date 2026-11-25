@@ -6,8 +6,8 @@ uid="$(id -u "$user")"
 user_home="$(getent passwd "$user" | cut -d: -f6)"
 config_dir="${1:-/etc/openshell}"
 
-if ! python3 -c 'import sys, tomllib, yaml; assert sys.version_info >= (3, 11)'; then
-  echo "The golden image must provide Python 3.11+ with tomllib and PyYAML for the SAW installer." >&2
+if ! python3 -c 'import sys, yaml; sys.exit(sys.version_info < (3, 9))'; then
+  echo "The golden image must provide Python 3.9+ and PyYAML for the SAW installer." >&2
   exit 1
 fi
 

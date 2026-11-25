@@ -32,7 +32,7 @@ VM boot ─► cloud-init ─► saw-install.service ─► saw-apply.service
   checking each signed component against a per-pull podman policy built
   from the BOM's `signature` field, copies the binary out, checks
   `--version` against the BOM, installs it atomically into
-  `/usr/local/bin`, re-syncs `gateway.env`, `gateway.toml` and the
+  `/var/usrlocal/bin`, re-syncs `gateway.env`, `gateway.toml` and the
   `saw-gateway-pki` tmpfs PKI generator, its `openshell-gateway-pki.conf` drop-in, and public credential proxy CA from the installer disk, then starts the user-level
   `openshell-gateway.service` (restarting it if a binary or the config
   changed; an owed restart survives a failed attempt). Unchanged components
@@ -277,7 +277,7 @@ behaves like one with no signer at all: `warn` records it unsigned,
 identity shape.
 
 `saw-install.service`, `saw-apply.service`, and `saw-reconcile.service`
-each run `/usr/local/sbin/saw-stage-installer` before touching
+each run `/var/usrlocal/sbin/saw-stage-installer` before touching
 `apply_bom.py`. That script runs the golden image's
 `/usr/libexec/saw/verify-bundle` when present (an image built before
 signing existed has no verifier: `warn`/`off` still boot unverified,

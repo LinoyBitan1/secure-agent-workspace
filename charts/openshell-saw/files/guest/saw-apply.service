@@ -13,9 +13,9 @@ RemainAfterExit=yes
 # Same verify-then-stage as saw-install.service: apply_bom.py runs from the
 # staged copy, never the live mount (PR #54 review, 2 -- apply used to skip
 # verification entirely).
-ExecStartPre=/usr/local/sbin/saw-mount-inputs
-ExecStartPre=/usr/local/sbin/saw-stage-installer
-ExecStart=/usr/local/sbin/saw-with-lock /usr/bin/python3 /var/lib/saw/verified/installer/apply_bom.py apply --installer-dir /var/lib/saw/verified/installer
+ExecStartPre=/var/usrlocal/sbin/saw-mount-inputs
+ExecStartPre=/var/usrlocal/sbin/saw-stage-installer
+ExecStart=/var/usrlocal/sbin/saw-with-lock /usr/bin/python3 /var/lib/saw/verified/installer/apply_bom.py apply --installer-dir /var/lib/saw/verified/installer
 Restart=on-failure
 RestartSec=120
 TimeoutStartSec=45min

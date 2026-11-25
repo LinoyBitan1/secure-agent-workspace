@@ -102,6 +102,9 @@ def test_gateway_setup_prepares_rootless_runtime_without_starting_gateway(tmp_pa
     calls = tmp_path / "calls"
     executable(bindir / "id", 'echo 1001\n')
     executable(bindir / "getent", 'echo "cloud-user:x:1001:1001::${TEST_HOME}:/bin/bash"\n')
+    executable(bindir / "python3", '''
+[[ "$1" == -c && "$2" == *yaml* && "$2" == *'(3, 9)'* && "$2" != *tomllib* ]]
+''')
     for command in ("loginctl", "systemctl", "runuser", "chown"):
         executable(bindir / command, '''
 echo "$(basename "$0") $*" >> "$CALLS"
@@ -134,10 +137,10 @@ def test_gateway_setup_reports_missing_installer_python_dependencies(tmp_path, c
     bindir.mkdir()
     executable(bindir / "id", 'echo 1001\n')
     executable(bindir / "getent", 'echo "cloud-user:x:1001:1001::/home/cloud-user:/bin/bash"\n')
-    executable(bindir / "python3", 'echo "No module named tomllib" >&2\nexit 1\n')
+    executable(bindir / "python3", 'echo "No module named yaml" >&2\nexit 1\n')
     result = subprocess.run(
         ["bash", str(ROOT / "charts/openshell-saw/files/guest/saw-gateway-setup")],
         env={**clean_env, "PATH": f"{bindir}:{os.environ['PATH']}"},
         capture_output=True, text=True)
     assert result.returncode != 0
-    assert "Python 3.11+" in result.stderr and "PyYAML" in result.stderr
+    assert "Python 3.9+" in result.stderr and "PyYAML" in result.stderr

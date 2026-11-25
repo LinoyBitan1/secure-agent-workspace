@@ -30,26 +30,25 @@ before the installer and records completion only on success. Legacy images
 with the existing completion marker skip the additional setup.
 
 This change retains the current BOM installer: it installs the pinned
-OpenShell binaries under `/usr/local/bin`, and the chart's gateway service
+OpenShell binaries under `/var/usrlocal/bin`, and the chart's gateway service
 runs those binaries. Reusing the image's baked OpenShell RPMs instead requires
 a separate installer/version-contract change; replacing the base disk does
 not silently change the running OpenShell version.
 
-The current chart also writes its provisioning helpers under
-`/usr/local/sbin` and `/usr/local/libexec`. These paths, and the installer's
-`/usr/local/bin`, require a writable `/usr/local`. The published 0.1.0 disk
-has an immutable `/usr/local`; cloud-init fails on the first helper write.
-Supporting that layout requires a provisioning-path change or a compatible
-layout supplied by the image producer.
+The chart writes its provisioning helpers under `/var/usrlocal/sbin` and
+`/var/usrlocal/libexec`, and installs the optional NemoClaw application tree
+under `/var/usrlocal/lib`. These locations are on the published disk's writable
+`/var` filesystem and have the expected executable SELinux labels. The OS
+filesystem, including `/usr/local`, remains immutable. Paths inside component
+container images remain unchanged when binaries are extracted.
 
-The installer requires `/usr/bin/python3` to be Python 3.11 or later, with
-`tomllib` and PyYAML available. First-boot setup checks this and reports a
-specific error before starting the installer. The upstream recipe's generic
-`python3`/`python3-pip` package list alone does not establish this contract.
-If the released disk lacks these dependencies, they must be added by the
-image producer and a compatible disk release selected before boot acceptance
-can pass. A bootc image's immutable OS must not rely on cloud-init installing
-missing OS packages.
+The installer requires Python 3.9 or later with PyYAML. Python 3.11 and later
+use the standard-library `tomllib`; older Python uses the pinned pure-Python
+Tomli wheel embedded in the rendered installer. Its bytes remain inside the
+existing signed `apply_bom.py` artifact, including the runtime-user copy.
+No Python packages are downloaded at VM boot. See the
+[vendored dependency record](../charts/openshell-saw/files/installer/README.tomli.md)
+for the source, version, checksum and license.
 
 ## Repeatable cluster test
 
@@ -102,9 +101,9 @@ digest. Do not reuse an existing VM disk to test a different image.
 
    ```sh
    cat /etc/os-release
-   python3 -c 'import sys, tomllib, yaml; print(sys.version)'
+   python3 -c 'import sys, yaml; print(sys.version)'
    sudo journalctl -u saw-gateway-setup -u saw-install -u saw-apply --no-pager
-   /usr/local/bin/openshell --version
+   /var/usrlocal/bin/openshell --version
    ```
 
 4. Run `make saw-configure OPENSHELL_SAW_NAME=aipcc-test`, verify owner OIDC
@@ -142,8 +141,9 @@ They do not establish that the published disk boots.
 Initial source inspection used upstream revision
 `fff27c4aff03c6728c40a69a3f43531731581ec6`. Anonymous registry access was
 denied. Authenticated release inspection and a fresh-cluster VM test are
-recorded below; the published disk does not meet the current provisioning
-contract.
+recorded below. The initial test exposed filesystem and Python assumptions;
+the SAW-side compatibility experiment addresses those assumptions while
+retaining the published 0.1.0 image.
 
 ### Cluster verification, 2026-11-24
 
@@ -193,7 +193,8 @@ Guest diagnostics confirmed two compatibility failures:
   services were inactive, and a guest-local connection to gateway port 17670
   was refused.
 - The guest's `python3` is 3.9.21. PyYAML is present, but `tomllib` is absent;
-  the current installer requires Python 3.11 or later with both modules.
+  the installer tested in that run required Python 3.11 or later with both
+  modules.
 
 The image replacement is not ready for acceptance. Gateway startup,
 owner OIDC login, sandbox inference, reboot recovery and arm64 VM boot have

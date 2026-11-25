@@ -33,7 +33,7 @@ def test_saw_reconcile_runs_the_staged_verified_copy(ab):
     root = Path(__file__).resolve().parents[2]
     script = (root / "charts" / "openshell-saw" / "files" / "guest" / "saw-reconcile").read_text()
     unit = (root / "charts" / "openshell-saw" / "files" / "guest" / "saw-reconcile.service").read_text()
-    assert "ExecStartPre=/usr/local/sbin/saw-stage-installer" in unit
+    assert "ExecStartPre=/var/usrlocal/sbin/saw-stage-installer" in unit
     assert "/var/lib/saw/verified/installer/apply_bom.py" in script
     assert "/run/saw/installer/apply_bom.py" not in script
     assert "--installer-dir /var/lib/saw/verified/installer" in script

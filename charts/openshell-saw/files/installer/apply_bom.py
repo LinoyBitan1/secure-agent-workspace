@@ -54,7 +54,6 @@ import sys
 import tarfile
 import tempfile
 import time
-import tomllib
 import traceback
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
@@ -65,11 +64,15 @@ from urllib.request import urlopen
 
 import yaml
 
-# Helm embeds the canonical shared source in this signed file. The sentinel
-# branch supports checked-out source/test fixtures only, by exact sibling path.
+# Helm embeds the canonical shared source and Tomli wheel in this signed file.
+# The sentinels support checked-out source by exact sibling path.
 _SAW_CORE_EMBEDDED_B64 = "__SAW_CORE_SOURCE_BASE64__"
 _SAW_ADMIN_EMBEDDED_B64 = "__SAW_ADMIN_SOURCE_BASE64__"
 _SAW_UI_LIMIT_EMBEDDED_B64 = "__SAW_UI_LIMIT_SOURCE_BASE64__"
+_SAW_TOMLI_EMBEDDED_B64 = "__SAW_TOMLI_WHEEL_BASE64__"
+_TOMLI_WHEEL = "tomli-2.5.0-py3-none-any.whl"
+_TOMLI_SHA256 = "32a7b79ac57a2e83670ce329ccf675798bc5a2094783a63676866b70503f2e2b"
+_TOMLI_SOURCE = _SAW_TOMLI_EMBEDDED_B64 == "__SAW_TOMLI_" + "WHEEL_BASE64__"
 
 
 def _load_saw_module(name, embedded):
@@ -99,16 +102,63 @@ def _load_saw_module(name, embedded):
     return module, source
 
 
+def _tomli_wheel_bytes():
+    if _TOMLI_SOURCE:
+        wheel_path = Path(__file__).resolve().with_name(_TOMLI_WHEEL)
+        if wheel_path.is_symlink():
+            raise RuntimeError("Tomli requires the trusted adjacent Tomli wheel")
+        wheel = wheel_path.read_bytes()
+    else:
+        wheel = base64.b64decode(_SAW_TOMLI_EMBEDDED_B64, validate=True)
+        if base64.b64encode(wheel).decode("ascii") != _SAW_TOMLI_EMBEDDED_B64:
+            raise RuntimeError("invalid Tomli wheel encoding")
+    if hashlib.sha256(wheel).hexdigest() != _TOMLI_SHA256:
+        raise RuntimeError("Tomli wheel does not match the pinned SHA-256")
+    return wheel
+
+
+def _load_vendored_tomli(wheel):
+    import types
+    import zipimport
+
+    with tempfile.TemporaryDirectory(prefix="saw-tomli-") as directory:
+        archive = Path(directory) / _TOMLI_WHEEL
+        archive.write_bytes(wheel)
+        loader = zipimport.zipimporter(str(archive))
+        # The wheel's relative imports resolve through this package path and
+        # private name, independent of any regular tomli on sys.path.
+        package = "_saw_vendored_tomli_" + secrets.token_hex(8)
+        module = types.ModuleType(package)
+        module.__package__ = package
+        module.__path__ = [f"{archive}/tomli"]
+        sys.modules[package] = module
+        try:
+            exec(loader.get_code("tomli"), module.__dict__)
+        finally:
+            for name in tuple(sys.modules):
+                if name == package or name.startswith(package + "."):
+                    del sys.modules[name]
+        return module
+
+
 _saw_core, _SAW_CORE_SOURCE_BYTES = _load_saw_module("core", _SAW_CORE_EMBEDDED_B64)
 _saw_admin, _SAW_ADMIN_SOURCE_BYTES = _load_saw_module("admin", _SAW_ADMIN_EMBEDDED_B64)
 _saw_ui_limit, _SAW_UI_LIMIT_SOURCE_BYTES = _load_saw_module("ui_limit", _SAW_UI_LIMIT_EMBEDDED_B64)
 globals().update({name: getattr(_saw_core, name) for name in _saw_core.__all__})
+
+_SAW_TOMLI_WHEEL_BYTES = _tomli_wheel_bytes()
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    tomllib = _load_vendored_tomli(_SAW_TOMLI_WHEEL_BYTES)
 
 
 INSTALLER_VERSION = "0.1.0"
 
 DEFAULT_INPUTS = Path("/run/saw")
 DEFAULT_STATE_DIR = Path("/var/lib/saw")
+DEFAULT_BIN_DIR = "/var/usrlocal/bin"
+DEFAULT_OPT_DIR = "/var/usrlocal/lib"
 GATEWAY_PORT = 17670
 
 # Where each component's binary lives inside its image, and where it goes on
@@ -1280,7 +1330,7 @@ class ComponentInstaller:
     hash still match is left alone, so reboots do not re-pull anything.
     """
 
-    def __init__(self, shell, bin_dir, state_file, podman="podman", opt_dir="/opt",
+    def __init__(self, shell, bin_dir, state_file, podman="podman", opt_dir=DEFAULT_OPT_DIR,
                  signing_mode="off", trust_dir="/etc/saw/trust"):
         self.sh = shell
         self.bin_dir = Path(bin_dir)
@@ -1508,7 +1558,7 @@ def user_env(user):
         "LOGNAME": user,
         "XDG_RUNTIME_DIR": runtime_dir,
         "DBUS_SESSION_BUS_ADDRESS": f"unix:path={runtime_dir}/bus",
-        "PATH": f"/usr/local/bin:/usr/bin:/bin:{info.pw_dir}/.local/bin",
+        "PATH": f"{DEFAULT_BIN_DIR}:/usr/local/bin:/usr/bin:/bin:{info.pw_dir}/.local/bin",
         "CONTAINER_RUNTIME": "podman",
     }
 
@@ -3733,7 +3783,7 @@ class ProfileApplier:
             "endpoint": f"https://127.0.0.1:{GATEWAY_PORT}",
             "stateDir": str(home / ".local" / "state" / "openshell"),
             "supervisor": {"kind": "systemd-user", "serviceName": "openshell-gateway.service",
-                           "execPath": "/usr/local/bin/openshell-gateway"},
+                           "execPath": f"{DEFAULT_BIN_DIR}/openshell-gateway"},
         }
         if not self.sh.dry_run:
             mgmt_path.write_text(json.dumps(mgmt), encoding="utf-8")
@@ -3743,8 +3793,8 @@ class ProfileApplier:
             "NEMOCLAW_GATEWAY_MANAGEMENT": str(mgmt_path),
             "NEMOCLAW_GATEWAY_PORT": str(GATEWAY_PORT),
             "NEMOCLAW_IGNORE_RUNTIME_RESOURCES": "1",
-            "NEMOCLAW_OPENSHELL_GATEWAY_BIN": "/usr/local/bin/openshell-gateway",
-            "NEMOCLAW_OPENSHELL_SANDBOX_BIN": "/usr/local/bin/openshell-supervisor",
+            "NEMOCLAW_OPENSHELL_GATEWAY_BIN": f"{DEFAULT_BIN_DIR}/openshell-gateway",
+            "NEMOCLAW_OPENSHELL_SANDBOX_BIN": f"{DEFAULT_BIN_DIR}/openshell-supervisor",
             "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE": "1",
             "NEMOCLAW_PROVIDER": nc_provider,
             "NEMOCLAW_PROVIDER_KEY": credential,
@@ -4404,7 +4454,7 @@ class ProfileApplier:
         unit = (f"[Unit]\nDescription=OpenShell sandbox keep-alive for {sb.name}\n"
                 f"After=network-online.target\n\n"
                 f"[Service]\nType=simple\nUser={user}\n"
-                f"ExecStart=/usr/local/bin/openshell --gateway {self.relay_gateway} "
+                f"ExecStart={DEFAULT_BIN_DIR}/openshell --gateway {self.relay_gateway} "
                 f"sandbox exec -n {sb.name} {flags} "
                 f"--no-tty -- sleep infinity\nRestart=always\nRestartSec=5\n\n"
                 f"[Install]\nWantedBy=multi-user.target\n")
@@ -5408,7 +5458,7 @@ def sandbox_ui_units(cfg, home, cookie, gateway, issuer_ca=None):
             f"[Unit]\nDescription=SAW sandbox UI: forward {e['sandbox']} ({e['workspace']}) port "
             f"{proxy.get('targetPort', 18789)} to 127.0.0.1:{internal}\n\n"
             f"[Service]\nType=simple\n"
-            f"ExecStart=/usr/local/bin/openshell --gateway {gateway} forward service {e['sandbox']} "
+            f"ExecStart={DEFAULT_BIN_DIR}/openshell --gateway {gateway} forward service {e['sandbox']} "
             f"--workspace {e['workspace']} --target-port {proxy.get('targetPort', 18789)} "
             f"--local 127.0.0.1:{internal}\n"
             f"Restart=always\nRestartSec=5s\n\n[Install]\nWantedBy=default.target\n")
@@ -6028,6 +6078,10 @@ def cmd_apply(args):
                 transport_copy = copy_dir / "saw_ui_limit.py"
                 transport_copy.write_bytes(_SAW_UI_LIMIT_SOURCE_BYTES)
                 os.chmod(transport_copy, 0o644)
+            if _TOMLI_SOURCE:
+                wheel_copy = copy_dir / _TOMLI_WHEEL
+                wheel_copy.write_bytes(_SAW_TOMLI_WHEEL_BYTES)
+                os.chmod(wheel_copy, 0o644)
             # The runtime user executes this copy, so the tool-gate files it
             # reads from next to itself have to come along. They are part of
             # the installer disk (inputs.installer), not only the source tree.
@@ -6332,8 +6386,8 @@ def main(argv=None):
         p.add_argument("--as-current-user", action="store_true", help=argparse.SUPPRESS)
         p.add_argument("--etc-dir", default="/etc/openshell")
         if name in ("install", "reconcile"):
-            p.add_argument("--bin-dir", default="/usr/local/bin")
-            p.add_argument("--opt-dir", default="/opt")
+            p.add_argument("--bin-dir", default=DEFAULT_BIN_DIR)
+            p.add_argument("--opt-dir", default=DEFAULT_OPT_DIR)
             p.add_argument("--podman", default="podman")
             p.add_argument("--skip-gateway", action="store_true", help=argparse.SUPPRESS)
 

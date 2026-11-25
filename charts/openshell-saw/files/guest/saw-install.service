@@ -16,15 +16,15 @@ StartLimitBurst=6
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStartPre=/usr/local/sbin/saw-mount-inputs
+ExecStartPre=/var/usrlocal/sbin/saw-mount-inputs
 # The verifier lives in the golden image, not in the ConfigMap it checks.
 # It stages the installer tree into /var/lib/saw/verified/installer and
 # apply_bom.py always runs from that staged copy, never the live mount
 # (closes a TOCTOU window between this check and ExecStart -- PR #54
 # review, 2). An image built before signing was added has no verifier:
 # warn and off continue (unverified), enforce refuses to run the installer.
-ExecStartPre=/usr/local/sbin/saw-stage-installer
-ExecStart=/usr/local/sbin/saw-with-lock /usr/bin/python3 /var/lib/saw/verified/installer/apply_bom.py install --installer-dir /var/lib/saw/verified/installer
+ExecStartPre=/var/usrlocal/sbin/saw-stage-installer
+ExecStart=/var/usrlocal/sbin/saw-with-lock /usr/bin/python3 /var/lib/saw/verified/installer/apply_bom.py install --installer-dir /var/lib/saw/verified/installer
 Restart=on-failure
 RestartSec=60
 TimeoutStartSec=30min

@@ -80,7 +80,7 @@ def test_bad_trusted_proxy_settings_are_refused(ab, tmp_path, trusted, message):
 def test_the_forward_reaches_the_sandbox_port(ab, tmp_path):
     units, _ = ab.sandbox_ui_units(ui_config(), tmp_path, "c" * 32, "saw-installer")
     forward = units["saw-ui-forward-default-notebook.service"]
-    assert ("ExecStart=/usr/local/bin/openshell --gateway saw-installer forward service notebook "
+    assert ("ExecStart=/var/usrlocal/bin/openshell --gateway saw-installer forward service notebook "
             "--workspace default --target-port 18789 --local 127.0.0.1:24201") in forward
     assert "Restart=always" in forward
 

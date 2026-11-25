@@ -63,6 +63,18 @@ def test_validate_accepts_the_shipped_inputs(world):
     assert world.fake.podman_calls() == [] and world.fake.openshell_calls() == []
 
 
+@pytest.mark.parametrize("operation", ["install", "reconcile"])
+def test_install_commands_default_to_writable_host_paths(ab, monkeypatch, operation):
+    args = []
+    monkeypatch.setattr(ab, f"cmd_{operation}", args.append)
+    ab.main([operation])
+    assert args[0].bin_dir == "/var/usrlocal/bin"
+    assert args[0].opt_dir == "/var/usrlocal/lib"
+    assert args[0].state_dir == "/var/lib/saw"
+    ab.main([operation, "--bin-dir", "/custom/bin", "--opt-dir", "/custom/lib"])
+    assert (args[1].bin_dir, args[1].opt_dir) == ("/custom/bin", "/custom/lib")
+
+
 @pytest.mark.parametrize("credential_mode", ["proxy", "direct"], indirect=True)
 def test_install_then_apply_reaches_ready(world, credential_mode):
     result = world.run("install")
@@ -84,7 +96,7 @@ def test_install_then_apply_reaches_ready(world, credential_mode):
     assert oct(copy.stat().st_mode & 0o777) == "0o644"
     # Raw source fixtures carry the exact shared source beside the copy. The
     # signed chart-rendered installer embeds it instead (packaging tests).
-    for name in ("saw_core.py", "saw_admin.py", "saw_ui_limit.py"):
+    for name in ("saw_core.py", "saw_admin.py", "saw_ui_limit.py", "tomli-2.5.0-py3-none-any.whl"):
         shared_copy = copy.with_name(name)
         assert shared_copy.read_bytes() == (world.inputs / "installer" / name).read_bytes()
         assert oct(shared_copy.stat().st_mode & 0o777) == "0o644"

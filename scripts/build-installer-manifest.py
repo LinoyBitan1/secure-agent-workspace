@@ -17,8 +17,8 @@ unmodified installer fail signing.mode: enforce for no reason (PR #54 review,
 committed bundle.sigstore.json (when one is committed) no longer verifies
 against a fresh render's manifest.
 
-The canonical saw_core.py, saw_admin.py and saw_ui_limit.py are embedded inside rendered
-apply_bom.py, so their bytes are covered by that existing signed file. Keep this manifest set stable:
+The canonical saw_core.py, saw_admin.py, saw_ui_limit.py and Tomli wheel are
+embedded in apply_bom.py and covered by that signed file. Keep this manifest set stable:
 golden images with the original verifier can verify new bundles without an
 unsigned adjacent module or a replacement verifier. Refuse raw source and
 noncanonical embedded code before producing a signable payload.
@@ -37,6 +37,7 @@ TOOL_GATE_FILES = ["tool-actions.yaml", "tool-gate.mjs", "tool-gate-plugin.mjs"]
 PKI_FILES = ["saw-gateway-pki", "openshell-gateway-pki.conf"]
 CORE_SOURCE = Path(__file__).resolve().parents[1] / "charts/openshell-saw/files/installer/saw_core.py"
 CORE_FIELD = "_SAW_CORE_EMBEDDED_B64"
+TOMLI_WHEEL = CORE_SOURCE.with_name("tomli-2.5.0-py3-none-any.whl")
 
 
 def embedded_core(source, field=CORE_FIELD):
@@ -50,14 +51,14 @@ def embedded_core(source, field=CORE_FIELD):
               and any(isinstance(target, ast.Name) and target.id == field
                       for target in statement.targets)]
     if len(values) != 1 or not isinstance(values[0], ast.Constant) or not isinstance(values[0].value, str):
-        raise SystemExit("rendered apply_bom.py must contain one literal shared-core embedding")
+        raise SystemExit(f"rendered apply_bom.py must contain one literal embedding for {field}")
     encoded = values[0].value
     try:
         decoded = base64.b64decode(encoded, validate=True)
     except (ValueError, binascii.Error) as exc:
-        raise SystemExit("rendered apply_bom.py shared-core embedding is missing or malformed; render the chart first") from exc
+        raise SystemExit(f"rendered apply_bom.py embedding for {field} is malformed; render the chart first") from exc
     if not decoded or base64.b64encode(decoded).decode("ascii") != encoded:
-        raise SystemExit("rendered apply_bom.py shared-core embedding is empty or noncanonical")
+        raise SystemExit(f"rendered apply_bom.py embedding for {field} is empty or noncanonical")
     return decoded
 
 
@@ -82,6 +83,10 @@ def validate_shared_core(data):
         raise SystemExit("installer must embed saw_ui_limit.py inside its signed artifact")
     if embedded_core(data["apply_bom.py"], "_SAW_UI_LIMIT_EMBEDDED_B64") != CORE_SOURCE.with_name("saw_ui_limit.py").read_bytes():
         raise SystemExit("rendered apply_bom.py does not embed canonical saw_ui_limit.py")
+    if TOMLI_WHEEL.name in data:
+        raise SystemExit("installer must embed the Tomli wheel inside its signed artifact")
+    if embedded_core(data["apply_bom.py"], "_SAW_TOMLI_EMBEDDED_B64") != TOMLI_WHEEL.read_bytes():
+        raise SystemExit(f"rendered apply_bom.py does not embed the canonical {TOMLI_WHEEL.name}")
 
 
 def build_manifest(data):

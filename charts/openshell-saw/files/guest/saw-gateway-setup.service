@@ -8,7 +8,7 @@ StartLimitBurst=6
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/sbin/saw-gateway-setup
+ExecStart=/var/usrlocal/sbin/saw-gateway-setup
 ExecStartPost=/usr/bin/touch /var/lib/openshell-gateway-setup.done
 Restart=on-failure
 RestartSec=30

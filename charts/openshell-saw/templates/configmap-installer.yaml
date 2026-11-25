@@ -50,9 +50,8 @@ changes here reach an existing VM after a restart (unlike cloud-init).
 {{- if and .Values.oidc.enabled .Values.dashboard.enabled .Values.route.webui }}{{- $dashboardEnabled = true }}{{- end }}
 {{- /*
 The existing golden-image verifier signs apply_bom.py in a fixed manifest.
-Embed the canonical shared module INTO that signed file, instead of adding an
-adjacent Python import that an older verifier would not cover. The deployed
-installer and its runtime-user copy therefore remain one executable artifact.
+The canonical shared modules and Tomli wheel are part of that signed file.
+The deployed installer and its runtime-user copy are one executable artifact.
 */ -}}
 {{- $applyBom := .Files.Get "files/installer/apply_bom.py" -}}
 {{- $sharedCore := required "canonical files/installer/saw_core.py is required" (.Files.Get "files/installer/saw_core.py") -}}
@@ -73,6 +72,12 @@ installer and its runtime-user copy therefore remain one executable artifact.
 {{- fail "apply_bom.py must contain exactly one UI transport embedding marker" -}}
 {{- end -}}
 {{- $applyBom = replace $uiMarker (printf "_SAW_UI_LIMIT_EMBEDDED_B64 = %q" (b64enc $uiSource)) $applyBom -}}
+{{- $tomliWheel := required "canonical Tomli wheel is required" (.Files.Get "files/installer/tomli-2.5.0-py3-none-any.whl") -}}
+{{- $tomliMarker := "_SAW_TOMLI_EMBEDDED_B64 = \"__SAW_TOMLI_WHEEL_BASE64__\"" -}}
+{{- if ne (len (regexFindAll $tomliMarker $applyBom -1)) 1 -}}
+{{- fail "apply_bom.py must contain exactly one Tomli wheel embedding marker" -}}
+{{- end -}}
+{{- $applyBom = replace $tomliMarker (printf "_SAW_TOMLI_EMBEDDED_B64 = %q" (b64enc $tomliWheel)) $applyBom -}}
 {{- $signMode := .Values.signing.mode | default "warn" }}
 {{- if not (or (eq $signMode "off") (eq $signMode "warn") (eq $signMode "enforce")) }}
 {{- fail (printf "signing.mode must be off, warn, or enforce, got %q" $signMode) }}

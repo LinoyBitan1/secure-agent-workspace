@@ -12,7 +12,7 @@ if [[ "${SAW_PKI_TEST_MODE:-}" != 1 && "$(stat -f -c %T "${runtime}")" != tmpfs 
   echo "saw-gateway-pki: runtime directory is not tmpfs" >&2; exit 1
 fi
 config_dir="${SAW_PKI_CONFIG_DIR:-/etc/openshell}"
-gateway_bin="${SAW_GATEWAY_BIN:-/usr/local/bin/openshell-gateway}"
+gateway_bin="${SAW_GATEWAY_BIN:-/var/usrlocal/bin/openshell-gateway}"
 base="${HOME}/.local/state/openshell"
 final="${base}/tls"
 generation="$(cat "${config_dir}/pki-generation")"

@@ -26,6 +26,9 @@ CORE = CHART / "files/installer/saw_core.py"
 APPLY = CHART / "files/installer/apply_bom.py"
 HELM = shutil.which("helm")
 MARKER = '_SAW_CORE_EMBEDDED_B64 = "__SAW_CORE_SOURCE_BASE64__"'
+TOMLI_FIELD = "_SAW_TOMLI_EMBEDDED_B64"
+TOMLI_WHEEL = "tomli-2.5.0-py3-none-any.whl"
+TOMLI_SHA256 = "32a7b79ac57a2e83670ce329ccf675798bc5a2094783a63676866b70503f2e2b"
 LEGACY_FIXED = ("installer-bom.yaml", "apply_bom.py", "setup-dashboard.sh",
                 "tool-actions.yaml", "tool-gate.mjs", "tool-gate-plugin.mjs",
                 "saw-gateway-pki", "openshell-gateway-pki.conf")
@@ -91,6 +94,97 @@ def test_render_embeds_exact_canonical_bytes_and_preserves_legacy_manifest(rende
     assert signer.embedded_core(rendered_data["apply_bom.py"]) == CORE.read_bytes()
     assert signer.build_manifest(rendered_data) == legacy_manifest(rendered_data)
     assert set(signer.FIXED_FILES + signer.TOOL_GATE_FILES + signer.PKI_FILES) == set(LEGACY_FIXED)
+
+
+def test_render_embeds_locked_tomli_wheel_inside_the_signed_installer(rendered_data, signer):
+    wheel = signer.embedded_core(rendered_data["apply_bom.py"], TOMLI_FIELD)
+    assert hashlib.sha256(wheel).hexdigest() == TOMLI_SHA256
+    assert wheel == APPLY.with_name(TOMLI_WHEEL).read_bytes()
+    assert TOMLI_WHEEL not in rendered_data
+    assert signer.build_manifest(rendered_data) == legacy_manifest(rendered_data)
+
+
+def with_tomli_payload(source, replacement):
+    return re.sub(r"^" + TOMLI_FIELD + r" = .*$", lambda _: replacement,
+                  source, flags=re.MULTILINE)
+
+
+@pytest.mark.parametrize("replacement", [
+    "",
+    TOMLI_FIELD + ' = "%%%"',
+    TOMLI_FIELD + ' = "dGFtcGVyZWQ="',
+])
+def test_signer_rejects_missing_malformed_or_tampered_tomli(rendered_data, signer, replacement):
+    source = with_tomli_payload(rendered_data["apply_bom.py"], replacement)
+    with pytest.raises(SystemExit, match="embedding|canonical.*tomli"):
+        signer.build_manifest({**rendered_data, "apply_bom.py": source})
+
+
+def test_signer_rejects_unsigned_adjacent_tomli_wheel(rendered_data, signer):
+    with pytest.raises(SystemExit, match="signed artifact"):
+        signer.build_manifest({**rendered_data, TOMLI_WHEEL: "foreign"})
+
+
+def run_toml_reader(path, workdir, gateway_path, scratch):
+    program = """
+import runpy, sys
+sys.version_info = (3, 9, 21, "final", 0)
+sys.path.insert(0, str(__import__("pathlib").Path(sys.argv[1]).parent))
+installer = runpy.run_path(sys.argv[1])
+assert installer["tomllib"].__version__ == "2.5.0"
+installer["check_driver_config_allowed"](sys.argv[2])
+"""
+    return subprocess.run([sys.executable, "-c", program, str(path), str(gateway_path)],
+                          cwd=workdir, env={**os.environ, "PYTHONPATH": str(workdir),
+                                            "TMPDIR": str(scratch)},
+                          capture_output=True, text=True)
+
+
+def test_embedded_tomli_reads_gateway_config_from_runtime_copy(rendered_data, tmp_path):
+    staged, runtime, workdir, scratch = (tmp_path / name for name in ("verified", "runtime", "cwd", "scratch"))
+    for directory in (staged, runtime, workdir, scratch):
+        directory.mkdir()
+    witness = tmp_path / "untrusted-import"
+    hostile = f'open({str(witness)!r}, "w").write("imported")\nraise RuntimeError("untrusted tomli")\n'
+    for directory in (staged, runtime, workdir):
+        (directory / "tomli.py").write_text(hostile)
+    (runtime / "tomllib.py").write_text(hostile)
+    (staged / "apply_bom.py").write_text(rendered_data["apply_bom.py"])
+    shutil.copyfile(staged / "apply_bom.py", runtime / "apply_bom.py")
+    gateway_path = tmp_path / "gateway.toml"
+    gateway_path.write_text(rendered_data["gateway.toml"])
+    for directory in (staged, runtime):
+        result = run_toml_reader(directory / "apply_bom.py", workdir, gateway_path, scratch)
+        assert result.returncode == 0, result.stderr
+    gateway_path.write_text('[openshell.drivers.podman]\nallow_driver_config = truu\n')
+    result = run_toml_reader(runtime / "apply_bom.py", workdir, gateway_path, scratch)
+    assert result.returncode != 0
+    assert "cannot read gateway.toml for agent mounts" in result.stderr
+    assert not witness.exists()
+    assert not list(scratch.iterdir())
+
+
+@pytest.mark.parametrize(("replacement", "error"), [
+    ("", TOMLI_FIELD),
+    (TOMLI_FIELD + ' = "%%%"', "base64"),
+    (TOMLI_FIELD + ' = "dGFtcGVyZWQ="', "pinned SHA-256"),
+])
+def test_loader_rejects_missing_malformed_or_tampered_tomli(rendered_data, tmp_path, replacement, error):
+    installer = tmp_path / "apply_bom.py"
+    installer.write_text(with_tomli_payload(rendered_data["apply_bom.py"], replacement))
+    shutil.copyfile(APPLY.with_name(TOMLI_WHEEL), tmp_path / TOMLI_WHEEL)
+    result = run_file(installer)
+    assert result.returncode != 0
+    assert error in result.stderr
+
+
+def test_checked_out_installer_rejects_symlinked_tomli_wheel(tmp_path):
+    for path in (APPLY, CORE, CORE.with_name("saw_admin.py"), CORE.with_name("saw_ui_limit.py")):
+        shutil.copyfile(path, tmp_path / path.name)
+    (tmp_path / TOMLI_WHEEL).symlink_to(APPLY.with_name(TOMLI_WHEEL))
+    result = run_file(tmp_path / APPLY.name)
+    assert result.returncode != 0
+    assert "adjacent Tomli wheel" in result.stderr
 
 
 @pytest.mark.parametrize("change", ["missing", "duplicate"])

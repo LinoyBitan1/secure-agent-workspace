@@ -9,8 +9,8 @@ Type=oneshot
 # reconcile executed apply_bom.py straight off the live virtiofs mount with
 # no verification at all, the most direct way to bypass signing.mode
 # enforce with vm.liveInputs on (PR #54 review, 2).
-ExecStartPre=/usr/local/sbin/saw-stage-installer
-ExecStart=/usr/local/sbin/saw-with-lock /usr/local/sbin/saw-reconcile
+ExecStartPre=/var/usrlocal/sbin/saw-stage-installer
+ExecStart=/var/usrlocal/sbin/saw-with-lock /var/usrlocal/sbin/saw-reconcile
 TimeoutStartSec=45min
 StandardOutput=journal+console
 StandardError=journal+console
