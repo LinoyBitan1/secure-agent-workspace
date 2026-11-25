@@ -15,10 +15,10 @@ Its disk recipe puts the qcow2 under `/disk` for CDI.
 - `saw-bootc:0.1.0` is the OS source container. It is not passed to CDI.
 - `saw-disk-image-container:0.1.0` is the disk wrapper imported for a new VM.
 
-The announcement confirms amd64 and arm64 for the bootc image. Verify the
-disk wrapper's manifest too; its published architectures have not yet been
-validated for this integration. The mirror paths retain all architectures
-that the selected source actually publishes.
+Authenticated inspection confirmed amd64 and arm64 manifests for both 0.1.0
+images. The mirror paths retain all architectures that the selected source
+actually publishes. VM boot was tested on amd64 only; see the validation
+results below.
 
 ## Provisioning contract
 
@@ -34,6 +34,13 @@ OpenShell binaries under `/usr/local/bin`, and the chart's gateway service
 runs those binaries. Reusing the image's baked OpenShell RPMs instead requires
 a separate installer/version-contract change; replacing the base disk does
 not silently change the running OpenShell version.
+
+The current chart also writes its provisioning helpers under
+`/usr/local/sbin` and `/usr/local/libexec`. These paths, and the installer's
+`/usr/local/bin`, require a writable `/usr/local`. The published 0.1.0 disk
+has an immutable `/usr/local`; cloud-init fails on the first helper write.
+Supporting that layout requires a provisioning-path change or a compatible
+layout supplied by the image producer.
 
 The installer requires `/usr/bin/python3` to be Python 3.11 or later, with
 `tomllib` and PyYAML available. First-boot setup checks this and reports a
@@ -78,6 +85,11 @@ digest. Do not reuse an existing VM disk to test a different image.
    successful DataVolume; use an isolated namespace for a new import test.
 
 3. With the normal provider and Keycloak configuration already supplied:
+
+   For Option A, install the platform and add the test workspace through
+   `saw-users` as described in the [README](../README.md#option-a-validated-pattern-automated-gitops).
+   Skip `make saw-create` below when GitOps owns the workspace; the inspection
+   commands apply to either installation path.
 
    ```sh
    make saw-create OPENSHELL_SAW_NAME=aipcc-test
@@ -127,11 +139,11 @@ Local tests exercise source selection, legacy overrides, mirror Job rendering,
 input validation, TLS handling, first-boot setup and chart rendering.
 They do not establish that the published disk boots.
 
-Source inspection used upstream revision
-`fff27c4aff03c6728c40a69a3f43531731581ec6`. That source may differ from
-the published 0.1.0 artifacts. An anonymous manifest request for the disk
-release returned `unauthorized`; its digest, platforms, Python dependencies
-and boot/gateway behavior remain unverified.
+Initial source inspection used upstream revision
+`fff27c4aff03c6728c40a69a3f43531731581ec6`. Anonymous registry access was
+denied. Authenticated release inspection and a fresh-cluster VM test are
+recorded below; the published disk does not meet the current provisioning
+contract.
 
 ### Cluster verification, 2026-11-24
 
@@ -150,4 +162,41 @@ probe for the requested disk reference failed with a registry access error.
 Anonymous pulls and a pull using the cluster's existing Quay credentials also
 failed. The dry-run probe created no ImageStream. No workspace VM was created.
 This verifies platform installation, not AIPCC image import, VM boot, gateway
-integration or inference. Those checks still require an accessible release.
+integration or inference. Those checks were blocked on registry access during
+that run.
+
+### Authenticated VM verification, 2026-11-25
+
+Both private 0.1.0 references were readable with the supplied read-only
+registry credentials. The disk image's published index digest is
+`sha256:75226790d56ea0f8c3fb1cd37b741c638d8e4c41f6fd89b3cf824d3a727de992`.
+`make images-mirror` succeeded, and the internal ImageStream retained that
+digest and both amd64 and arm64 manifests.
+
+README Option A was installed on a fresh OpenShift 4.22.22 amd64 cluster from commit
+`5a56488bc29caa0f84003119f9ffb6e45566e398`, with web search disabled.
+The installer exited with code 0; all ten platform applications were
+`Synced` and `Healthy`. OpenShift Virtualization reported `Available=True`
+and `Degraded=False`.
+
+A single GitOps-managed workspace, `aipcc-test` in `saw-aipcc-test`, used
+the `ci-nvidia` profile and cluster-only Pattern overrides. Its DataVolume
+import succeeded. The VMI reached `Running` and `Ready=True`, and its guest
+agent reported RHEL 9.6 on x86_64. These checks establish disk import and
+OS boot, not gateway readiness.
+
+Guest diagnostics confirmed two compatibility failures:
+
+- Cloud-init's `write_files` module failed with
+  `OSError: [Errno 30] Read-only file system: '/usr/local/sbin/saw-gateway-setup'`.
+  The setup script and unit were absent. The `saw-install` and `saw-apply`
+  services were inactive, and a guest-local connection to gateway port 17670
+  was refused.
+- The guest's `python3` is 3.9.21. PyYAML is present, but `tomllib` is absent;
+  the current installer requires Python 3.11 or later with both modules.
+
+The image replacement is not ready for acceptance. Gateway startup,
+owner OIDC login, sandbox inference, reboot recovery and arm64 VM boot have
+not passed. Fixing the writable-path contract alone would still leave the
+Python dependency mismatch. No guest OS packages were installed or immutable
+filesystems remounted during this test.
