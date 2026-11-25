@@ -238,3 +238,40 @@ container probe also exercised the rendered standalone installer on AIPCC's
 Python 3.9.25 bootc artifact: valid and invalid TOML handling, isolated parser
 loading and temporary-file cleanup passed. That probe supplements the fresh
 disk VM test; it is not evidence of arm64 boot or full sandbox operation.
+
+### Runtime investigation and published-version check, 2026-11-25
+
+The disk's packaged OpenShell CLI, gateway, supervisor and sandbox RPMs are
+`0.1.3.rhaiv.1-2.el9ai`; the executables report `0.1.3-rhaiv.1` and live
+under `/usr/bin` (the sandbox helper is under `/usr/libexec/openshell`).
+The compatibility experiment above instead ran the consumer BOM's
+`0.1.6-rhaiv.4` binaries. It therefore tested the AIPCC OS with the consumer's
+software version, not the complete image-provided software stack.
+
+Authenticated tag inspection found no `latest` or `0.1.6` tag in either
+published golden-image repository. The newest timestamped bootc tag,
+`0.1.0-1794474158`, resolves to the same index as `saw-bootc:0.1.0` and
+contains OpenShell `0.1.3-rhaiv.1`. The newest timestamped disk tag,
+`0.1.0-1793955612`, resolves to the tested disk index above. The producer's
+`rpms.lock.yaml` at commit `1d822c67d9773c9f41fec031654965fc45f79f99`
+also pins OpenShell `0.1.3.rhaiv.1-2.el9ai` for both architectures.
+No published AIPCC golden image with OpenShell 0.1.6 was confirmed by these
+checks; the producer must supply its exact reference and digest if available
+through another release path.
+
+The sandbox timeout was reproduced independently of OpenShell. The guest's
+`podman-5.4.0-22.el9_6.5.x86_64` hangs on the second copy into a named volume
+in an isolated temporary VFS store. This matches the missing volume-lock
+release fixed by [Podman PR 25586](https://github.com/containers/podman/pull/25586)
+for [issue 25585](https://github.com/containers/podman/issues/25585).
+
+For comparison, the Podman 5.8.2 executable from the public Red Hat UBI9
+Podman image at index
+`sha256:555057e7e0c7f750978ddf82844355903bfd28e613580cd31543ab0b002c444d`
+was staged at a separate probe path. The executable's SHA-256 is
+`360bc377b7dd6db77ac9a122f533b4686020152c841d1450259940ea0f1cb617`.
+The same isolated regression passed three copies, container listing and
+cleanup with that binary. The active Podman service and image-provided
+executables were not replaced by this probe. A fixed runtime is proven for
+the isolated failure, but full workspace/inference acceptance remains
+pending a runtime update and agreement on the intended OpenShell version.
